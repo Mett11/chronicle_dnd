@@ -1,3 +1,4 @@
+import { CloudSyncService } from '../lib/cloudSync';
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Entity, Player } from '../types';
@@ -648,6 +649,20 @@ export function Oracle() {
     setErrorDetails(null);
     setLastSubmittedQuery('');
 
+    // Asynchronously hydrate from Cloud Firestore if local is empty or missing remote history
+    CloudSyncService.fetchOracleChatFromCloud(activeCampaignCodeClean, currentUserId)
+      .then((cloudMsgs) => {
+        if (Array.isArray(cloudMsgs) && cloudMsgs.length > 0) {
+          setMessages((prev) => {
+            if (prev.length === 0 || cloudMsgs.length >= prev.length) {
+              return cloudMsgs;
+            }
+            return prev;
+          });
+        }
+      })
+      .catch(() => {});
+
     // Clear active typing timers & animation refs
     Object.values(typingTimersRef.current).forEach((timers) => {
       timers.forEach(clearTimeout);
@@ -771,11 +786,12 @@ export function Oracle() {
     }
   }, [geminiModel]);
 
-  // Save chat history strictly to active campaign & user scoped key
+  // Save chat history strictly to active campaign & user scoped key and Cloud Firestore
   useEffect(() => {
     try {
       const scopedKey = getScopedChatKey(activeCampaignCodeClean, currentUserId);
       localStorage.setItem(scopedKey, JSON.stringify(messages));
+      CloudSyncService.saveOracleChatToCloud(activeCampaignCodeClean, currentUserId, messages);
     } catch {}
   }, [messages, activeCampaignCodeClean, currentUserId]);
 

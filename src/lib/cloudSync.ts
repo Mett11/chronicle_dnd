@@ -378,48 +378,50 @@ export class CloudSyncService {
    * Conflict-free merger for chapters / narrative arcs.
    */
   static mergeChapters(localChapters: CampaignChapter[], remoteChapters: CampaignChapter[]): CampaignChapter[] {
-    const map = new Map<string, CampaignChapter>();
-    const nameToIdMap = new Map<string, string>();
+    const chapterMap = new Map<string, CampaignChapter>();
+    const nameToCanonicalIdMap = new Map<string, string>();
 
-    // 1. Authoritative Remote chapters
-    (remoteChapters || []).forEach((c) => {
-      if (c && c.id) {
-        map.set(c.id, { ...c });
-        if (c.name) {
-          nameToIdMap.set(c.name.trim().toLowerCase(), c.id);
-        }
-      }
-    });
+    const ingestChapter = (chap: CampaignChapter) => {
+      if (!chap || !chap.name) return;
+      const normName = chap.name.trim().toLowerCase();
+      if (!normName) return;
 
-    // 2. Merge local chapters (preventing duplicate names and preserving remote colors)
-    (localChapters || []).forEach((l) => {
-      if (!l || !l.id) return;
-      const normalizedName = (l.name || '').trim().toLowerCase();
-      const existingIdByName = normalizedName ? nameToIdMap.get(normalizedName) : null;
-      const targetId = map.has(l.id) ? l.id : existingIdByName;
+      const existingCanonicalId = nameToCanonicalIdMap.get(normName);
 
-      if (targetId && map.has(targetId)) {
-        const r = map.get(targetId)!;
-        map.set(targetId, {
-          ...l,
-          ...r,
-          description: l.description || r.description,
-          coverImageUrl: l.coverImageUrl || r.coverImageUrl,
+      if (existingCanonicalId && chapterMap.has(existingCanonicalId)) {
+        const existing = chapterMap.get(existingCanonicalId)!;
+        chapterMap.set(existingCanonicalId, {
+          ...chap,
+          ...existing,
+          description: existing.description || chap.description || "",
+          coverImageUrl: existing.coverImageUrl || chap.coverImageUrl || "",
+          color: existing.color || chap.color || "#D4AF37",
         });
+      } else if (chap.id && chapterMap.has(chap.id)) {
+        const existing = chapterMap.get(chap.id)!;
+        chapterMap.set(chap.id, {
+          ...chap,
+          ...existing,
+          description: existing.description || chap.description || "",
+          coverImageUrl: existing.coverImageUrl || chap.coverImageUrl || "",
+          color: existing.color || chap.color || "#D4AF37",
+        });
+        nameToCanonicalIdMap.set(normName, chap.id);
       } else {
-        map.set(l.id, { ...l });
-        if (normalizedName) {
-          nameToIdMap.set(normalizedName, l.id);
-        }
+        const cleanId = chap.id || "chap_" + Date.now();
+        const finalChap = { ...chap, id: cleanId, name: chap.name.trim() };
+        chapterMap.set(cleanId, finalChap);
+        nameToCanonicalIdMap.set(normName, cleanId);
       }
-    });
+    };
 
-    return Array.from(map.values()).sort((a, b) => (a.order || 0) - (b.order || 0));
+    // Process remote chapters first so authoritative Cloud IDs take precedence
+    (remoteChapters || []).forEach(ingestChapter);
+    (localChapters || []).forEach(ingestChapter);
+
+    return Array.from(chapterMap.values()).sort((a, b) => (a.order || 0) - (b.order || 0));
   }
 
-  /**
-   * Conflict-free merger for maps & pins.
-   */
   static mergeMaps(localMaps: WorldMap[], remoteMaps: WorldMap[]): WorldMap[] {
     const map = new Map<string, WorldMap>();
     (remoteMaps || []).forEach((m) => { if (m && m.id) map.set(m.id, { ...m }); });
@@ -1269,12 +1271,20 @@ export class CloudSyncService {
           const remoteBioCount = Array.isArray(remoteData?.characterBios) ? remoteData.characterBios.length : 0;
           const remoteRelationsCount = Array.isArray(remoteData?.familyRelations) ? remoteData.familyRelations.length : 0;
 
-          const missingSessions = activeRemoteSessions.length > 0 && rawSessions.length === 0;
-          const missingEntities = activeRemoteEntities.length > 0 && rawEntities.length === 0;
-          const missingNotes = activeRemoteNotes.length > 0 && rawNotes.length === 0;
+          const localSessionIds = new Set(rawSessions.map((s) => s._id));
+          const missingSessions = activeRemoteSessions.some((s: any) => s && s._id && !localSessionIds.has(s._id));
+
+          const localEntityIds = new Set(rawEntities.map((e) => e._id));
+          const missingEntities = activeRemoteEntities.some((e: any) => e && e._id && !localEntityIds.has(e._id));
+
+          const localNoteIds = new Set(rawNotes.map((n) => n._id));
+          const missingNotes = activeRemoteNotes.some((n: any) => n && n._id && !localNoteIds.has(n._id));
+
+          const localLoreIds = new Set(rawWorldLoreArticles.map((a) => a._id));
+          const missingWorldLore = activeRemoteWorldLore.some((a: any) => a && a._id && !localLoreIds.has(a._id));
+
           const missingChapters = remoteChapterCount > 0 && CampaignManager.getChapters().length === 0;
           const missingMaps = remoteMapCount > 0 && rawMaps.length === 0;
-          const missingWorldLore = activeRemoteWorldLore.length > 0 && rawWorldLoreArticles.length === 0;
           const missingCharacterBios = remoteBioCount > 0 && CampaignManager.getAllCharacterBios().length === 0;
           const missingFamilyRelations = remoteRelationsCount > 0 && CampaignManager.getAllFamilyRelations().length === 0;
 
@@ -1297,37 +1307,34 @@ export class CloudSyncService {
             return { success: true };
           }
 
-          // RBAC PRESERVATION SHIELD (Phase 3.2):
-          // Preserve DM-only notes and secret events from remote if uploading user is a player
-          const currentAccount = CampaignManager.getCurrentAccount();
-          const isDm = Boolean(currentAccount?.isDm || (activeCode && currentAccount?.dmCampaigns?.includes(activeCode)));
-          if (!isDm) {
-            if (Array.isArray(remoteData?.notes)) {
-              remoteData.notes.forEach((remNote: any) => {
-                if (remNote?.dmOnly && !deletedNoteIdsSet.has(remNote._id) && !rawNotes.some((ln) => ln._id === remNote._id)) {
-                  rawNotes.push(remNote);
-                }
-              });
-            }
-            if (Array.isArray(remoteData?.worldLoreArticles)) {
-              remoteData.worldLoreArticles.forEach((remArt: any) => {
-                if (remArt?.dmOnly && !deletedWorldLoreIdsSet.has(remArt._id) && !rawWorldLoreArticles.some((la) => la._id === remArt._id)) {
-                  rawWorldLoreArticles.push(remArt);
-                }
-              });
-            }
-            if (Array.isArray(remoteData?.sessions)) {
-              remoteData.sessions.forEach((remS: any) => {
-                const localS = rawSessions.find((ls) => ls._id === remS._id);
-                if (localS && Array.isArray(remS.events) && !deletedSessionIdsSet.has(remS._id)) {
-                  remS.events.forEach((remEvt: any) => {
-                    if ((remEvt?.impact === 'secret' || remEvt?.isSecret) && !localS.events?.some((le: any) => le.id === remEvt.id)) {
-                      localS.events = [...(localS.events || []), remEvt];
-                    }
-                  });
-                }
-              });
-            }
+          // RBAC & MULTI-USER PRESERVATION SHIELD:
+          // Preserve all remote active non-deleted notes, world lore articles, and session events
+          // that are missing from local state (such as personal notes of other players, DM notes, or new party notes)
+          if (Array.isArray(remoteData?.notes)) {
+            remoteData.notes.forEach((remNote: any) => {
+              if (remNote && remNote._id && !deletedNoteIdsSet.has(remNote._id) && !rawNotes.some((ln) => ln._id === remNote._id)) {
+                rawNotes.push(remNote);
+              }
+            });
+          }
+          if (Array.isArray(remoteData?.worldLoreArticles)) {
+            remoteData.worldLoreArticles.forEach((remArt: any) => {
+              if (remArt && remArt._id && !deletedWorldLoreIdsSet.has(remArt._id) && !rawWorldLoreArticles.some((la) => la._id === remArt._id)) {
+                rawWorldLoreArticles.push(remArt);
+              }
+            });
+          }
+          if (Array.isArray(remoteData?.sessions)) {
+            remoteData.sessions.forEach((remS: any) => {
+              const localS = rawSessions.find((ls) => ls._id === remS._id);
+              if (localS && Array.isArray(remS.events) && !deletedSessionIdsSet.has(remS._id)) {
+                remS.events.forEach((remEvt: any) => {
+                  if (remEvt && remEvt.id && !localS.events?.some((le: any) => le.id === remEvt.id)) {
+                    localS.events = [...(localS.events || []), remEvt];
+                  }
+                });
+              }
+            });
           }
         }
       } catch (checkErr) {
@@ -1472,25 +1479,9 @@ export class CloudSyncService {
       rawAudioLogs.forEach((log) => mediaItems.push({ type: 'audio', id: log.id, data: log }));
       rawWorldLoreArticles.forEach((art) => mediaItems.push({ type: 'world_lore_article', id: art._id, data: art }));
 
-      // Partition sessions so the main document stays safely under ~150 KB
-      let mainSessions: any[] = [];
+      // Keep ALL text/metadata sessions in main document (base64 images are already stripped into sessionMediaMap chunks)
       const sortedSessions = [...strippedSessions].sort((a, b) => (Number(a.number) || 0) - (Number(b.number) || 0));
-
-      let cumulativeRecentSize = 0;
-      const recentSessionsList: any[] = [];
-      for (let i = sortedSessions.length - 1; i >= 0; i--) {
-        const sess = sortedSessions[i];
-        const sSize = JSON.stringify(sess).length;
-        // Keep at least 2 recent sessions in the main document (up to 4 if size is under 80 KB)
-        if (recentSessionsList.length < 2 || (cumulativeRecentSize + sSize < 80000 && recentSessionsList.length < 4)) {
-          recentSessionsList.unshift(sess);
-          cumulativeRecentSize += sSize;
-        } else {
-          // Offload older historical sessions to Firestore chunk storage
-          mediaItems.push({ type: 'historical_session', id: sess._id, data: sess });
-        }
-      }
-      mainSessions = recentSessionsList;
+      const mainSessions: any[] = sortedSessions;
 
       const MAX_CHUNK_BYTES = 420000; // ~400 KB safety limit per document (Firestore max is 1048576)
       const chunkPayloads: any[] = [];
@@ -2341,6 +2332,52 @@ export class CloudSyncService {
     } catch (err: any) {
       console.warn('[CloudSync] Failed to publish public presentation:', err);
       return { success: false, url: shareUrl, shareToken: slug, slug, error: err?.message || 'Errore durante la pubblicazione.' };
+    }
+  }
+
+  /**
+   * Fetches Oracle AI chat history for a specific campaign & user from Cloud Firestore
+   */
+  static async fetchOracleChatFromCloud(campaignCode: string, userId: string): Promise<any[]> {
+    if (!campaignCode || !userId || campaignCode === 'GLOBAL' || checkIsQuotaExhausted()) return [];
+    try {
+      const docId = `${campaignCode.trim().toUpperCase()}__oracle_${userId.trim()}`;
+      const docRef = doc(db, 'dnd_campaigns', docId);
+      const snap = await getDoc(docRef);
+      if (snap.exists()) {
+        const data = snap.data();
+        if (Array.isArray(data?.messages)) {
+          return data.messages;
+        }
+      }
+    } catch (e) {
+      console.warn('[CloudSync] fetchOracleChatFromCloud error:', e);
+    }
+    return [];
+  }
+
+  /**
+   * Saves Oracle AI chat history for a specific campaign & user to Cloud Firestore
+   */
+  static async saveOracleChatToCloud(campaignCode: string, userId: string, messages: any[]): Promise<void> {
+    if (!campaignCode || !userId || campaignCode === 'GLOBAL' || checkIsQuotaExhausted()) return;
+    try {
+      const docId = `${campaignCode.trim().toUpperCase()}__oracle_${userId.trim()}`;
+      const docRef = doc(db, 'dnd_campaigns', docId);
+      const sanitizedMsgs = sanitizeFirestorePayload(messages || []);
+      const payload = {
+        _updatedAt: new Date().toISOString(),
+        campaignCode: campaignCode.trim().toUpperCase(),
+        userId: userId.trim(),
+        messages: sanitizedMsgs,
+      };
+      await setDoc(docRef, payload);
+    } catch (e: any) {
+      if (e?.code === 'resource-exhausted') {
+        markQuotaExhausted();
+      } else {
+        console.warn('[CloudSync] saveOracleChatToCloud error:', e);
+      }
     }
   }
 }

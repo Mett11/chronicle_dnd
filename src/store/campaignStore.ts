@@ -262,11 +262,31 @@ export function safeLocalStorageSetItem(key: string, value: string): boolean {
       } catch {}
     }
 
-    // 8. If scrapbook or audio exceed storage quota
-    if (key.includes('_scrapbook') || key.includes('_audio_logs')) {
+    // 8. If scrapbook or audio exceed storage quota, strip base64 payloads instead of wiping items
+    if (key.includes('_scrapbook')) {
       try {
-        localStorage.setItem(key, JSON.stringify([]));
-        return true;
+        const parsed = JSON.parse(value);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const stripped = parsed.map((item: any) => ({
+            ...item,
+            imageUrl: item.imageUrl && item.imageUrl.startsWith('data:') ? '' : item.imageUrl,
+          }));
+          localStorage.setItem(key, JSON.stringify(stripped));
+          return true;
+        }
+      } catch {}
+    }
+    if (key.includes('_audio_logs')) {
+      try {
+        const parsed = JSON.parse(value);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const stripped = parsed.map((item: any) => ({
+            ...item,
+            audioUrl: item.audioUrl && item.audioUrl.startsWith('data:') ? '' : item.audioUrl,
+          }));
+          localStorage.setItem(key, JSON.stringify(stripped));
+          return true;
+        }
       } catch {}
     }
 
@@ -3116,9 +3136,41 @@ export class CampaignManager {
     });
   }
 
+  static deduplicateChapters(chapters: CampaignChapter[]): CampaignChapter[] {
+    if (!Array.isArray(chapters)) return [];
+    const map = new Map<string, CampaignChapter>();
+    const seenNames = new Map<string, string>();
+
+    chapters.forEach((c) => {
+      if (!c || !c.name) return;
+      const normName = c.name.trim().toLowerCase();
+      if (!normName) return;
+
+      const existingId = seenNames.get(normName);
+      if (existingId && map.has(existingId)) {
+        const prev = map.get(existingId)!;
+        map.set(existingId, {
+          ...c,
+          ...prev,
+          description: prev.description || c.description || "",
+          coverImageUrl: prev.coverImageUrl || c.coverImageUrl || "",
+          color: prev.color || c.color || "#D4AF37",
+        });
+      } else {
+        const cleanId = c.id || "chap_" + Date.now();
+        const item = { ...c, id: cleanId, name: c.name.trim() };
+        map.set(cleanId, item);
+        seenNames.set(normName, cleanId);
+      }
+    });
+
+    return Array.from(map.values()).sort((a, b) => (a.order || 0) - (b.order || 0));
+  }
+
   static saveChapters(chapters: CampaignChapter[]) {
     const key = this.getStorageKey("chapters");
-    const sanitized = sanitizeArray<CampaignChapter>(chapters);
+    const deduped = this.deduplicateChapters(chapters);
+    const sanitized = sanitizeArray<CampaignChapter>(deduped);
     setCached(key, sanitized);
     safeLocalStorageSetItem(key, JSON.stringify(sanitized));
     if (typeof window !== "undefined") {

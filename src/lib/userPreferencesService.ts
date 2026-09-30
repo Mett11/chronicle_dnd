@@ -195,6 +195,16 @@ export class UserPreferencesService {
   }
 
   /**
+   * Saves reading and UI preferences (e.g. tutorialSeen) and persists to Firestore.
+   */
+  static async saveReadingPreferences(
+    readingUpdates: Partial<UserPreferences['reading']>,
+    userId?: string
+  ): Promise<UserPreferences> {
+    return this.saveUserPreferences(userId || '', { reading: readingUpdates });
+  }
+
+  /**
    * Gets dismissed notification IDs for a specific campaign, synced to Firestore.
    */
   static getDismissedNotificationIds(campaignCode: string, userId?: string): string[] {

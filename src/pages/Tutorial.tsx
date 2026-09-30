@@ -1,3 +1,4 @@
+import { UserPreferencesService } from '../lib/userPreferencesService';
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
@@ -45,6 +46,8 @@ export function Tutorial() {
 
   const [hasSeenInitial, setHasSeenInitial] = useState<boolean>(() => {
     try {
+      const localPrefs = UserPreferencesService.getLocalPreferences(currentUserId);
+      if (localPrefs?.reading?.tutorialSeen) return true;
       return localStorage.getItem(`chronicle_tutorial_seen_${currentUserId}`) === 'true';
     } catch {
       return false;
@@ -56,6 +59,7 @@ export function Tutorial() {
   const handleCompleteTutorial = () => {
     try {
       localStorage.setItem(`chronicle_tutorial_seen_${currentUserId}`, 'true');
+      UserPreferencesService.saveReadingPreferences({ tutorialSeen: true });
     } catch {}
     setHasSeenInitial(true);
     navigate('/character');

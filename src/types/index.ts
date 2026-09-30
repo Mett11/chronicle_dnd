@@ -46,6 +46,7 @@ export interface UserPreferences {
     pillTagsEnabled: boolean;
     dossierViewMode: 'edit' | 'read';
     includeDmAsPlayer: boolean;
+    tutorialSeen?: boolean;
   };
   notifications?: {
     dismissedByCampaign?: Record<string, string[]>;
