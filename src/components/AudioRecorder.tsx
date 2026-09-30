@@ -19,6 +19,8 @@ import {
 import { AudioLog } from '../types';
 import { useAuth } from './AuthProvider';
 import { Portal } from './Portal';
+import { FirebaseStorageService } from '../lib/firebaseStorageService';
+import { CampaignManager } from '../store/campaignStore';
 import {
   getSupportedAudioMimeType,
   formatAudioBytes,
@@ -502,7 +504,9 @@ export function AudioRecorder({
     }
   };
 
-  const handleSave = () => {
+  const [isUploadingToCloud, setIsUploadingToCloud] = useState(false);
+
+  const handleSave = async () => {
     if (!audioUrl) {
       setErrorMessage('Nessun audio registrato o caricato.');
       return;
@@ -512,15 +516,40 @@ export function AudioRecorder({
       return;
     }
 
-    onSave({
-      title: title.trim(),
-      audioUrl,
-      durationSeconds: audioDuration || recordingTime || 1,
-      recordedBy: player?.characterName || 'Voce Ignota',
-      loreDate,
-      associatedType,
-      associatedId,
-    });
+    setIsUploadingToCloud(true);
+    try {
+      const code = CampaignManager.getActiveCampaignCode() || 'default';
+      const cdnUrl = await FirebaseStorageService.uploadMedia(
+        code,
+        'audio',
+        `${title.trim()}.webm`,
+        audioUrl
+      );
+
+      onSave({
+        title: title.trim(),
+        audioUrl: cdnUrl || audioUrl,
+        durationSeconds: audioDuration || recordingTime || 1,
+        recordedBy: player?.characterName || 'Voce Ignota',
+        loreDate,
+        associatedType,
+        associatedId,
+      });
+    } catch (err) {
+      console.error('Errore caricamento audio su Firebase Storage:', err);
+      // Fallback
+      onSave({
+        title: title.trim(),
+        audioUrl,
+        durationSeconds: audioDuration || recordingTime || 1,
+        recordedBy: player?.characterName || 'Voce Ignota',
+        loreDate,
+        associatedType,
+        associatedId,
+      });
+    } finally {
+      setIsUploadingToCloud(false);
+    }
   };
 
   const formatTimer = (secs: number) => {
@@ -724,10 +753,20 @@ export function AudioRecorder({
             <button
               type="button"
               onClick={handleSave}
-              className="px-5 py-2 rounded-xl bg-primary hover:bg-primary text-surface-0 text-xs font-bold flex items-center gap-1.5 shadow-sm transition-transform hover:scale-105 cursor-pointer"
+              disabled={isUploadingToCloud}
+              className="px-5 py-2 rounded-xl bg-primary hover:bg-primary disabled:opacity-50 text-surface-0 text-xs font-bold flex items-center gap-1.5 shadow-sm transition-transform hover:scale-105 cursor-pointer"
             >
-              <Save size={14} />
-              <span>Salva nel Diario della Campagna</span>
+              {isUploadingToCloud ? (
+                <>
+                  <Loader2 size={14} className="animate-spin" />
+                  <span>Caricamento su Cloud...</span>
+                </>
+              ) : (
+                <>
+                  <Save size={14} />
+                  <span>Salva nel Diario della Campagna</span>
+                </>
+              )}
             </button>
           </div>
         )}

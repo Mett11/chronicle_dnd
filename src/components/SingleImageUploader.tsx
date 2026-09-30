@@ -9,6 +9,8 @@ import {
   FileImage,
 } from 'lucide-react';
 import { ImageOptimizerModal } from './ImageOptimizer';
+import { FirebaseStorageService } from '../lib/firebaseStorageService';
+import { CampaignManager } from '../store/campaignStore';
 
 interface SingleImageUploaderProps {
   value: string;
@@ -62,9 +64,31 @@ export function SingleImageUploader({
     setPendingFiles([files[0]]);
   };
 
-  const handleOptimizerConfirm = (optimizedList: string[]) => {
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
+
+  const handleOptimizerConfirm = async (optimizedList: string[]) => {
     if (optimizedList.length > 0) {
-      onChange(optimizedList[0]);
+      const raw = optimizedList[0];
+      if (raw.startsWith('data:')) {
+        setIsUploadingImage(true);
+        try {
+          const code = CampaignManager.getActiveCampaignCode() || 'default';
+          const cdnUrl = await FirebaseStorageService.uploadMedia(
+            code,
+            'images',
+            `img_${Date.now()}.png`,
+            raw
+          );
+          onChange(cdnUrl || raw);
+        } catch (err) {
+          console.error('Errore upload immagine su Firebase Storage:', err);
+          onChange(raw);
+        } finally {
+          setIsUploadingImage(false);
+        }
+      } else {
+        onChange(raw);
+      }
     }
     setPendingFiles([]);
   };

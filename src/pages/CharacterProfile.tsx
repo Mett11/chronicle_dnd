@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from '../components/AuthProvider';
 import { CampaignManager } from '../store/campaignStore';
+import { FirebaseStorageService } from '../lib/firebaseStorageService';
 import { Note, Entity, Category, ScrapbookItem, DmResponse, CharacterBio, CharacterRelationship, EntityPartyRelation } from '../types';
 import { SingleImageUploader } from '../components/SingleImageUploader';
 import { ConfirmModal } from '../components/ConfirmModal';
@@ -548,13 +549,32 @@ export function CharacterProfile() {
     }
   };
 
-  const handleCreateMemory = (e: React.FormEvent) => {
+  const [isUploadingMemoryImage, setIsUploadingMemoryImage] = useState(false);
+
+  const handleCreateMemory = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!memoryTitle.trim() || !memoryImage.trim() || !targetPlayer) return;
 
+    setIsUploadingMemoryImage(true);
+    let finalImageUrl = memoryImage.trim();
+
+    try {
+      const code = CampaignManager.getActiveCampaignCode() || 'default';
+      finalImageUrl = await FirebaseStorageService.uploadMedia(
+        code,
+        'scrapbook',
+        memoryTitle.trim(),
+        memoryImage.trim()
+      );
+    } catch (err) {
+      console.warn('Errore upload memoria su Firebase Storage:', err);
+    } finally {
+      setIsUploadingMemoryImage(false);
+    }
+
     const newItem = CampaignManager.addScrapbookItem({
       title: memoryTitle.trim(),
-      imageUrl: memoryImage.trim(),
+      imageUrl: finalImageUrl,
       caption: memoryCaption.trim(),
       category: memoryCategory,
       loreDate: memoryLoreDate.trim() || undefined,

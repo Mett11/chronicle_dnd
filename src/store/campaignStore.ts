@@ -45,6 +45,8 @@ import { parseLoreDateString, formatLoreDate } from "../lib/loreDateUtils";
 import { CloudSyncService } from "../lib/cloudSync";
 import { UserPreferencesService } from "../lib/userPreferencesService";
 import { IndexedDbStorage } from "../lib/indexedDbStorage";
+import { SupabaseSyncService } from "../lib/supabaseSyncService";
+import { isSupabaseConfigured } from "../lib/supabase";
 
 const DEFAULT_MAPS: WorldMap[] = [];
 
@@ -2363,6 +2365,10 @@ export class CampaignManager {
     setCached(key, sanitized);
     safeLocalStorageSetItem(key, JSON.stringify(sanitized));
     CloudSyncService.triggerCloudSave();
+    if (isSupabaseConfigured()) {
+      const code = this.getActiveCampaignCode() || 'default';
+      sanitized.forEach((n) => SupabaseSyncService.saveNote(code, n));
+    }
     try {
       window.dispatchEvent(new CustomEvent('chronicle_notes_updated', { detail: { notes: sanitized } }));
     } catch {}
@@ -2924,6 +2930,10 @@ export class CampaignManager {
     const sanitized = sanitizeArray<Session>(sessions);
     setCached(key, sanitized);
     safeLocalStorageSetItem(key, JSON.stringify(sanitized));
+    if (isSupabaseConfigured()) {
+      const code = this.getActiveCampaignCode() || 'default';
+      sanitized.forEach((s) => SupabaseSyncService.saveSession(code, s));
+    }
     if (typeof window !== "undefined") {
       try {
         window.dispatchEvent(
@@ -3173,6 +3183,10 @@ export class CampaignManager {
     const sanitized = sanitizeArray<CampaignChapter>(deduped);
     setCached(key, sanitized);
     safeLocalStorageSetItem(key, JSON.stringify(sanitized));
+    if (isSupabaseConfigured()) {
+      const code = this.getActiveCampaignCode() || 'default';
+      sanitized.forEach((c) => SupabaseSyncService.saveChapter(code, c));
+    }
     if (typeof window !== "undefined") {
       try {
         window.dispatchEvent(
@@ -3380,6 +3394,10 @@ export class CampaignManager {
     cachedEntityLookupMap = null; // Invalidate memoized lookup map
     safeLocalStorageSetItem(key, JSON.stringify(sanitized));
     CloudSyncService.triggerCloudSave();
+    if (isSupabaseConfigured()) {
+      const code = this.getActiveCampaignCode() || 'default';
+      sanitized.forEach((e) => SupabaseSyncService.saveEntity(code, e));
+    }
     try {
       window.dispatchEvent(new CustomEvent('chronicle_entities_updated', { detail: { entities: sanitized } }));
     } catch {}
@@ -3969,6 +3987,10 @@ export class CampaignManager {
     setCached(key, sanitized);
     safeLocalStorageSetItem(key, JSON.stringify(sanitized));
     CloudSyncService.triggerCloudSave();
+    if (isSupabaseConfigured()) {
+      const code = this.getActiveCampaignCode() || 'default';
+      sanitized.forEach((m) => SupabaseSyncService.saveMap(code, m));
+    }
     try {
       window.dispatchEvent(new CustomEvent('chronicle_maps_updated', { detail: { maps: sanitized } }));
     } catch {}
@@ -4291,6 +4313,10 @@ export class CampaignManager {
     setCached(key, logs);
     safeLocalStorageSetItem(key, JSON.stringify(logs));
     CloudSyncService.triggerCloudSave();
+    if (isSupabaseConfigured()) {
+      const code = this.getActiveCampaignCode() || 'default';
+      logs.forEach((a) => SupabaseSyncService.saveAudioLog(code, a));
+    }
   }
 
   static addAudioLog(data: Omit<AudioLog, "id" | "createdAt">): AudioLog {
@@ -4329,6 +4355,10 @@ export class CampaignManager {
     setCached(key, items);
     safeLocalStorageSetItem(key, JSON.stringify(items));
     CloudSyncService.triggerCloudSave();
+    if (isSupabaseConfigured()) {
+      const code = this.getActiveCampaignCode() || 'default';
+      items.forEach((s) => SupabaseSyncService.saveScrapbookItem(code, s));
+    }
     if (typeof window !== "undefined") {
       window.dispatchEvent(new CustomEvent("chronicle_scrapbook_updated"));
       window.dispatchEvent(new CustomEvent("chronicle_data_updated"));

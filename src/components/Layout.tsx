@@ -27,6 +27,7 @@ import {
   Palette,
   User,
   Globe,
+  Database,
 } from 'lucide-react';
 import { CampaignManager } from '../store/campaignStore';
 import { NotificationsModal } from './NotificationsModal';
@@ -380,6 +381,7 @@ export function Layout() {
               <Download size={14} /> Installa App
             </button>
           )}
+
           <NavLink
             to="/settings"
             className={({ isActive }) =>
