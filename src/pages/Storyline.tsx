@@ -2138,85 +2138,171 @@ export function Storyline() {
   const storylineSlides = useMemo<StorylineSlide[]>(() => {
     const slides: StorylineSlide[] = [];
     let globalIdx = 0;
-    const targetNodes = filteredNodes.length > 0 ? filteredNodes : allTimelineNodes;
 
+    // Collect matching unique sessions from current view/filter
+    const matchingSessionIds = new Set<string>();
+    const targetNodes = filteredNodes.length > 0 ? filteredNodes : allTimelineNodes;
     targetNodes.forEach((node) => {
-      node.sessions.forEach((s) => {
-        const valid = (s.images || []).filter(Boolean);
-        if (valid.length > 0) {
-          const totalInSession = valid.length;
-          valid.forEach((imgUrl, imgIdx) => {
-            slides.push({
-              imageUrl: imgUrl,
-              nodeId: node.id,
-              nodeTitle: `Capitolo #${s.session.number}: ${s.title}`,
-              nodeDescription: s.recapText,
-              nodeType: 'session',
-              loreDate: node.fullDate || s.session.loreDate || s.session.date || '',
-              sessionNumber: s.session.number,
-              sessionTitle: s.session.title,
-              chapterName: s.session.chapterName,
-              location: s.location || node.allLocations[0],
-              eventType: s.category,
-              impact: s.impact,
-              imageIndexInNode: imgIdx,
-              nodeTotalImages: totalInSession,
-              globalIndex: globalIdx,
-              totalGlobalImages: 0,
-              sessionId: s.session._id,
-              sessionObj: s.session,
-              isPlaceholder: false,
-            });
-            globalIdx++;
-          });
-        } else {
-          // Session without photos: add a placeholder slide so presentation always works!
-          slides.push({
-            imageUrl: '',
-            nodeId: node.id,
-            nodeTitle: `Capitolo #${s.session.number}: ${s.title}`,
-            nodeDescription: s.recapText,
-            nodeType: 'session',
-            loreDate: node.fullDate || s.session.loreDate || s.session.date || '',
-            sessionNumber: s.session.number,
-            sessionTitle: s.session.title,
-            chapterName: s.session.chapterName,
-            location: s.location || node.allLocations[0],
-            eventType: s.category,
-            impact: s.impact,
-            imageIndexInNode: 0,
-            nodeTotalImages: 0,
-            globalIndex: globalIdx,
-            totalGlobalImages: 0,
-            sessionId: s.session._id,
-            sessionObj: s.session,
-            isPlaceholder: true,
-          });
-          globalIdx++;
+      node.sessions.forEach((ds) => {
+        if (ds.session && ds.session._id) {
+          matchingSessionIds.add(ds.session._id);
         }
       });
     });
 
+    const targetSessions = sortedSessions.filter((s) => matchingSessionIds.has(s._id));
+    const sessionsToProcess = targetSessions.length > 0 ? targetSessions : sortedSessions;
+
+    sessionsToProcess.forEach((s) => {
+      // 1. Gather & deduplicate images across session and all its events
+      const rawImages: string[] = [
+        ...(s.images || []),
+        ...(s.events || []).flatMap((e) => e.images || []),
+      ].filter(Boolean);
+
+      const uniqueImages: string[] = [];
+      const seenImages = new Set<string>();
+      for (const img of rawImages) {
+        const trimmed = typeof img === "string" ? img.trim() : "";
+        if (trimmed && !seenImages.has(trimmed)) {
+          seenImages.add(trimmed);
+          uniqueImages.push(trimmed);
+        }
+      }
+
+      // 2. Format lore date or lore date range
+      let formattedLoreDate = s.loreDate?.trim() || "";
+      if (!formattedLoreDate) {
+        const extractedDays = extractLoreDaysForSession(s, calendar);
+        if (extractedDays.length > 0) {
+          const first = extractedDays[0];
+          const last = extractedDays[extractedDays.length - 1];
+          if (first.dayProgress?.fullSpanRange) {
+            formattedLoreDate = first.dayProgress.fullSpanRange;
+          } else if (extractedDays.length > 1) {
+            formattedLoreDate = `${first.shortDate} - ${last.fullDate}`;
+          } else {
+            formattedLoreDate = first.fullDate;
+          }
+        }
+      }
+      if (!formattedLoreDate) {
+        formattedLoreDate = s.date ? `Sessione del ${s.date}` : "";
+      }
+
+      // 3. Extract clean recap text
+      let recapText = "";
+      if (s.recap && Array.isArray(s.recap) && s.recap[0]?.children?.[0]?.text) {
+        recapText = s.recap[0].children[0].text;
+      } else if (typeof s.recap === "string") {
+        recapText = s.recap;
+      } else {
+        recapText = "Sessione di campagna registrata.";
+      }
+
+      // 4. Determine category, location and impact
+      const category = deduceEventType(s.title, recapText, s.sessionType);
+      const location = s.events?.find((e) => e.location)?.location;
+      const impact = s.events?.some((e) => e.impact === "major") ? "major" : "normal";
+
+      if (uniqueImages.length > 0) {
+        const totalInSession = uniqueImages.length;
+        uniqueImages.forEach((imgUrl, imgIdx) => {
+          slides.push({
+            imageUrl: imgUrl,
+            nodeId: `sess_${s._id}`,
+            nodeTitle: `Capitolo #${s.number}: ${s.title}`,
+            nodeDescription: recapText,
+            nodeType: "session",
+            loreDate: formattedLoreDate,
+            sessionNumber: s.number,
+            sessionTitle: s.title,
+            chapterName: s.chapterName,
+            location: location,
+            eventType: category,
+            impact: impact,
+            imageIndexInNode: imgIdx,
+            nodeTotalImages: totalInSession,
+            globalIndex: globalIdx,
+            totalGlobalImages: 0,
+            sessionId: s._id,
+            sessionObj: s,
+            isPlaceholder: false,
+          });
+          globalIdx++;
+        });
+      } else {
+        // Session without photos: add a single placeholder slide so every session is represented as a chapter
+        slides.push({
+          imageUrl: "",
+          nodeId: `sess_${s._id}`,
+          nodeTitle: `Capitolo #${s.number}: ${s.title}`,
+          nodeDescription: recapText,
+          nodeType: "session",
+          loreDate: formattedLoreDate,
+          sessionNumber: s.number,
+          sessionTitle: s.title,
+          chapterName: s.chapterName,
+          location: location,
+          eventType: category,
+          impact: impact,
+          imageIndexInNode: 0,
+          nodeTotalImages: 0,
+          globalIndex: globalIdx,
+          totalGlobalImages: 0,
+          sessionId: s._id,
+          sessionObj: s,
+          isPlaceholder: true,
+        });
+        globalIdx++;
+      }
+    });
+
     return slides.map((s) => ({ ...s, totalGlobalImages: slides.length }));
-  }, [filteredNodes, allTimelineNodes]);
+  }, [filteredNodes, allTimelineNodes, sortedSessions, calendar]);
 
   const handleOpenImage = useCallback(
     (img: string, node?: StorylineDayNode, imageIndexInNode = 0) => {
       if (storylineSlides.length === 0) return;
-      if (node) {
+
+      const targetSessionId = node?.sessions?.[0]?.session?._id;
+
+      if (img) {
         const foundIdx = storylineSlides.findIndex(
-          (s) => s.nodeId === node.id && (s.imageIndexInNode === imageIndexInNode || s.imageUrl === img)
+          (s) => s.imageUrl === img && (!targetSessionId || s.sessionId === targetSessionId)
         );
         if (foundIdx !== -1) {
           setFullscreenInitialSlideIndex(foundIdx);
-        } else {
-          const firstByNode = storylineSlides.findIndex((s) => s.nodeId === node.id);
-          setFullscreenInitialSlideIndex(firstByNode !== -1 ? firstByNode : 0);
+          setIsFullscreenViewerOpen(true);
+          return;
         }
-      } else {
-        const imgIdx = storylineSlides.findIndex((s) => s.imageUrl === img);
-        setFullscreenInitialSlideIndex(imgIdx !== -1 ? imgIdx : 0);
+        const foundByImg = storylineSlides.findIndex((s) => s.imageUrl === img);
+        if (foundByImg !== -1) {
+          setFullscreenInitialSlideIndex(foundByImg);
+          setIsFullscreenViewerOpen(true);
+          return;
+        }
       }
+
+      if (targetSessionId) {
+        const foundIdx = storylineSlides.findIndex((s) => s.sessionId === targetSessionId);
+        if (foundIdx !== -1) {
+          setFullscreenInitialSlideIndex(foundIdx + Math.max(0, imageIndexInNode));
+          setIsFullscreenViewerOpen(true);
+          return;
+        }
+      }
+
+      if (node) {
+        const firstByNode = storylineSlides.findIndex(
+          (s) => s.nodeId === node.id || (s.sessionId && node.sessions.some((ns) => ns.session._id === s.sessionId))
+        );
+        setFullscreenInitialSlideIndex(firstByNode !== -1 ? firstByNode : 0);
+        setIsFullscreenViewerOpen(true);
+        return;
+      }
+
+      setFullscreenInitialSlideIndex(0);
       setIsFullscreenViewerOpen(true);
     },
     [storylineSlides]
@@ -3145,9 +3231,12 @@ export function Storyline() {
         initialSlideIndex={fullscreenInitialSlideIndex}
         onSelectNode={(nodeId) => {
           scrollToNode(nodeId);
-          const targetNode = allTimelineNodes.find((n) => n.id === nodeId);
+          const targetNode = allTimelineNodes.find(
+            (n) => n.id === nodeId || n.sessions.some((s) => s.session._id === nodeId || `sess_${s.session._id}` === nodeId)
+          );
           if (targetNode) {
             setInspectedNode(targetNode);
+            scrollToNode(targetNode.id);
           }
         }}
       />

@@ -27,18 +27,26 @@ import {
   FileText,
   GripVertical,
   SlidersHorizontal,
+  Share2,
+  Check,
+  Loader2,
+  ExternalLink,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Link } from 'react-router-dom';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { Portal } from './Portal';
+import { CloudSyncService } from '../lib/cloudSync';
+import { CampaignManager } from '../store/campaignStore';
+import { extractTextFromContent, safeString } from '../lib/sanitize';
+import { generateCampaignShareToken, buildClientPresentationUrl, copyTextToClipboard } from '../lib/shareToken';
 
 export interface StorylineSlide {
   imageUrl: string;
   nodeId: string;
   nodeTitle: string;
   nodeDescription?: string;
-  nodeType: 'session' | 'event';
+  nodeType: 'session' | 'event' | 'chapter';
   loreDate: string;
   sessionNumber: number;
   sessionTitle: string;
@@ -53,6 +61,7 @@ export interface StorylineSlide {
   sessionId?: string;
   sessionObj?: any;
   isPlaceholder?: boolean;
+  isChapterCover?: boolean;
 }
 
 interface StorylineFullscreenViewerProps {
@@ -61,6 +70,8 @@ interface StorylineFullscreenViewerProps {
   isOpen: boolean;
   onClose: () => void;
   onSelectNode?: (nodeId: string) => void;
+  isPublicShare?: boolean;
+  campaignCode?: string;
 }
 
 // Dedicated Mobile Cronaca Viewer (Direct Fullscreen Card & Artwork with Reading Mode)
@@ -69,14 +80,52 @@ const MobileCronacaViewer: React.FC<{
   initialSlideIndex: number;
   onClose: () => void;
   onSelectNode?: (nodeId: string) => void;
-}> = ({ slides, initialSlideIndex, onClose, onSelectNode }) => {
+  isPublicShare?: boolean;
+  campaignCode?: string;
+}> = ({ slides, initialSlideIndex, onClose, onSelectNode, isPublicShare, campaignCode }) => {
   const [currentIndex, setCurrentIndex] = useState(initialSlideIndex);
   const [isReadingMode, setIsReadingMode] = useState(false);
+  const [isCopied, setIsCopied] = useState(false);
+  const [isSharing, setIsSharing] = useState(false);
 
   useEffect(() => {
     setCurrentIndex(Math.max(0, Math.min(initialSlideIndex, slides.length - 1)));
     setIsReadingMode(false);
   }, [initialSlideIndex, slides.length]);
+
+  const [showShareModalUrl, setShowShareModalUrl] = useState<string | null>(null);
+  const [isPublishingShare, setIsPublishingShare] = useState(false);
+  const [shareSuccess, setShareSuccess] = useState<boolean | null>(null);
+
+  const handleShareMobile = (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    const meta = CampaignManager.getCampaignMeta();
+    const code = (campaignCode || CampaignManager.getActiveCampaignCode() || meta?.code || '').trim().toUpperCase();
+    const campaignTitle = (meta?.name || 'Campagna').trim();
+    const immediateUrl = buildClientPresentationUrl(campaignTitle, code);
+
+    setShowShareModalUrl(immediateUrl);
+    setIsPublishingShare(true);
+    setShareSuccess(null);
+
+    CloudSyncService.publishPublicPresentation(code).then((result) => {
+      setIsPublishingShare(false);
+      setShareSuccess(result.success);
+      const finalUrl = result.url || immediateUrl;
+      setShowShareModalUrl(finalUrl);
+
+      copyTextToClipboard(finalUrl).then((copied) => {
+        if (copied) {
+          setIsCopied(true);
+          setTimeout(() => setIsCopied(false), 3000);
+        }
+      });
+    }).catch((err) => {
+      console.warn('Share error:', err);
+      setIsPublishingShare(false);
+      setShareSuccess(false);
+    });
+  };
 
   const currentSlide: StorylineSlide | undefined = slides[currentIndex];
   if (!currentSlide) return null;
@@ -142,8 +191,9 @@ const MobileCronacaViewer: React.FC<{
 
   // Clean raw excerpt without mentions or markdown syntax
   const cleanExcerpt = useMemo(() => {
-    if (!currentSlide.nodeDescription) return '';
-    return currentSlide.nodeDescription
+    const raw = extractTextFromContent(currentSlide.nodeDescription);
+    if (!raw) return '';
+    return raw
       .replace(/!\[.*?\]\(.*?\)/g, '')
       .replace(/@\[(.*?)\]/g, '$1')
       .replace(/(?<!\[)@([a-zA-Z0-9_'\u00C0-\u017F-]+)/g, '$1')
@@ -158,8 +208,12 @@ const MobileCronacaViewer: React.FC<{
         {/* Top Minimal Bar */}
         <div className="relative z-30 flex items-center justify-between p-4 pt-safe shrink-0 bg-gradient-to-b from-black/80 to-transparent">
           <div className="flex items-center gap-2">
-            <span className="px-2.5 py-1 rounded-full bg-surface-1/80 backdrop-blur-md text-xs font-mono font-semibold text-primary border border-primary/30">
-              Cap. #{currentSlide.sessionNumber}
+            <span className={`px-2.5 py-1 rounded-full backdrop-blur-md text-xs font-mono font-semibold border ${
+              currentSlide.isChapterCover
+                ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                : 'bg-surface-1/80 text-primary border-primary/30'
+            }`}>
+              {currentSlide.isChapterCover ? 'Copertina Capitolo' : `Cap. #${currentSlide.sessionNumber}`}
             </span>
             <span className="text-xs font-mono text-content-3">
               {currentIndex + 1} / {slides.length}
@@ -169,9 +223,27 @@ const MobileCronacaViewer: React.FC<{
                 Foto {currentPhotoIndexInSession + 1}/{sessionSlides.length}
               </span>
             )}
+            {isPublicShare && (
+              <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 text-[10px] font-mono font-semibold border border-emerald-500/30">
+                Sola Lettura
+              </span>
+            )}
           </div>
 
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleShareMobile}
+              disabled={isSharing}
+              className={`p-2 rounded-full backdrop-blur-md border transition-colors cursor-pointer shadow-lg active:scale-95 ${
+                isCopied
+                  ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
+                  : 'bg-surface-1/80 hover:bg-surface-2 text-content-1 border-surface-3'
+              }`}
+              title="Condividi Presentazione"
+            >
+              {isCopied ? <Check size={16} className="text-emerald-400" /> : <Share2 size={16} className="text-primary" />}
+            </button>
             <button
               type="button"
               onClick={onClose}
@@ -234,24 +306,30 @@ const MobileCronacaViewer: React.FC<{
               </div>
             </>
           ) : (
-            /* CONSISTENT PLACEHOLDER FRAME FOR SESSIONS WITHOUT IMAGES */
+            /* CONSISTENT PLACEHOLDER FRAME FOR SESSIONS/CHAPTERS WITHOUT IMAGES */
             <div
               className="relative z-10 w-full max-w-[88vw] h-[55vh] flex flex-col items-center justify-center p-6 rounded-2xl bg-surface-1/90 border border-surface-2/80 shadow-2xl cursor-pointer group text-center space-y-3"
               onClick={() => setIsReadingMode(true)}
             >
-              <div className="w-16 h-16 rounded-2xl bg-surface-2/80 border border-surface-3 flex items-center justify-center text-primary shadow-inner">
+              <div className={`w-16 h-16 rounded-2xl border flex items-center justify-center shadow-inner ${
+                currentSlide.isChapterCover
+                  ? 'bg-amber-500/10 border-amber-500/30 text-amber-400'
+                  : 'bg-surface-2/80 border-surface-3 text-primary'
+              }`}>
                 <BookOpen size={28} />
               </div>
 
               <div className="space-y-1 max-w-xs">
-                <p className="text-xs font-mono font-semibold text-primary uppercase tracking-wider">
-                  Capitolo #{currentSlide.sessionNumber}
+                <p className={`text-xs font-mono font-semibold uppercase tracking-wider ${
+                  currentSlide.isChapterCover ? 'text-amber-400' : 'text-primary'
+                }`}>
+                  {currentSlide.isChapterCover ? 'Apertura Capitolo' : `Capitolo #${currentSlide.sessionNumber}`}
                 </p>
                 <h3 className="text-base font-heading font-bold text-content-1 leading-snug">
-                  {currentSlide.sessionTitle || currentSlide.nodeTitle}
+                  {currentSlide.chapterName || currentSlide.sessionTitle || currentSlide.nodeTitle}
                 </h3>
                 <p className="text-xs text-content-3 line-clamp-2 pt-1">
-                  Nessuna immagine memorizzata per questa sessione.
+                  {currentSlide.isChapterCover ? 'Tocca per leggere la descrizione del capitolo.' : 'Nessuna immagine memorizzata per questa sessione.'}
                 </p>
               </div>
 
@@ -259,7 +337,7 @@ const MobileCronacaViewer: React.FC<{
                 <span className="px-3.5 py-1.5 rounded-xl bg-surface-2 text-content-1 text-xs font-medium border border-surface-3 group-hover:bg-surface-3 transition-colors shadow-xs">
                   Tocca per aprire la cronaca intera
                 </span>
-                {currentSlide.sessionId && (
+                {!isPublicShare && currentSlide.sessionId && !currentSlide.isChapterCover && (
                   <Link
                     to={`/sessions?select=${currentSlide.sessionId}`}
                     onClick={(e) => {
@@ -282,8 +360,10 @@ const MobileCronacaViewer: React.FC<{
           className="relative z-30 p-4 pb-safe bg-gradient-to-t from-black/95 via-black/85 to-transparent cursor-pointer"
         >
           <div className="space-y-1.5 max-w-md mx-auto">
-            <div className="flex items-center gap-1.5 text-[11px] font-mono text-primary">
-              <span>Capitolo #{currentSlide.sessionNumber}</span>
+            <div className={`flex items-center gap-1.5 text-[11px] font-mono ${
+              currentSlide.isChapterCover ? 'text-amber-400' : 'text-primary'
+            }`}>
+              <span>{currentSlide.isChapterCover ? 'Apertura Capitolo' : `Capitolo #${currentSlide.sessionNumber}`}</span>
               {currentSlide.loreDate && (
                 <>
                   <span className="text-content-3">&bull;</span>
@@ -374,7 +454,7 @@ const MobileCronacaViewer: React.FC<{
                 </button>
               </div>
 
-              {/* Scrollable Markdown Body (Clean native vertical scroll without any touch interception) */}
+              {/* Scrollable Markdown Body */}
               <div
                 className="flex-1 overflow-y-auto custom-scrollbar p-5 space-y-4 text-xs sm:text-sm text-content-1 leading-relaxed overscroll-contain"
                 onClick={(e) => e.stopPropagation()}
@@ -394,7 +474,7 @@ const MobileCronacaViewer: React.FC<{
                 className="p-3 pb-safe border-t border-surface-2/80 bg-surface-1/90 flex items-center justify-between gap-3 shrink-0"
                 onClick={(e) => e.stopPropagation()}
               >
-                {currentSlide.sessionId && (
+                {!isPublicShare && currentSlide.sessionId && (
                   <Link
                     to={`/sessions?select=${currentSlide.sessionId}`}
                     onClick={() => {
@@ -417,6 +497,79 @@ const MobileCronacaViewer: React.FC<{
             </div>
           )}
         </AnimatePresence>
+
+        {/* Share Link Modal */}
+        {showShareModalUrl && (
+          <div
+            className="fixed inset-0 z-[200] bg-black/80 backdrop-blur-md flex items-center justify-center p-4"
+            onClick={() => setShowShareModalUrl(null)}
+          >
+            <div
+              className="bg-surface-1 border border-surface-3 rounded-2xl p-5 max-w-sm w-full shadow-2xl space-y-3 select-text"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-primary font-bold text-xs">
+                  <Share2 size={16} />
+                  <span>Link Presentazione Pubblica</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowShareModalUrl(null)}
+                  className="p-1 rounded-lg text-content-3 hover:text-content-1 hover:bg-surface-2"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              <p className="text-[11px] text-content-3 leading-relaxed">
+                La presentazione è stata pubblicata. Condividi questo link con il tuo party:
+              </p>
+
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  readOnly
+                  value={showShareModalUrl}
+                  className="flex-1 bg-surface-2 border border-surface-3 rounded-xl px-2.5 py-1.5 text-xs font-mono text-content-1 select-all focus:outline-none"
+                  onClick={(e) => (e.target as HTMLInputElement).select()}
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (navigator.clipboard) {
+                      navigator.clipboard.writeText(showShareModalUrl);
+                    }
+                    setIsCopied(true);
+                    setTimeout(() => setIsCopied(false), 3000);
+                  }}
+                  className="px-3 py-1.5 rounded-xl bg-primary text-surface-0 font-medium text-xs hover:bg-primary-hover flex items-center gap-1 shrink-0"
+                >
+                  {isCopied ? <Check size={13} /> : <Share2 size={13} />}
+                  <span>{isCopied ? 'Copiato!' : 'Copia'}</span>
+                </button>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-1">
+                <a
+                  href={showShareModalUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-3 py-1.5 rounded-xl bg-surface-2 hover:bg-surface-3 text-content-2 hover:text-content-1 text-xs font-medium"
+                >
+                  Apri Link
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setShowShareModalUrl(null)}
+                  className="px-3.5 py-1.5 rounded-xl bg-surface-2 hover:bg-surface-3 text-content-1 text-xs font-semibold"
+                >
+                  Chiudi
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </Portal>
   );
@@ -428,6 +581,8 @@ export const StorylineFullscreenViewer: React.FC<StorylineFullscreenViewerProps>
   isOpen,
   onClose,
   onSelectNode,
+  isPublicShare = false,
+  campaignCode,
 }) => {
   const [currentIndex, setCurrentIndex] = useState(initialSlideIndex);
   const [scale, setScale] = useState(1);
@@ -436,6 +591,42 @@ export const StorylineFullscreenViewer: React.FC<StorylineFullscreenViewerProps>
   const [isPlaying, setIsPlaying] = useState(false);
   const [showFilmstrip, setShowFilmstrip] = useState(true);
   const [theaterMode, setTheaterMode] = useState(false);
+  const [isCopied, setIsCopied] = useState(false);
+  const [isSharing, setIsSharing] = useState(false);
+  const [isPublishingShare, setIsPublishingShare] = useState(false);
+  const [shareSuccess, setShareSuccess] = useState<boolean | null>(null);
+
+  const [showShareModalUrl, setShowShareModalUrl] = useState<string | null>(null);
+
+  const handleShare = (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    const meta = CampaignManager.getCampaignMeta();
+    const code = (campaignCode || CampaignManager.getActiveCampaignCode() || meta?.code || '').trim().toUpperCase();
+    const campaignTitle = (meta?.name || 'Campagna').trim();
+    const immediateUrl = buildClientPresentationUrl(campaignTitle, code);
+
+    setShowShareModalUrl(immediateUrl);
+    setIsPublishingShare(true);
+    setShareSuccess(null);
+
+    CloudSyncService.publishPublicPresentation(code).then((result) => {
+      setIsPublishingShare(false);
+      setShareSuccess(result.success);
+      const finalUrl = result.url || immediateUrl;
+      setShowShareModalUrl(finalUrl);
+
+      copyTextToClipboard(finalUrl).then((copied) => {
+        if (copied) {
+          setIsCopied(true);
+          setTimeout(() => setIsCopied(false), 3000);
+        }
+      });
+    }).catch((err) => {
+      console.warn('Share presentation error:', err);
+      setIsPublishingShare(false);
+      setShareSuccess(false);
+    });
+  };
 
   // Dynamic resizable panel width (range 280px to 850px)
   const [panelWidth, setPanelWidth] = useState<number>(() => {
@@ -588,6 +779,8 @@ export const StorylineFullscreenViewer: React.FC<StorylineFullscreenViewerProps>
         initialSlideIndex={initialSlideIndex}
         onClose={onClose}
         onSelectNode={onSelectNode}
+        isPublicShare={isPublicShare}
+        campaignCode={campaignCode}
       />
     );
   }
@@ -629,6 +822,11 @@ export const StorylineFullscreenViewer: React.FC<StorylineFullscreenViewerProps>
                         Snodo Cruciale
                       </span>
                     )}
+                    {isPublicShare && (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                        Sola Lettura
+                      </span>
+                    )}
                   </div>
                   <div className="flex items-center gap-2 text-[11px] text-content-3 font-mono">
                     <span>Sessione #{currentSlide.sessionNumber}</span>
@@ -663,6 +861,22 @@ export const StorylineFullscreenViewer: React.FC<StorylineFullscreenViewerProps>
 
               {/* Right: Actions (Autoplay, Split Drawer Toggle, Filmstrip, Zoom, Theater, Close) */}
               <div className="flex items-center gap-1.5 shrink-0">
+                {/* Condividi Presentazione Link */}
+                <button
+                  type="button"
+                  onClick={handleShare}
+                  disabled={isSharing}
+                  className={`px-3 py-1.5 rounded-xl border text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer ${
+                    isCopied
+                      ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40 shadow-sm'
+                      : 'bg-surface-2 hover:bg-surface-3 text-content-2 hover:text-content-1 border-surface-3'
+                  }`}
+                  title="Copia link pubblico di sola lettura per condividere la cronaca"
+                >
+                  {isCopied ? <Check size={13} className="text-emerald-400" /> : <Share2 size={13} className="text-primary" />}
+                  <span className="hidden sm:inline">{isCopied ? 'Link Copiato!' : 'Condividi'}</span>
+                </button>
+
                 {/* Autoplay Slideshow */}
                 <button
                   type="button"
@@ -838,22 +1052,23 @@ export const StorylineFullscreenViewer: React.FC<StorylineFullscreenViewerProps>
                     />
                   ) : (
                     <div className="w-full max-w-lg bg-surface-1/95 backdrop-blur-md border border-surface-3 rounded-2xl p-6 sm:p-8 flex flex-col items-center justify-center text-center shadow-2xl relative">
-                      <div className="w-14 h-14 rounded-2xl bg-primary/10 border border-primary/20 text-primary flex items-center justify-center mb-3">
-                        <Sparkles size={26} />
+                      <div className={`w-14 h-14 rounded-2xl border flex items-center justify-center mb-3 ${
+                        currentSlide.isChapterCover
+                          ? 'bg-amber-500/10 border-amber-500/20 text-amber-400'
+                          : 'bg-primary/10 border-primary/20 text-primary'
+                      }`}>
+                        <BookOpen size={26} />
                       </div>
-                      <span className="text-[11px] font-mono tracking-wider uppercase text-primary mb-1">
-                        Capitolo #{currentSlide.sessionNumber} • {currentSlide.loreDate || 'Data Ignota'}
+                      <span className={`text-[11px] font-mono tracking-wider uppercase mb-1 ${
+                        currentSlide.isChapterCover ? 'text-amber-400' : 'text-primary'
+                      }`}>
+                        {currentSlide.isChapterCover ? 'Copertina Capitolo' : `Capitolo #${currentSlide.sessionNumber}`} • {safeString(currentSlide.loreDate, 'Data Ignota')}
                       </span>
                       <h3 className="text-lg sm:text-xl font-heading font-bold text-content-1 mb-2">
-                        {currentSlide.sessionTitle || currentSlide.nodeTitle}
+                        {safeString(currentSlide.chapterName || currentSlide.sessionTitle || currentSlide.nodeTitle)}
                       </h3>
-                      {currentSlide.chapterName && (
-                        <span className="text-xs font-serif text-accent mb-2">
-                          {currentSlide.chapterName}
-                        </span>
-                      )}
                       <p className="text-xs text-content-3 max-w-md mb-6 line-clamp-3 leading-relaxed">
-                        {currentSlide.nodeDescription || 'Nessun riepilogo testuale registrato per questa sessione.'}
+                        {safeString(currentSlide.nodeDescription, currentSlide.isChapterCover ? 'Descrizione del capitolo.' : 'Nessun riepilogo testuale registrato per questa sessione.')}
                       </p>
                     </div>
                   )}
@@ -936,7 +1151,7 @@ export const StorylineFullscreenViewer: React.FC<StorylineFullscreenViewerProps>
                   </div>
 
                   <h3 className="font-heading font-bold text-lg sm:text-xl text-content-1 leading-snug">
-                    {currentSlide.nodeTitle}
+                    {safeString(currentSlide.nodeTitle)}
                   </h3>
 
                   {/* Metadata Chips: Date, Location, Session */}
@@ -944,13 +1159,13 @@ export const StorylineFullscreenViewer: React.FC<StorylineFullscreenViewerProps>
                     {currentSlide.loreDate && (
                       <div className="flex items-center gap-1 bg-surface-2 px-2.5 py-1 rounded-lg border border-surface-3 font-mono text-[11px]">
                         <Calendar size={12} className="text-primary shrink-0" />
-                        <span>{currentSlide.loreDate}</span>
+                        <span>{safeString(currentSlide.loreDate)}</span>
                       </div>
                     )}
                     {currentSlide.location && (
                       <div className="flex items-center gap-1 bg-surface-2 px-2.5 py-1 rounded-lg border border-surface-3 text-[11px]">
                         <MapPin size={12} className="text-accent-secondary shrink-0" />
-                        <span>{currentSlide.location}</span>
+                        <span>{safeString(currentSlide.location)}</span>
                       </div>
                     )}
                     <div className="flex items-center gap-1 bg-surface-2 px-2.5 py-1 rounded-lg border border-surface-3 text-[11px] font-mono">
@@ -1009,7 +1224,7 @@ export const StorylineFullscreenViewer: React.FC<StorylineFullscreenViewerProps>
 
                 {/* Drawer Footer Actions */}
                 <div className="p-3 sm:p-4 border-t border-surface-3/60 bg-surface-1/80 shrink-0 space-y-2">
-                  {onSelectNode && (
+                  {onSelectNode && !isPublicShare && (
                     <button
                       type="button"
                       onClick={() => {
@@ -1058,8 +1273,11 @@ export const StorylineFullscreenViewer: React.FC<StorylineFullscreenViewerProps>
                     <div key={idx} className="flex items-center gap-2 shrink-0">
                       {/* Node Divider pill if it's the start of a new node */}
                       {isFirstOfNode && (
-                        <div className="px-2 py-1 rounded-lg bg-surface-2 border border-surface-3 text-[10px] font-semibold text-content-2 max-w-[120px] truncate shadow-sm">
-                          {s.nodeTitle}
+                        <div
+                          className="px-2.5 py-1 rounded-lg bg-surface-2 border border-surface-3 text-[10px] font-mono font-semibold text-primary max-w-[150px] truncate shadow-sm shrink-0"
+                          title={s.nodeTitle}
+                        >
+                          Cap. #{s.sessionNumber}
                         </div>
                       )}
 
@@ -1101,6 +1319,113 @@ export const StorylineFullscreenViewer: React.FC<StorylineFullscreenViewerProps>
             </motion.div>
           )}
         </AnimatePresence>
+
+        {/* Share Link Modal */}
+        {showShareModalUrl && (
+          <div
+            className="fixed inset-0 z-[200] bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-150"
+            onClick={() => setShowShareModalUrl(null)}
+          >
+            <div
+              className="bg-surface-1 border border-surface-3 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4 select-text"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-primary font-bold text-sm">
+                  <Share2 size={18} />
+                  <span>Link Presentazione Pubblica</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowShareModalUrl(null)}
+                  className="p-1 rounded-lg text-content-3 hover:text-content-1 hover:bg-surface-2 cursor-pointer"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <p className="text-xs text-content-3 leading-relaxed">
+                Condividi questo link pubblico di sola lettura per permettere al tuo party o a ospiti esterni di visualizzare la presentazione:
+              </p>
+
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  readOnly
+                  disabled={isPublishingShare}
+                  value={showShareModalUrl}
+                  className={`flex-1 bg-surface-2 border border-surface-3 rounded-xl px-3 py-2 text-xs font-mono text-content-1 focus:outline-none focus:border-primary ${
+                    isPublishingShare ? 'opacity-50 select-none' : 'select-all'
+                  }`}
+                  onClick={(e) => !isPublishingShare && (e.target as HTMLInputElement).select()}
+                />
+                <button
+                  type="button"
+                  disabled={isPublishingShare}
+                  onClick={() => {
+                    if (isPublishingShare) return;
+                    copyTextToClipboard(showShareModalUrl).then(() => {
+                      setIsCopied(true);
+                      setTimeout(() => setIsCopied(false), 3000);
+                    });
+                  }}
+                  className={`px-3.5 py-2 rounded-xl font-medium text-xs flex items-center gap-1.5 shrink-0 transition-all ${
+                    isPublishingShare
+                      ? 'opacity-40 bg-surface-2 text-content-3 border border-surface-3 cursor-not-allowed pointer-events-none'
+                      : 'bg-primary text-surface-0 hover:bg-primary-hover cursor-pointer'
+                  }`}
+                >
+                  {isCopied ? <Check size={14} className="text-surface-0" /> : <Share2 size={14} />}
+                  <span>{isCopied ? 'Copiato!' : 'Copia'}</span>
+                </button>
+              </div>
+
+              <div className="flex items-center justify-between pt-1">
+                <div className="text-[11px] flex items-center gap-1.5 font-medium">
+                  {isPublishingShare ? (
+                    <>
+                      <Loader2 size={13} className="animate-spin text-amber-500" />
+                      <span className="text-amber-400 font-semibold">Generazione e sincronizzazione cloud...</span>
+                    </>
+                  ) : shareSuccess === true ? (
+                    <>
+                      <Check size={13} className="text-emerald-400" />
+                      <span className="text-emerald-400 font-medium">Sincronizzato e pronto online</span>
+                    </>
+                  ) : shareSuccess === false ? (
+                    <span className="text-amber-400 font-medium">Link pronto localmente</span>
+                  ) : (
+                    <span className="text-content-3">Link pronto</span>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <a
+                    href={isPublishingShare ? undefined : showShareModalUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={(e) => isPublishingShare && e.preventDefault()}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-medium transition-all flex items-center gap-1 ${
+                      isPublishingShare
+                        ? 'opacity-40 bg-surface-2 text-content-3 cursor-not-allowed pointer-events-none'
+                        : 'bg-surface-2 hover:bg-surface-3 text-content-2 hover:text-content-1 cursor-pointer'
+                    }`}
+                  >
+                    <ExternalLink size={12} />
+                    <span>Apri</span>
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() => setShowShareModalUrl(null)}
+                    className="px-4 py-1.5 rounded-xl bg-surface-2 hover:bg-surface-3 text-content-1 text-xs font-semibold transition-colors cursor-pointer"
+                  >
+                    Chiudi
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </Portal>
   );

@@ -78,3 +78,65 @@ export function isSafeUrl(url: string): boolean {
   }
   return true;
 }
+
+/**
+ * Recursively extracts a safe plain text / markdown string from arbitrary content,
+ * supporting plain strings, numbers, Portable Text block objects ({_type: 'block', children: [...]}),
+ * nested block arrays, and unknown entity structures. Prevents Minified React Error #31.
+ */
+export function extractTextFromContent(content: any): string {
+  if (content === null || content === undefined) return '';
+  if (typeof content === 'string') return content;
+  if (typeof content === 'number' || typeof content === 'boolean') return String(content);
+
+  if (Array.isArray(content)) {
+    return content.map(extractTextFromContent).filter(Boolean).join('\n\n');
+  }
+
+  if (typeof content === 'object') {
+    // 1. Check direct string fields
+    if (typeof content.text === 'string') return content.text;
+    if (typeof content.value === 'string') return content.value;
+    if (typeof content.name === 'string') return content.name;
+    if (typeof content.title === 'string') return content.title;
+    if (typeof content.label === 'string') return content.label;
+
+    // 2. Check Portable Text / rich text children array
+    if (Array.isArray(content.children)) {
+      return content.children.map(extractTextFromContent).filter(Boolean).join('');
+    }
+
+    // 3. Check nested block / span fields
+    if (content._type === 'block' || content._type === 'span') {
+      if (Array.isArray(content.children)) {
+        return content.children.map(extractTextFromContent).filter(Boolean).join('');
+      }
+      if (typeof content.text === 'string') return content.text;
+    }
+
+    // 4. Check nested document properties
+    if (content.recap) return extractTextFromContent(content.recap);
+    if (content.synopsis) return extractTextFromContent(content.synopsis);
+    if (content.notes) return extractTextFromContent(content.notes);
+    if (content.description) return extractTextFromContent(content.description);
+    if (content.summary) return extractTextFromContent(content.summary);
+    if (content.chapterName) return extractTextFromContent(content.chapterName);
+    if (content.location) return extractTextFromContent(content.location);
+
+    // 5. Fallback for object: NEVER return the object itself
+    return '';
+  }
+
+  return '';
+}
+
+/**
+ * Ensures any value passed to React children is a clean primitive string,
+ * preventing Minified React Error #31 when rendering objects.
+ */
+export function safeString(val: any, fallback = ''): string {
+  const extracted = extractTextFromContent(val);
+  return extracted || fallback;
+}
+
+

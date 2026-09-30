@@ -7,7 +7,7 @@ import { initPwa } from './lib/pwa';
 import { CampaignManager } from './store/campaignStore';
 import { SessionMemorySyncService } from './lib/sessionMemorySyncService';
 
-// Expose on window for easy inspection and console debugging
+// Expose on window for easy inspection and console debugging.
 if (typeof window !== 'undefined') {
   (window as any).CampaignManager = CampaignManager;
   (window as any).SessionMemorySyncService = SessionMemorySyncService;

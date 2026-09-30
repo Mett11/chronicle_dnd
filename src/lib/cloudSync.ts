@@ -2,6 +2,8 @@ import { doc, getDoc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
 import { db, auth } from './firebase';
 import { CampaignManager } from '../store/campaignStore';
 import { UserProfileSyncService } from './userProfileSync';
+import { generateCampaignShareToken, resolveCampaignPresentationSlug, slugifyCampaignTitle, reverseCode } from './shareToken';
+import { extractTextFromContent } from './sanitize';
 import {
   UserAccount,
   CampaignMeta,
@@ -68,6 +70,61 @@ function sanitizeFirestorePayload<T>(obj: T): T {
       return value;
     })
   );
+}
+
+/**
+ * Compresses an image data URL for presentation sharing so all session artwork
+ * fits reliably within Firestore document limits without loss of detail.
+ */
+async function compressPresentationImage(imgStr: string): Promise<string> {
+  if (!imgStr || typeof imgStr !== 'string') return '';
+  if (!imgStr.startsWith('data:image')) return imgStr;
+  if (imgStr.length < 60000) return imgStr; // already small (< 45 KB)
+
+  if (typeof document === 'undefined') return imgStr;
+
+  return new Promise((resolve) => {
+    try {
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const maxDim = 1200;
+          let w = img.width;
+          let h = img.height;
+          if (w > maxDim || h > maxDim) {
+            if (w > h) {
+              h = Math.round((h * maxDim) / w);
+              w = maxDim;
+            } else {
+              w = Math.round((w * maxDim) / h);
+              h = maxDim;
+            }
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.max(1, w);
+          canvas.height = Math.max(1, h);
+          const ctx = canvas.getContext('2d');
+          if (!ctx) return resolve(imgStr);
+          ctx.drawImage(img, 0, 0, w, h);
+          const dataUrl = canvas.toDataURL('image/webp', 0.75);
+          resolve(dataUrl.length < imgStr.length ? dataUrl : imgStr);
+        } catch {
+          resolve(imgStr);
+        }
+      };
+      img.onerror = () => resolve(imgStr);
+      img.src = imgStr;
+    } catch {
+      resolve(imgStr);
+    }
+  });
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs = 4500): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error('Operazione Firestore scaduta per timeout.')), timeoutMs)),
+  ]);
 }
 
 export class CloudSyncService {
@@ -2059,5 +2116,231 @@ export class CloudSyncService {
     }
     this.isInitialized = false;
     this.isCampaignHydrated = false;
+  }
+
+  /**
+   * Publishes or updates the read-only public presentation payload to Firestore
+   * /public_presentations/{slug} for seamless guest/public sharing with campaign name slug.
+   */
+  static async publishPublicPresentation(targetCode?: string, preferredSlug?: string): Promise<{ success: boolean; url: string; shareToken: string; slug: string; error?: string }> {
+    const meta = CampaignManager.getCampaignMeta();
+    const campaignTitle = (meta?.name || 'Campagna').trim();
+    const code = (targetCode || CampaignManager.getActiveCampaignCode() || meta?.code || slugifyCampaignTitle(campaignTitle) || 'CAMPAGNA').trim().toUpperCase();
+
+    const shareToken = generateCampaignShareToken(code);
+    const reversed = reverseCode(code);
+
+    // Resolve unique slug based on campaign name (handles homonyms e.g. "palazzo", "palazzo-2")
+    let slug = (preferredSlug || '').trim().toLowerCase();
+    if (!slug) {
+      try {
+        slug = await resolveCampaignPresentationSlug(code, campaignTitle);
+      } catch {
+        slug = slugifyCampaignTitle(campaignTitle || code);
+      }
+    }
+    if (!slug) slug = 'campagna';
+
+    const compositeDocId = `${slug}__${reversed}`;
+    const shareUrl = typeof window !== 'undefined'
+      ? `${window.location.origin}/presentation/${slug}/${reversed}`
+      : `/presentation/${slug}/${reversed}`;
+
+    try {
+      const sessions = CampaignManager.getSessions();
+      const chapters = CampaignManager.getChapters();
+
+      const sanitizedChapters = await Promise.all(
+        (chapters || []).map(async (c) => {
+          const compCover = c.coverImageUrl ? await compressPresentationImage(c.coverImageUrl) : '';
+          return {
+            id: c.id,
+            name: c.name,
+            description: extractTextFromContent(c.description || ''),
+            coverImageUrl: compCover,
+            color: c.color || '',
+            order: c.order || 0,
+          };
+        })
+      );
+
+      const sortedSessions = await Promise.all(
+        [...sessions]
+          .sort((a, b) => (Number(a.number) || 0) - (Number(b.number) || 0))
+          .map(async (s) => {
+            // Comprehensive gathering of all images associated with the session
+            const rawImages: string[] = [];
+
+            if (Array.isArray(s.images)) {
+              rawImages.push(...s.images);
+            }
+            if (s.coverImage) {
+              if (typeof s.coverImage === 'string') rawImages.push(s.coverImage);
+              else if ((s.coverImage as any)?.asset?.url) rawImages.push((s.coverImage as any).asset.url);
+              else if ((s.coverImage as any)?.url) rawImages.push((s.coverImage as any).url);
+            }
+            if (Array.isArray(s.events)) {
+              s.events.forEach((evt: any) => {
+                if (Array.isArray(evt?.images)) {
+                  rawImages.push(...evt.images);
+                }
+              });
+            }
+            if (Array.isArray((s as any).gallery)) {
+              rawImages.push(...(s as any).gallery);
+            }
+            if ((s as any).imageUrl && typeof (s as any).imageUrl === 'string') {
+              rawImages.push((s as any).imageUrl);
+            }
+
+            const uniqueRaw = Array.from(new Set(rawImages.filter(Boolean)));
+            const compressedImages = await Promise.all(
+              uniqueRaw.map((img) => compressPresentationImage(img))
+            );
+            const combinedImages = Array.from(new Set(compressedImages.filter(Boolean)));
+
+            const rawCover = typeof s.coverImage === 'string'
+              ? s.coverImage
+              : (s.coverImage as any)?.asset?.url || (s.coverImage as any)?.url || (combinedImages[0] || '');
+            const resolvedCover = rawCover ? await compressPresentationImage(rawCover) : '';
+
+            const events = await Promise.all(
+              (s.events || []).map(async (evt) => {
+                const evtImgs = await Promise.all(
+                  (evt.images || []).filter(Boolean).map((img: string) => compressPresentationImage(img))
+                );
+                return {
+                  id: evt.id,
+                  title: evt.title,
+                  description: extractTextFromContent(evt.description || ''),
+                  loreDate: evt.loreDate || '',
+                  location: evt.location || '',
+                  images: evtImgs.filter(Boolean),
+                };
+              })
+            );
+
+            return {
+              _id: s._id,
+              number: s.number,
+              title: s.title || `Sessione #${s.number}`,
+              chapterName: s.chapterName || '',
+              chapterId: s.chapterId || '',
+              recap: extractTextFromContent(s.recap || (s as any).synopsis || (s as any).notes || ''),
+              date: s.date || '',
+              loreDate: s.loreDate || '',
+              locations: (s as any).locations || ((s as any).location ? [(s as any).location] : []),
+              images: combinedImages,
+              coverImage: resolvedCover || (combinedImages[0] || ''),
+              events,
+            };
+          })
+      );
+
+      // Extract media into sessionMediaMap and check total payload size
+      const sessionMediaMap: Record<string, string[]> = {};
+      const strippedSessions = sortedSessions.map((s) => {
+        if (s.images && s.images.length > 0) {
+          sessionMediaMap[s._id] = s.images;
+        }
+        return {
+          ...s,
+          images: [],
+          coverImage: '',
+        };
+      });
+
+      const testPayload = sanitizeFirestorePayload({
+        slug,
+        shareToken: slug,
+        legacyToken: shareToken,
+        campaignCode: code,
+        campaignTitle,
+        chapters: sanitizedChapters,
+        sessions: sortedSessions,
+        _updatedAt: new Date().toISOString(),
+      });
+
+      const totalJsonBytes = JSON.stringify(testPayload).length;
+      const MAX_SINGLE_DOC_BYTES = 850000; // ~850 KB safety limit
+
+      let finalMainPayload: any;
+      const mediaChunkPayloads: Record<string, string[]>[] = [];
+
+      if (totalJsonBytes < MAX_SINGLE_DOC_BYTES) {
+        // Single doc write if payload fits comfortably in 850 KB
+        finalMainPayload = testPayload;
+      } else {
+        // Partition session images into sub-chunks (< 300 KB each)
+        const MAX_CHUNK_BYTES = 300000;
+        let currentChunkMedia: Record<string, string[]> = {};
+        let currentChunkSize = 0;
+
+        Object.entries(sessionMediaMap).forEach(([sessId, imgs]) => {
+          if (!imgs || imgs.length === 0) return;
+          const itemSize = JSON.stringify({ sessId, imgs }).length;
+          if (currentChunkSize + itemSize > MAX_CHUNK_BYTES && currentChunkSize > 0) {
+            mediaChunkPayloads.push(currentChunkMedia);
+            currentChunkMedia = {};
+            currentChunkSize = 0;
+          }
+          currentChunkMedia[sessId] = imgs;
+          currentChunkSize += itemSize;
+        });
+        if (Object.keys(currentChunkMedia).length > 0) {
+          mediaChunkPayloads.push(currentChunkMedia);
+        }
+
+        finalMainPayload = sanitizeFirestorePayload({
+          slug,
+          shareToken: slug,
+          legacyToken: shareToken,
+          campaignCode: code,
+          campaignTitle,
+          chapters: sanitizedChapters,
+          sessions: strippedSessions,
+          _mediaChunkCount: mediaChunkPayloads.length,
+          _updatedAt: new Date().toISOString(),
+        });
+      }
+
+      // 1. Write main presentation document with timeout (compositeDocId and slug)
+      await withTimeout(setDoc(doc(db, 'public_presentations', compositeDocId), finalMainPayload), 5000);
+      if (slug && slug !== compositeDocId) {
+        withTimeout(setDoc(doc(db, 'public_presentations', slug), finalMainPayload), 3000).catch(() => {});
+      }
+
+      // 2. Write chunk documents if present with timeout
+      if (mediaChunkPayloads.length > 0) {
+        const chunkPromises: Promise<any>[] = [];
+        mediaChunkPayloads.forEach((chunkData, chunkIdx) => {
+          chunkPromises.push(
+            withTimeout(
+              setDoc(doc(db, 'public_presentations', `${slug}__chunk_${chunkIdx}`), {
+                slug,
+                campaignCode: code,
+                sessionMedia: chunkData,
+                _updatedAt: new Date().toISOString(),
+              }),
+              4000
+            )
+          );
+        });
+        await Promise.all(chunkPromises);
+      }
+
+      // 3. Write legacy compatibility pointers with timeout
+      if (shareToken && shareToken !== slug) {
+        withTimeout(setDoc(doc(db, 'public_presentations', shareToken), finalMainPayload), 3000).catch(() => {});
+      }
+      if (code && code.toLowerCase() !== slug) {
+        withTimeout(setDoc(doc(db, 'public_presentations', code), finalMainPayload), 3000).catch(() => {});
+      }
+
+      return { success: true, url: shareUrl, shareToken: slug, slug };
+    } catch (err: any) {
+      console.warn('[CloudSync] Failed to publish public presentation:', err);
+      return { success: false, url: shareUrl, shareToken: slug, slug, error: err?.message || 'Errore durante la pubblicazione.' };
+    }
   }
 }
