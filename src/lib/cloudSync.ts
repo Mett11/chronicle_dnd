@@ -2,6 +2,8 @@ import { doc, getDoc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
 import { db, auth } from './firebase';
 import { CampaignManager } from '../store/campaignStore';
 import { UserProfileSyncService } from './userProfileSync';
+import { SupabaseSyncService } from './supabaseSyncService';
+import { isSupabaseConfigured } from './supabase';
 import { generateCampaignShareToken, resolveCampaignPresentationSlug, slugifyCampaignTitle, reverseCode } from './shareToken';
 import { extractTextFromContent } from './sanitize';
 import {
@@ -935,6 +937,56 @@ export class CloudSyncService {
         this.isCampaignHydrated = true;
         return;
       }
+      // 0. Primary Fetch from Supabase PostgreSQL if configured
+      if (isSupabaseConfigured()) {
+        SupabaseSyncService.fetchCampaignData(activeCode).then((supaData) => {
+          if (supaData) {
+            console.log(`[CloudSync] Hydrated from Supabase: ${supaData.sessions?.length || 0} sessions, ${supaData.notes?.length || 0} notes, ${supaData.entities?.length || 0} entities`);
+            if (Array.isArray(supaData.sessions) && supaData.sessions.length > 0) {
+              const local = CampaignManager.getSessions();
+              const merged = CloudSyncService.mergeSessions(local, supaData.sessions);
+              CampaignManager.saveSessions(merged);
+            }
+            if (Array.isArray(supaData.chapters) && supaData.chapters.length > 0) {
+              const local = CampaignManager.getChapters();
+              const merged = CloudSyncService.mergeChapters(local, supaData.chapters);
+              CampaignManager.saveChapters(merged);
+            }
+            if (Array.isArray(supaData.notes) && supaData.notes.length > 0) {
+              const local = CampaignManager.getNotes();
+              const merged = CloudSyncService.mergeNotes(local, supaData.notes);
+              CampaignManager.saveNotes(merged);
+            }
+            if (Array.isArray(supaData.entities) && supaData.entities.length > 0) {
+              const local = CampaignManager.getEntities();
+              const merged = CloudSyncService.mergeEntities(local, supaData.entities);
+              CampaignManager.saveEntities(merged);
+            }
+            if (Array.isArray(supaData.maps) && supaData.maps.length > 0) {
+              const local = CampaignManager.getMaps();
+              const merged = CloudSyncService.mergeMaps(local, supaData.maps);
+              CampaignManager.saveMaps(merged);
+            }
+            if (Array.isArray(supaData.scrapbookItems) && supaData.scrapbookItems.length > 0) {
+              const local = CampaignManager.getScrapbookItems();
+              const merged = CloudSyncService.mergeScrapbookItems(local, supaData.scrapbookItems);
+              CampaignManager.saveScrapbookItems(merged);
+            }
+            if (Array.isArray(supaData.audioLogs) && supaData.audioLogs.length > 0) {
+              CampaignManager.saveAudioLogs(supaData.audioLogs);
+            }
+
+            this.isCampaignHydrated = true;
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('chronicle_data_updated'));
+            }
+            if (onCloudUpdated) onCloudUpdated();
+          }
+        }).catch((err) => {
+          console.warn('[Supabase] Initial fetch warning:', err);
+        });
+      }
+
       const docRef = doc(db, 'dnd_campaigns', activeCode);
 
       // 1. Initial Fetch from Firestore with strict hydration gate
