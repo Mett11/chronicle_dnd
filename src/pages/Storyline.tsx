@@ -40,16 +40,11 @@ import {
   RotateCcw,
   Image as ImageIcon,
   Film,
-  Share2,
-  Loader2,
 } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ImageGalleryUploader } from '../components/ImageGalleryUploader';
 import { StorylineFullscreenViewer, StorylineSlide } from '../components/StorylineFullscreenViewer';
 import { motion, AnimatePresence } from 'framer-motion';
-import { CloudSyncService } from '../lib/cloudSync';
-import { extractTextFromContent, safeString } from '../lib/sanitize';
-import { generateCampaignShareToken, buildClientPresentationUrl, copyTextToClipboard } from '../lib/shareToken';
 
 // Icons & labels for entities
 const ENTITY_ICONS: Record<string, React.ComponentType<{ size?: number; className?: string }>> = {
@@ -1864,17 +1859,8 @@ export function Storyline() {
         new Set([...(sess.linkedEntityIds || []), ...allEventsList.flatMap((e) => e.linkedEntityIds || [])])
       ).filter(Boolean);
 
-      const sessCover = typeof sess.coverImage === 'string'
-        ? sess.coverImage
-        : (sess.coverImage as any)?.asset?.url || (sess.coverImage as any)?.url || '';
-
       const sessImages = Array.from(
-        new Set([
-          ...(sess.images || []),
-          ...(sessCover ? [sessCover] : []),
-          ...(Array.isArray((sess as any).gallery) ? (sess as any).gallery : []),
-          ...allEventsList.flatMap((e) => e.images || [])
-        ])
+        new Set([...(sess.images || []), ...allEventsList.flatMap((e) => e.images || [])])
       ).filter(Boolean);
 
       const sessionImpact =
@@ -2148,162 +2134,65 @@ export function Storyline() {
     [inspectedNode, refreshData]
   );
 
-  const [isShareCopied, setIsShareCopied] = useState(false);
-  const [isSharing, setIsSharing] = useState(false);
-  const [shareModalUrl, setShareModalUrl] = useState<string | null>(null);
-  const [isShareModalOpen, setIsShareModalOpen] = useState(false);
-  const [isShareModalCopied, setIsShareModalCopied] = useState(false);
-  const [isPublishingCloud, setIsPublishingCloud] = useState(false);
-  const [publishCloudSuccess, setPublishCloudSuccess] = useState<boolean | null>(null);
-
-  const handleShareStoryline = (e?: React.MouseEvent) => {
-    if (e) e.stopPropagation();
-
-    // 1. Immediately & synchronously generate client-side URL
-    const meta = CampaignManager.getCampaignMeta();
-    const activeCode = (CampaignManager.getActiveCampaignCode() || meta?.code || '').trim().toUpperCase();
-    const campaignTitle = (meta?.name || 'Campagna').trim();
-    const immediateUrl = buildClientPresentationUrl(campaignTitle, activeCode);
-
-    setShareModalUrl(immediateUrl);
-    setIsShareModalOpen(true);
-    setIsPublishingCloud(true);
-    setPublishCloudSuccess(null);
-
-    // 2. Concurrently publish presentation payload to Firestore in background
-    CloudSyncService.publishPublicPresentation(activeCode).then((result) => {
-      setIsPublishingCloud(false);
-      setPublishCloudSuccess(result.success);
-      const finalUrl = result.url || immediateUrl;
-      setShareModalUrl(finalUrl);
-
-      // Auto-copy to clipboard once generation and cloud sync finish
-      copyTextToClipboard(finalUrl).then((copied) => {
-        if (copied) {
-          setIsShareCopied(true);
-          setIsShareModalCopied(true);
-          setTimeout(() => {
-            setIsShareCopied(false);
-            setIsShareModalCopied(false);
-          }, 3000);
-        }
-      });
-    }).catch((err) => {
-      console.warn('[Storyline] Publish cloud background error:', err);
-      setIsPublishingCloud(false);
-      setPublishCloudSuccess(false);
-    });
-  };
-
   // Chronological storyline slides across all nodes in current filtered view (or all nodes)
   const storylineSlides = useMemo<StorylineSlide[]>(() => {
     const slides: StorylineSlide[] = [];
     let globalIdx = 0;
     const targetNodes = filteredNodes.length > 0 ? filteredNodes : allTimelineNodes;
-    const chapters = CampaignManager.getChapters();
-
-    const chapterMap = new Map<string, any>();
-    (chapters || []).forEach((c) => {
-      if (c.id) chapterMap.set(c.id, c);
-      if (c.name) chapterMap.set(c.name.toLowerCase().trim(), c);
-    });
-
-    const seenChapters = new Set<string>();
 
     targetNodes.forEach((node) => {
       node.sessions.forEach((s) => {
-        // Insert Chapter Cover Slide as opening element if new chapter encountered
-        const chapterKey = (s.session.chapterId || s.session.chapterName || '').trim();
-        const chapterObj = s.session.chapterId
-          ? chapterMap.get(s.session.chapterId)
-          : (s.session.chapterName ? chapterMap.get(s.session.chapterName.toLowerCase().trim()) : undefined);
-
-        if (chapterKey && !seenChapters.has(chapterKey.toLowerCase())) {
-          seenChapters.add(chapterKey.toLowerCase());
-
-          const chapterName = chapterObj?.name || s.session.chapterName || 'Capitolo';
-          const chapterCoverUrl = chapterObj?.coverImageUrl || '';
-          const chapterDesc = extractTextFromContent(chapterObj?.description || '') || `Presentazione e apertura del Capitolo: ${chapterName}`;
-          const chapterLoreDate = safeString(node.fullDate || s.session.loreDate || s.session.date || '');
-
-          slides.push({
-            imageUrl: chapterCoverUrl,
-            nodeId: `chapter_${chapterObj?.id || chapterKey}`,
-            nodeTitle: `Capitolo: ${chapterName}`,
-            nodeDescription: chapterDesc,
-            nodeType: 'chapter',
-            loreDate: chapterLoreDate,
-            sessionNumber: Number(s.session.number) || 1,
-            sessionTitle: chapterName,
-            chapterName,
-            imageIndexInNode: 0,
-            nodeTotalImages: 1,
-            globalIndex: globalIdx++,
-            totalGlobalImages: 0,
-            isPlaceholder: !chapterCoverUrl,
-            isChapterCover: true,
-          });
-        }
-
-        const sessionNodeId = s.session._id ? `session_${s.session._id}` : `session_${s.session.number}`;
-        const chapterName = safeString(s.session.chapterName);
-        const chapterLabel = chapterName
-          ? `Capitolo #${s.session.number} (${chapterName})`
-          : `Capitolo #${s.session.number}`;
-        const sessionTitle = safeString(s.title || s.session.title, `Sessione #${s.session.number}`);
-        const recapText = extractTextFromContent(s.recapText || s.session.recap || '');
-        const loreDate = safeString(node.fullDate || s.session.loreDate || s.session.date || '');
-        const location = safeString(s.location || node.allLocations[0] || '');
         const valid = (s.images || []).filter(Boolean);
-
         if (valid.length > 0) {
           const totalInSession = valid.length;
           valid.forEach((imgUrl, imgIdx) => {
             slides.push({
-              imageUrl: typeof imgUrl === 'string' ? imgUrl : safeString(imgUrl),
-              nodeId: sessionNodeId,
-              nodeTitle: `${chapterLabel}: ${sessionTitle}`,
-              nodeDescription: recapText,
+              imageUrl: imgUrl,
+              nodeId: node.id,
+              nodeTitle: `Capitolo #${s.session.number}: ${s.title}`,
+              nodeDescription: s.recapText,
               nodeType: 'session',
-              loreDate,
-              sessionNumber: Number(s.session.number) || 1,
-              sessionTitle,
-              chapterName,
-              location: location || undefined,
+              loreDate: node.fullDate || s.session.loreDate || s.session.date || '',
+              sessionNumber: s.session.number,
+              sessionTitle: s.session.title,
+              chapterName: s.session.chapterName,
+              location: s.location || node.allLocations[0],
               eventType: s.category,
               impact: s.impact,
               imageIndexInNode: imgIdx,
               nodeTotalImages: totalInSession,
-              globalIndex: globalIdx++,
+              globalIndex: globalIdx,
               totalGlobalImages: 0,
               sessionId: s.session._id,
               sessionObj: s.session,
               isPlaceholder: false,
             });
+            globalIdx++;
           });
         } else {
           // Session without photos: add a placeholder slide so presentation always works!
           slides.push({
             imageUrl: '',
-            nodeId: sessionNodeId,
-            nodeTitle: `${chapterLabel}: ${sessionTitle}`,
-            nodeDescription: recapText,
+            nodeId: node.id,
+            nodeTitle: `Capitolo #${s.session.number}: ${s.title}`,
+            nodeDescription: s.recapText,
             nodeType: 'session',
-            loreDate,
-            sessionNumber: Number(s.session.number) || 1,
-            sessionTitle,
-            chapterName,
-            location: location || undefined,
+            loreDate: node.fullDate || s.session.loreDate || s.session.date || '',
+            sessionNumber: s.session.number,
+            sessionTitle: s.session.title,
+            chapterName: s.session.chapterName,
+            location: s.location || node.allLocations[0],
             eventType: s.category,
             impact: s.impact,
             imageIndexInNode: 0,
             nodeTotalImages: 0,
-            globalIndex: globalIdx++,
+            globalIndex: globalIdx,
             totalGlobalImages: 0,
             sessionId: s.session._id,
             sessionObj: s.session,
             isPlaceholder: true,
           });
+          globalIdx++;
         }
       });
     });
@@ -2315,15 +2204,13 @@ export function Storyline() {
     (img: string, node?: StorylineDayNode, imageIndexInNode = 0) => {
       if (storylineSlides.length === 0) return;
       if (node) {
-        const targetSessionIds = new Set(node.sessions.map((s) => s.session._id));
         const foundIdx = storylineSlides.findIndex(
-          (s) =>
-            (s.sessionId && targetSessionIds.has(s.sessionId) && (s.imageIndexInNode === imageIndexInNode || s.imageUrl === img))
+          (s) => s.nodeId === node.id && (s.imageIndexInNode === imageIndexInNode || s.imageUrl === img)
         );
         if (foundIdx !== -1) {
           setFullscreenInitialSlideIndex(foundIdx);
         } else {
-          const firstByNode = storylineSlides.findIndex((s) => s.sessionId && targetSessionIds.has(s.sessionId));
+          const firstByNode = storylineSlides.findIndex((s) => s.nodeId === node.id);
           setFullscreenInitialSlideIndex(firstByNode !== -1 ? firstByNode : 0);
         }
       } else {
@@ -2454,34 +2341,18 @@ export function Storyline() {
             </button>
 
             {storylineSlides.length > 0 && (
-              <>
-                <button
-                  type="button"
-                  onClick={handleShareStoryline}
-                  disabled={isSharing}
-                  className={`p-1.5 rounded-xl text-xs font-semibold flex items-center gap-1 transition-all shrink-0 shadow-sm cursor-pointer ${
-                    isShareCopied
-                      ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
-                      : 'bg-surface-1 border border-surface-2 text-content-2 hover:text-content-1'
-                  }`}
-                  title="Copia link di sola lettura per condividere la presentazione"
-                >
-                  {isShareCopied ? <Check size={13} className="text-emerald-400" /> : <Share2 size={13} className="text-primary" />}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setFullscreenInitialSlideIndex(0);
-                    setIsFullscreenViewerOpen(true);
-                  }}
-                  className="bg-primary text-surface-0 hover:bg-primary-hover px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all shrink-0 shadow-sm cursor-pointer"
-                  title="Visualizza la cronaca a schermo intero"
-                >
-                  <Film size={13} />
-                  <span>Cronaca ({storylineSlides.length})</span>
-                </button>
-              </>
+              <button
+                type="button"
+                onClick={() => {
+                  setFullscreenInitialSlideIndex(0);
+                  setIsFullscreenViewerOpen(true);
+                }}
+                className="bg-primary text-surface-0 hover:bg-primary-hover px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all shrink-0 shadow-sm cursor-pointer"
+                title="Visualizza la cronaca a schermo intero"
+              >
+                <Film size={13} />
+                <span>Cronaca ({storylineSlides.length})</span>
+              </button>
             )}
           </div>
 
@@ -2526,35 +2397,18 @@ export function Storyline() {
             </button>
 
             {storylineSlides.length > 0 && (
-              <>
-                <button
-                  type="button"
-                  onClick={handleShareStoryline}
-                  disabled={isSharing}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all shrink-0 shadow-sm cursor-pointer ${
-                    isShareCopied
-                      ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
-                      : 'bg-surface-1 hover:bg-surface-2 text-content-2 hover:text-content-1 border border-surface-2'
-                  }`}
-                  title="Copia il link pubblico di sola lettura per condividere la presentazione con chiunque"
-                >
-                  {isShareCopied ? <Check size={13} className="text-emerald-400" /> : <Share2 size={13} className="text-primary" />}
-                  <span>{isShareCopied ? 'Link Copiato!' : 'Condividi'}</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setFullscreenInitialSlideIndex(0);
-                    setIsFullscreenViewerOpen(true);
-                  }}
-                  className="bg-primary/15 hover:bg-primary/25 text-primary border border-primary/30 px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all shrink-0 shadow-sm cursor-pointer"
-                  title="Ripercorri visivamente l'arco o la campagna a schermo intero con il party"
-                >
-                  <Film size={13} />
-                  <span>Presentazione Party ({storylineSlides.length})</span>
-                </button>
-              </>
+              <button
+                type="button"
+                onClick={() => {
+                  setFullscreenInitialSlideIndex(0);
+                  setIsFullscreenViewerOpen(true);
+                }}
+                className="bg-primary/15 hover:bg-primary/25 text-primary border border-primary/30 px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all shrink-0 shadow-sm cursor-pointer"
+                title="Ripercorri visivamente l'arco o la campagna a schermo intero con il party"
+              >
+                <Film size={13} />
+                <span>Presentazione Party ({storylineSlides.length})</span>
+              </button>
             )}
 
             <button
@@ -3289,129 +3143,14 @@ export function Storyline() {
         onClose={() => setIsFullscreenViewerOpen(false)}
         slides={storylineSlides}
         initialSlideIndex={fullscreenInitialSlideIndex}
-        campaignCode={CampaignManager.getActiveCampaignCode() || undefined}
         onSelectNode={(nodeId) => {
-          const targetNode = allTimelineNodes.find((n) =>
-            n.id === nodeId ||
-            n.sessions.some((s) => `session_${s.session._id}` === nodeId || `session_${s.session.number}` === nodeId)
-          );
+          scrollToNode(nodeId);
+          const targetNode = allTimelineNodes.find((n) => n.id === nodeId);
           if (targetNode) {
-            scrollToNode(targetNode.id);
             setInspectedNode(targetNode);
           }
         }}
       />
-
-      {/* Share Presentation Modal */}
-      {isShareModalOpen && shareModalUrl && (
-        <div
-          className="fixed inset-0 z-[120] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-150"
-          onClick={() => setIsShareModalOpen(false)}
-        >
-          <div
-            className="bg-surface-1 border border-surface-3 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4 select-text"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 text-primary font-bold text-sm">
-                <Share2 size={18} />
-                <span>Condividi Presentazione Storyline</span>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsShareModalOpen(false)}
-                className="p-1 rounded-lg text-content-3 hover:text-content-1 hover:bg-surface-2 cursor-pointer"
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            <p className="text-xs text-content-3 leading-relaxed">
-              Il link pubblico di sola lettura per condividere la cronaca e la presentazione delle sessioni:
-            </p>
-
-            <div className="flex items-center gap-2">
-              <input
-                type="text"
-                readOnly
-                disabled={isPublishingCloud}
-                value={shareModalUrl}
-                className={`flex-1 bg-surface-2 border border-surface-3 rounded-xl px-3 py-2 text-xs font-mono text-content-1 focus:outline-none focus:border-primary ${
-                  isPublishingCloud ? 'opacity-50 select-none' : 'select-all'
-                }`}
-                onClick={(e) => !isPublishingCloud && (e.target as HTMLInputElement).select()}
-              />
-              <button
-                type="button"
-                disabled={isPublishingCloud}
-                onClick={() => {
-                  if (isPublishingCloud) return;
-                  copyTextToClipboard(shareModalUrl).then(() => {
-                    setIsShareModalCopied(true);
-                    setIsShareCopied(true);
-                    setTimeout(() => {
-                      setIsShareModalCopied(false);
-                      setIsShareCopied(false);
-                    }, 3000);
-                  });
-                }}
-                className={`px-3.5 py-2 rounded-xl font-medium text-xs flex items-center gap-1.5 shrink-0 transition-all ${
-                  isPublishingCloud
-                    ? 'opacity-40 bg-surface-2 text-content-3 border border-surface-3 cursor-not-allowed pointer-events-none'
-                    : 'bg-primary text-surface-0 hover:bg-primary-hover cursor-pointer'
-                }`}
-              >
-                {isShareModalCopied ? <Check size={14} className="text-surface-0" /> : <Share2 size={14} />}
-                <span>{isShareModalCopied ? 'Copiato!' : 'Copia'}</span>
-              </button>
-            </div>
-
-            <div className="flex items-center justify-between pt-1">
-              <div className="text-[11px] flex items-center gap-1.5 font-medium">
-                {isPublishingCloud ? (
-                  <>
-                    <Loader2 size={13} className="animate-spin text-amber-500" />
-                    <span className="text-amber-400 font-semibold">Generazione e sincronizzazione cloud...</span>
-                  </>
-                ) : publishCloudSuccess === true ? (
-                  <>
-                    <Check size={13} className="text-emerald-400" />
-                    <span className="text-emerald-400 font-medium">Sincronizzato e pronto online</span>
-                  </>
-                ) : publishCloudSuccess === false ? (
-                  <span className="text-amber-400 font-medium">Link pronto localmente</span>
-                ) : (
-                  <span className="text-content-3">Link pronto</span>
-                )}
-              </div>
-
-              <div className="flex items-center gap-2">
-                <a
-                  href={isPublishingCloud ? undefined : shareModalUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={(e) => isPublishingCloud && e.preventDefault()}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-medium transition-all flex items-center gap-1 ${
-                    isPublishingCloud
-                      ? 'opacity-40 bg-surface-2 text-content-3 cursor-not-allowed pointer-events-none'
-                      : 'bg-surface-2 hover:bg-surface-3 text-content-2 hover:text-content-1 cursor-pointer'
-                  }`}
-                >
-                  <ExternalLink size={12} />
-                  <span>Apri</span>
-                </a>
-                <button
-                  type="button"
-                  onClick={() => setIsShareModalOpen(false)}
-                  className="px-4 py-1.5 rounded-xl bg-surface-2 hover:bg-surface-3 text-content-1 text-xs font-semibold transition-colors cursor-pointer"
-                >
-                  Chiudi
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

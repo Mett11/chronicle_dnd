@@ -23,36 +23,10 @@ import { SanityLogin } from './components/SanityLogin';
 import { CampaignGate } from './components/CampaignGate';
 import { CampaignManager } from './store/campaignStore';
 import { CloudSyncService } from './lib/cloudSync';
-import { PublicPresentationView } from './pages/PublicPresentationView';
 
 import { Skeleton, SkeletonCard } from './components/Skeleton';
 
 function AppContent() {
-  // Public standalone Presentation Routes (Zero Auth / Direct Guest Access)
-  const isPresentationRoute = typeof window !== 'undefined' && (
-    window.location.pathname.startsWith('/presentation') ||
-    window.location.pathname.startsWith('/share') ||
-    window.location.pathname.startsWith('/storyline/presentation')
-  );
-
-  if (isPresentationRoute) {
-    return (
-      <BrowserRouter>
-        <Routes>
-          <Route path="/presentation/:campaignName/:reversedCode" element={<PublicPresentationView />} />
-          <Route path="/presentation/:campaignCode" element={<PublicPresentationView />} />
-          <Route path="/presentation" element={<PublicPresentationView />} />
-          <Route path="/share/:campaignName/:reversedCode" element={<PublicPresentationView />} />
-          <Route path="/share/:campaignCode" element={<PublicPresentationView />} />
-          <Route path="/share" element={<PublicPresentationView />} />
-          <Route path="/storyline/presentation/:campaignName/:reversedCode" element={<PublicPresentationView />} />
-          <Route path="/storyline/presentation/:campaignCode" element={<PublicPresentationView />} />
-          <Route path="*" element={<PublicPresentationView />} />
-        </Routes>
-      </BrowserRouter>
-    );
-  }
-
   const { player, loading } = useAuth();
   const [campaignCode, setCampaignCode] = useState<string | null>(() => CampaignManager.getActiveCampaignCode());
   const [, setForceTick] = useState(0);
@@ -221,13 +195,6 @@ function AppContent() {
           <Route path="/chiarimenti" element={<Clarifications />} />
           <Route path="/character" element={<CharacterProfile />} />
           <Route path="/settings" element={<Settings />} />
-          <Route path="/presentation/:campaignName/:reversedCode" element={<PublicPresentationView />} />
-          <Route path="/presentation/:campaignCode" element={<PublicPresentationView />} />
-          <Route path="/presentation" element={<PublicPresentationView />} />
-          <Route path="/share/:campaignName/:reversedCode" element={<PublicPresentationView />} />
-          <Route path="/share/:campaignCode" element={<PublicPresentationView />} />
-          <Route path="/storyline/presentation/:campaignName/:reversedCode" element={<PublicPresentationView />} />
-          <Route path="/storyline/presentation/:campaignCode" element={<PublicPresentationView />} />
           <Route path="*" element={<Navigate to="/character" replace />} />
         </Route>
       </Routes>
