@@ -1,0 +1,294 @@
+{
+  "entities": {
+    "UserPreferences": {
+      "title": "UserPreferences",
+      "description": "Preferenze del profilo utente per temi visivi, provider/modelli IA e opzioni dell'interfaccia sincronizzate multi-device",
+      "type": "object",
+      "properties": {
+        "theme": {
+          "type": "object",
+          "description": "Palette cromatica, modalità dark/light e font della campagna"
+        },
+        "ai": {
+          "type": "object",
+          "description": "Provider IA preferito, modello per Oracolo ed Estrattore, temperatura"
+        },
+        "reading": {
+          "type": "object",
+          "description": "Toggle pillole entità nella lettura, modalità dossier e presenza DM nel party"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Timestamp ISO dell'ultimo aggiornamento delle preferenze"
+        }
+      }
+    },
+    "UserPrivateSecrets": {
+      "title": "UserPrivateSecrets",
+      "description": "Chiavi API IA private dell'utente isolate in users/{userId}/private/secrets",
+      "type": "object",
+      "properties": {
+        "geminiKey": { "type": "string" },
+        "openrouterKey": { "type": "string" },
+        "cloudflareAccountId": { "type": "string" },
+        "cloudflareApiToken": { "type": "string" },
+        "groqApiKey": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      }
+    },
+    "CampaignAiKeys": {
+      "title": "CampaignAiKeys",
+      "description": "Chiavi API IA condivise del party di campagna in campaigns/{campaignCode}/config/ai_keys",
+      "type": "object",
+      "properties": {
+        "geminiKey": { "type": "string" },
+        "openrouterKey": { "type": "string" },
+        "cloudflareAccountId": { "type": "string" },
+        "cloudflareApiToken": { "type": "string" },
+        "groqApiKey": { "type": "string" },
+        "updatedAt": { "type": "string" },
+        "updatedBy": { "type": "string" }
+      }
+    },
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Profilo utente sincronizzato con UID e ruoli di campagna (joinedCampaigns, dmCampaigns)",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "id": { "type": "string" },
+        "email": { "type": "string" },
+        "characterName": { "type": "string" },
+        "joinedCampaigns": { "type": "array" },
+        "dmCampaigns": { "type": "array" },
+        "updatedAt": { "type": "string" }
+      }
+    },
+    "DmSecrets": {
+      "title": "DmSecrets",
+      "description": "Segreti riservati del Dungeon Master (note dmOnly: true, eventi impact: secret, biografie private, articoli di lore dmOnly)",
+      "type": "object",
+      "properties": {
+        "campaignCode": { "type": "string" },
+        "dmNotes": { "type": "array" },
+        "dmSecretEvents": { "type": "object" },
+        "dmSecretBios": { "type": "object" },
+        "dmWorldLoreArticles": { "type": "array" },
+        "_updatedAt": { "type": "string" }
+      }
+    },
+    "Session": {
+      "title": "Session",
+      "description": "Documento di sessione di gioco con log eventi, partecipanti, recap e capitolo di appartenenza",
+      "type": "object",
+      "properties": {
+        "_id": { "type": "string" },
+        "number": { "type": "number" },
+        "title": { "type": "string" },
+        "date": { "type": "string" },
+        "chapterId": { "type": "string" },
+        "synopsis": { "type": "string" },
+        "events": { "type": "array" },
+        "attendees": { "type": "array" },
+        "images": { "type": "array" },
+        "_createdAt": { "type": "string" },
+        "_updatedAt": { "type": "string" }
+      }
+    },
+    "Entity": {
+      "title": "Entity",
+      "description": "Entità del compendio e del codex di campagna (NPC, Luoghi, Fazioni, Oggetti, Mostri, Lore, Quest)",
+      "type": "object",
+      "properties": {
+        "_id": { "type": "string" },
+        "name": { "type": "string" },
+        "type": { "type": "string" },
+        "description": { "type": "string" },
+        "aliases": { "type": "array" },
+        "tags": { "type": "array" },
+        "images": { "type": "array" },
+        "status": { "type": "string" },
+        "isPublic": { "type": "boolean" },
+        "_createdAt": { "type": "string" },
+        "_updatedAt": { "type": "string" }
+      }
+    },
+    "Note": {
+      "title": "Note",
+      "description": "Nota o appunto di gioco (taccuino personale, condivisa con il party o riservata al DM)",
+      "type": "object",
+      "properties": {
+        "_id": { "type": "string" },
+        "title": { "type": "string" },
+        "content": { "type": "string" },
+        "tags": { "type": "array" },
+        "images": { "type": "array" },
+        "visibility": { "type": "string" },
+        "dmOnly": { "type": "boolean" },
+        "author": { "type": "object" },
+        "pinned": { "type": "boolean" },
+        "_createdAt": { "type": "string" },
+        "_updatedAt": { "type": "string" }
+      }
+    },
+    "WorldMap": {
+      "title": "WorldMap",
+      "description": "Mappa interattiva del mondo o dungeon con pin, livelli e collegamenti al codex",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "imageUrl": { "type": "string" },
+        "pins": { "type": "array" },
+        "folderId": { "type": "string" },
+        "scale": { "type": "string" },
+        "createdAt": { "type": "string" }
+      }
+    },
+    "CampaignChapter": {
+      "title": "CampaignChapter",
+      "description": "Arco narrativo o capitolo della campagna",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "order": { "type": "number" },
+        "status": { "type": "string" },
+        "createdAt": { "type": "string" }
+      }
+    },
+    "ScrapbookItem": {
+      "title": "ScrapbookItem",
+      "description": "Elemento visuale o memoria dello scrapbook di campagna",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "imageUrl": { "type": "string" },
+        "caption": { "type": "string" },
+        "authorName": { "type": "string" },
+        "tags": { "type": "array" },
+        "createdAt": { "type": "string" }
+      }
+    },
+    "CharacterBio": {
+      "title": "CharacterBio",
+      "description": "Biografia, backstory, segreti e impostazioni di privacy del personaggio",
+      "type": "object",
+      "properties": {
+        "playerId": { "type": "string" },
+        "backstoryMarkdown": { "type": "string" },
+        "secrets": { "type": "string" },
+        "privacySettings": { "type": "object" },
+        "updatedAt": { "type": "string" }
+      }
+    },
+    "FamilyRelation": {
+      "title": "FamilyRelation",
+      "description": "Relazione araldica o albero genealogico del personaggio",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "playerId": { "type": "string" },
+        "name": { "type": "string" },
+        "relationType": { "type": "string" },
+        "notes": { "type": "string" }
+      }
+    },
+    "GlobalRegistry": {
+      "title": "GlobalRegistry",
+      "description": "Dati globali sincronizzati (elenco account e metadati campagne)",
+      "type": "object",
+      "properties": {
+        "_updatedAt": { "type": "string" },
+        "accounts": { "type": "array" },
+        "campaigns": { "type": "array" }
+      }
+    },
+    "CampaignData": {
+      "title": "CampaignData",
+      "description": "Documento aggregato dati campagna di gioco con chunk media e recent items",
+      "type": "object",
+      "properties": {
+        "_updatedAt": { "type": "string" },
+        "campaignMeta": { "type": "object" },
+        "sessions": { "type": "array" },
+        "chapters": { "type": "array" },
+        "entities": { "type": "array" },
+        "notes": { "type": "array" },
+        "calendar": { "type": "object" },
+        "maps": { "type": "array" },
+        "mapFolders": { "type": "array" },
+        "characterBios": { "type": "array" },
+        "familyRelations": { "type": "array" },
+        "worldLoreArticles": { "type": "array" },
+        "_mediaChunkCount": { "type": "number" },
+        "_hasMediaChunks": { "type": "boolean" }
+      }
+    }
+  },
+  "firestore": {
+    "/user_preferences/{userId}": {
+      "schema": "UserPreferences",
+      "description": "Profilo preferenze per ciascun account utente registrato"
+    },
+    "/users/{userId}/private/secrets": {
+      "schema": "UserPrivateSecrets",
+      "description": "Chiavi API personali protette per utente"
+    },
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "Profilo e ruoli utente (joinedCampaigns, dmCampaigns)"
+    },
+    "/campaigns/{campaignCode}/config/ai_keys": {
+      "schema": "CampaignAiKeys",
+      "description": "Chiavi API condivise per campagna"
+    },
+    "/campaigns/{campaignCode}/dm/secrets": {
+      "schema": "DmSecrets",
+      "description": "Segreti del Dungeon Master per la campagna"
+    },
+    "/campaigns/{campaignCode}/sessions/{sessionId}": {
+      "schema": "Session",
+      "description": "Subcollection per singola sessione di gioco scalabile"
+    },
+    "/campaigns/{campaignCode}/entities/{entityId}": {
+      "schema": "Entity",
+      "description": "Subcollection per singola entità codex scalabile"
+    },
+    "/campaigns/{campaignCode}/notes/{noteId}": {
+      "schema": "Note",
+      "description": "Subcollection per singola nota di gioco scalabile"
+    },
+    "/campaigns/{campaignCode}/maps/{mapId}": {
+      "schema": "WorldMap",
+      "description": "Subcollection per singola mappa del mondo scalabile"
+    },
+    "/campaigns/{campaignCode}/chapters/{chapterId}": {
+      "schema": "CampaignChapter",
+      "description": "Subcollection per singolo capitolo / arco narrativo"
+    },
+    "/campaigns/{campaignCode}/scrapbook/{itemId}": {
+      "schema": "ScrapbookItem",
+      "description": "Subcollection per singolo ricordo visuale dello scrapbook"
+    },
+    "/campaigns/{campaignCode}/characterBios/{playerId}": {
+      "schema": "CharacterBio",
+      "description": "Subcollection per biografia personaggio"
+    },
+    "/campaigns/{campaignCode}/familyRelations/{relationId}": {
+      "schema": "FamilyRelation",
+      "description": "Subcollection per relazione albero genealogico"
+    },
+    "/dnd_global/{docId}": {
+      "schema": "GlobalRegistry",
+      "description": "Dati globali sincronizzati (elenco account e metadati campagne)"
+    },
+    "/dnd_campaigns/{docId}": {
+      "schema": "CampaignData",
+      "description": "Documento aggregato dati campagna di gioco e chunk media"
+    }
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "name": "Chronicle - D&D Campaign Journal",
+  "description": "Diario di campagna D&D collaborativo per giocatori e DM con supporto Sanity CMS e gestione sessioni, note ed entità.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

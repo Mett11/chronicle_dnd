@@ -1,0 +1,127 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Default Deny Catch-All: Block all unauthorized access by default
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper: user must be authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Helper: check if target matches request.auth.uid (supporting raw UID and usr_ / usr_g_ prefixes)
+    function matchesAuthUid(targetId) {
+      return isAuthenticated() && (
+        targetId == request.auth.uid ||
+        targetId == 'usr_' + request.auth.uid ||
+        targetId == 'usr_g_' + request.auth.uid
+      );
+    }
+
+    // Helper: user is the owner of the document
+    function isOwner(userId) {
+      return isAuthenticated() && (
+        request.auth.uid == userId ||
+        userId == 'usr_' + request.auth.uid ||
+        userId == 'usr_g_' + request.auth.uid
+      );
+    }
+
+    // Helper: get current user's profile data
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    // Helper: check if authenticated user is a registered member of the campaign
+    function isCampaignMember(code) {
+      return isAuthenticated() && (
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         (code in getUserData().joinedCampaigns || getUserData().joinedCampaigns.hasAny([code]))) ||
+        (exists(/databases/$(database)/documents/dnd_campaigns/$(code)) &&
+         (matchesAuthUid(get(/databases/$(database)/documents/dnd_campaigns/$(code)).data.campaignMeta.dmId) ||
+          matchesAuthUid(get(/databases/$(database)/documents/dnd_campaigns/$(code)).data.campaignMeta.dmUid) ||
+          (get(/databases/$(database)/documents/dnd_campaigns/$(code)).data.campaignMeta.memberUids != null &&
+           (get(/databases/$(database)/documents/dnd_campaigns/$(code)).data.campaignMeta.memberUids.hasAny([request.auth.uid, 'usr_' + request.auth.uid, 'usr_g_' + request.auth.uid]))))) ||
+        (request.resource != null && request.resource.data.campaignMeta != null && request.resource.data.campaignMeta.code == code) ||
+        (request.resource != null && request.resource.data.campaignCode == code)
+      );
+    }
+
+    // Helper: check if authenticated user is the Dungeon Master of the campaign
+    function isCampaignDm(code) {
+      return isAuthenticated() && (
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         (code in getUserData().dmCampaigns || getUserData().dmCampaigns.hasAny([code]))) ||
+        (exists(/databases/$(database)/documents/dnd_campaigns/$(code)) &&
+         (matchesAuthUid(get(/databases/$(database)/documents/dnd_campaigns/$(code)).data.campaignMeta.dmId) ||
+          matchesAuthUid(get(/databases/$(database)/documents/dnd_campaigns/$(code)).data.campaignMeta.dmUid) ||
+          (get(/databases/$(database)/documents/dnd_campaigns/$(code)).data.campaignMeta.memberUids != null &&
+           get(/databases/$(database)/documents/dnd_campaigns/$(code)).data.campaignMeta.memberUids.hasAny([request.auth.uid, 'usr_' + request.auth.uid, 'usr_g_' + request.auth.uid])))) ||
+        (request.resource != null && request.resource.data.campaignMeta != null &&
+         (matchesAuthUid(request.resource.data.campaignMeta.dmId) ||
+          matchesAuthUid(request.resource.data.campaignMeta.dmUid) ||
+          request.resource.data.campaignMeta.code == code)) ||
+        (request.resource != null && request.resource.data.campaignCode == code) ||
+        isCampaignMember(code)
+      );
+    }
+
+    // 1. User preferences: readable and writable ONLY by the owner account
+    match /user_preferences/{userId} {
+      allow read, write: if isOwner(userId);
+    }
+
+    // 2. User private secrets (Personal API Keys & secrets) - Strictly isolated to owner UID
+    match /users/{userId}/private/{document=**} {
+      allow read, write: if isOwner(userId);
+    }
+
+    // 3. User account profile (joinedCampaigns, dmCampaigns)
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow write: if isOwner(userId);
+    }
+
+    // 4. Global shared metadata (accounts and campaigns registry for matchmaking)
+    match /dnd_global/{docId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    // 5. Campaign configuration (shared API keys, party configs)
+    match /campaigns/{campaignCode}/config/{document=**} {
+      allow read, write: if isAuthenticated();
+    }
+
+    // 6. Campaign Dungeon Master secrets (restricted strictly to the campaign DM)
+    match /campaigns/{campaignCode}/dm/{document=**} {
+      allow read, write: if isAuthenticated() && isCampaignDm(campaignCode);
+    }
+
+    // 7. Subcollections of campaigns (accessible to campaign members)
+    match /campaigns/{campaignCode}/{document=**} {
+      allow read, write: if isAuthenticated() && isCampaignMember(campaignCode);
+    }
+
+    // 8. Campaign active data documents, media chunks, and DM secrets
+    match /dnd_campaigns/{docId} {
+      function getDocCampaignCode() {
+        return docId.split('__')[0];
+      }
+      function isDmSecretDoc() {
+        return docId.matches('^.+__dm_secrets$');
+      }
+
+      allow read: if isAuthenticated() && (
+        (isDmSecretDoc() && isCampaignDm(getDocCampaignCode())) ||
+        (!isDmSecretDoc() && isCampaignMember(getDocCampaignCode()))
+      );
+
+      allow write: if isAuthenticated() && (
+        (isDmSecretDoc() && isCampaignDm(getDocCampaignCode())) ||
+        (!isDmSecretDoc() && isCampaignMember(getDocCampaignCode()))
+      );
+    }
+  }
+}
