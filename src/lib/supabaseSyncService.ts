@@ -17,7 +17,8 @@ export class SupabaseSyncService {
     if (!isSupabaseConfigured() || !campaignCode) return null;
 
     try {
-      const code = campaignCode.trim();
+      const cleanCode = campaignCode.trim().toUpperCase();
+      const rawCode = campaignCode.trim();
 
       const [
         campaignRes,
@@ -29,51 +30,101 @@ export class SupabaseSyncService {
         scrapbookRes,
         audioRes,
       ] = await Promise.all([
-        supabase.from('campaigns').select('*').eq('code', code).single(),
-        supabase.from('chapters').select('*').eq('campaign_code', code).order('order_index', { ascending: true }),
-        supabase.from('sessions').select('*').eq('campaign_code', code).order('number', { ascending: true }),
-        supabase.from('entities').select('*').eq('campaign_code', code),
-        supabase.from('notes').select('*').eq('campaign_code', code).order('created_at', { ascending: false }),
-        supabase.from('maps').select('*').eq('campaign_code', code),
-        supabase.from('scrapbook').select('*').eq('campaign_code', code).order('created_at', { ascending: false }),
-        supabase.from('audio_logs').select('*').eq('campaign_code', code).order('created_at', { ascending: false }),
+        supabase
+          .from('campaigns')
+          .select('*')
+          .or(`code.eq.${cleanCode},code.eq.${rawCode}`)
+          .maybeSingle(),
+        supabase
+          .from('chapters')
+          .select('*')
+          .or(`campaign_code.eq.${cleanCode},campaign_code.eq.${rawCode}`)
+          .order('order_index', { ascending: true }),
+        supabase
+          .from('sessions')
+          .select('*')
+          .or(`campaign_code.eq.${cleanCode},campaign_code.eq.${rawCode}`)
+          .order('number', { ascending: true }),
+        supabase
+          .from('entities')
+          .select('*')
+          .or(`campaign_code.eq.${cleanCode},campaign_code.eq.${rawCode}`),
+        supabase
+          .from('notes')
+          .select('*')
+          .or(`campaign_code.eq.${cleanCode},campaign_code.eq.${rawCode}`)
+          .order('created_at', { ascending: false }),
+        supabase
+          .from('maps')
+          .select('*')
+          .or(`campaign_code.eq.${cleanCode},campaign_code.eq.${rawCode}`),
+        supabase
+          .from('scrapbook')
+          .select('*')
+          .or(`campaign_code.eq.${cleanCode},campaign_code.eq.${rawCode}`)
+          .order('created_at', { ascending: false }),
+        supabase
+          .from('audio_logs')
+          .select('*')
+          .or(`campaign_code.eq.${cleanCode},campaign_code.eq.${rawCode}`)
+          .order('created_at', { ascending: false }),
       ]);
 
-      if (campaignRes.error && campaignRes.error.code !== 'PGRST116') {
-        console.warn('[Supabase] Error loading campaign:', campaignRes.error);
-        return null;
+      if (campaignRes.error) {
+        console.warn('[Supabase] Warning reading campaigns table:', campaignRes.error.message);
+      }
+      if (sessionsRes.error) {
+        console.warn('[Supabase] Warning reading sessions table:', sessionsRes.error.message);
       }
 
-      const campRow = campaignRes.data;
-      if (!campRow) return null;
+      const campRow = campaignRes.data || {};
 
       const chapters: CampaignChapter[] = (chaptersRes.data || []).map((row) => ({
         id: row.id,
         name: row.title || 'Capitolo',
         description: row.synopsis || '',
-        order: row.order_index || 0,
+        order: row.order_index ?? row.number ?? 0,
       }));
 
-      const sessions: Session[] = (sessionsRes.data || []).map((row) => ({
-        _id: row.id,
-        number: row.number,
-        title: row.title,
-        date: row.date_str || new Date().toISOString().split('T')[0],
-        chapterId: row.chapter_id || undefined,
-        loreDate: row.calendar_date ? JSON.stringify(row.calendar_date) : undefined,
-        events: Array.isArray(row.plot_events) ? row.plot_events : [],
-        recap: Array.isArray(row.recap) ? row.recap : [],
-      }));
+      const sessions: Session[] = (sessionsRes.data || []).map((row) => {
+        // Support both recap array or summary markdown string
+        let recapData: any = row.recap;
+        if (!recapData || (Array.isArray(recapData) && recapData.length === 0)) {
+          recapData = row.summary || [];
+        }
 
-      const entities: Entity[] = (entitiesRes.data || []).map((row) => ({
-        _id: row.id,
-        name: row.name,
-        category: row.type || 'npc',
-        description: row.description || '',
-        imageUrl: row.image_url || '',
-        status: row.status || 'active',
-        ...(row.attributes || {}),
-      }));
+        // Clean loreDate formatting
+        let parsedLoreDate: string | undefined = undefined;
+        if (typeof row.calendar_date === 'string') {
+          parsedLoreDate = row.calendar_date;
+        } else if (row.calendar_date && typeof row.calendar_date === 'object') {
+          parsedLoreDate = JSON.stringify(row.calendar_date);
+        }
+
+        return {
+          _id: row.id,
+          number: Number(row.number) || 1,
+          title: row.title || `Sessione ${row.number || 1}`,
+          date: row.date_str || new Date().toISOString().split('T')[0],
+          chapterId: row.chapter_id || undefined,
+          loreDate: parsedLoreDate,
+          events: Array.isArray(row.plot_events) ? row.plot_events : [],
+          recap: recapData,
+        };
+      });
+
+      const entities: Entity[] = (entitiesRes.data || []).map((row) => {
+        const customAttrs = (row.attributes && typeof row.attributes === 'object') ? row.attributes : {};
+        return {
+          _id: row.id,
+          name: row.name || 'Senza Nome',
+          category: row.type || 'npc',
+          description: row.description || '',
+          imageUrl: row.image_url || '',
+          status: row.status || 'active',
+          ...customAttrs,
+        };
+      });
 
       const notes: Note[] = (notesRes.data || []).map((row) => ({
         _id: row.id,
@@ -90,11 +141,18 @@ export class SupabaseSyncService {
           characterName: row.author_name || 'Giocatore',
           isDm: false,
         },
+        dmResponse: row.dm_reply
+          ? {
+              text: row.dm_reply,
+              answeredAt: row.updated_at || new Date().toISOString(),
+              answeredBy: 'Dungeon Master',
+            }
+          : undefined,
       }));
 
       const maps: WorldMap[] = (mapsRes.data || []).map((row) => ({
         id: row.id,
-        title: row.title,
+        title: row.title || 'Mappa',
         imageUrl: row.image_url || '',
         pins: Array.isArray(row.pins) ? row.pins : [],
         createdAt: row.created_at || new Date().toISOString(),
@@ -103,25 +161,25 @@ export class SupabaseSyncService {
       const scrapbookItems: ScrapbookItem[] = (scrapbookRes.data || []).map((row) => ({
         id: row.id,
         title: row.title || '',
-        imageUrl: row.image_url,
+        imageUrl: row.image_url || '',
         caption: row.caption || '',
         authorName: row.created_by || '',
         category: 'moment',
-        createdAt: row.created_at,
+        createdAt: row.created_at || new Date().toISOString(),
       }));
 
       const audioLogs: AudioLog[] = (audioRes.data || []).map((row) => ({
         id: row.id,
-        title: row.title,
-        audioUrl: row.audio_url,
+        title: row.title || 'Diario Audio',
+        audioUrl: row.audio_url || '',
         durationSeconds: row.duration || 0,
         recordedBy: row.recorded_by || '',
-        createdAt: row.created_at,
+        createdAt: row.created_at || new Date().toISOString(),
       }));
 
       return {
-        campaignCode: campRow.code,
-        title: campRow.title,
+        campaignCode: campRow.code || cleanCode,
+        title: campRow.title || cleanCode,
         subtitle: campRow.subtitle || '',
         description: campRow.description || '',
         system: campRow.system || 'D&D 5e',
@@ -375,6 +433,21 @@ export class SupabaseSyncService {
       return !error;
     } catch (err) {
       console.error('[Supabase] Failed to save map:', err);
+      return false;
+    }
+  }
+
+  /**
+   * Delete a single map
+   */
+  static async deleteMap(mapId: string): Promise<boolean> {
+    if (!isSupabaseConfigured() || !mapId) return false;
+    try {
+      const { error } = await supabase.from('maps').delete().eq('id', mapId);
+      if (error) console.error('[Supabase] Error deleting map:', error);
+      return !error;
+    } catch (err) {
+      console.error('[Supabase] Failed to delete map:', err);
       return false;
     }
   }

@@ -917,7 +917,7 @@ export class CloudSyncService {
   /**
    * Initializes real-time two-way synchronization with Firebase Firestore
    */
-  static init(onCloudUpdated?: () => void) {
+  static async init(onCloudUpdated?: () => void) {
     // Reset any transient quota lock on clean init
     resetQuotaExhaustedFlag();
 
@@ -935,56 +935,49 @@ export class CloudSyncService {
       const activeCode = CampaignManager.getActiveCampaignCode();
       if (!activeCode || activeCode === '__NONE__') {
         this.isCampaignHydrated = true;
+        if (onCloudUpdated) onCloudUpdated();
         return;
       }
-      // 0. Primary Fetch from Supabase PostgreSQL if configured
+
+      // 0. Primary Source of Truth: Fetch from Supabase PostgreSQL if configured
       if (isSupabaseConfigured()) {
-        SupabaseSyncService.fetchCampaignData(activeCode).then((supaData) => {
+        try {
+          const supaData = await SupabaseSyncService.fetchCampaignData(activeCode);
           if (supaData) {
             console.log(`[CloudSync] Hydrated from Supabase: ${supaData.sessions?.length || 0} sessions, ${supaData.notes?.length || 0} notes, ${supaData.entities?.length || 0} entities`);
             if (Array.isArray(supaData.sessions) && supaData.sessions.length > 0) {
-              const local = CampaignManager.getSessions();
-              const merged = CloudSyncService.mergeSessions(local, supaData.sessions);
-              CampaignManager.saveSessions(merged);
+              CampaignManager.saveSessionsLocalOnly(supaData.sessions);
             }
             if (Array.isArray(supaData.chapters) && supaData.chapters.length > 0) {
-              const local = CampaignManager.getChapters();
-              const merged = CloudSyncService.mergeChapters(local, supaData.chapters);
-              CampaignManager.saveChapters(merged);
+              CampaignManager.saveChaptersLocalOnly(supaData.chapters);
             }
             if (Array.isArray(supaData.notes) && supaData.notes.length > 0) {
-              const local = CampaignManager.getNotes();
-              const merged = CloudSyncService.mergeNotes(local, supaData.notes);
-              CampaignManager.saveNotes(merged);
+              CampaignManager.saveNotesLocalOnly(supaData.notes);
             }
             if (Array.isArray(supaData.entities) && supaData.entities.length > 0) {
-              const local = CampaignManager.getEntities();
-              const merged = CloudSyncService.mergeEntities(local, supaData.entities);
-              CampaignManager.saveEntities(merged);
+              CampaignManager.saveEntitiesLocalOnly(supaData.entities);
             }
             if (Array.isArray(supaData.maps) && supaData.maps.length > 0) {
-              const local = CampaignManager.getMaps();
-              const merged = CloudSyncService.mergeMaps(local, supaData.maps);
-              CampaignManager.saveMaps(merged);
+              CampaignManager.saveMapsLocalOnly(supaData.maps);
             }
             if (Array.isArray(supaData.scrapbookItems) && supaData.scrapbookItems.length > 0) {
-              const local = CampaignManager.getScrapbookItems();
-              const merged = CloudSyncService.mergeScrapbookItems(local, supaData.scrapbookItems);
-              CampaignManager.saveScrapbookItems(merged);
+              CampaignManager.saveScrapbookItemsLocalOnly(supaData.scrapbookItems);
             }
             if (Array.isArray(supaData.audioLogs) && supaData.audioLogs.length > 0) {
-              CampaignManager.saveAudioLogs(supaData.audioLogs);
+              CampaignManager.saveAudioLogsLocalOnly(supaData.audioLogs);
             }
 
             this.isCampaignHydrated = true;
             if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('chronicle_sessions_updated', { detail: { sessions: supaData.sessions } }));
+              window.dispatchEvent(new CustomEvent('chronicle_chapters_updated'));
               window.dispatchEvent(new CustomEvent('chronicle_data_updated'));
             }
             if (onCloudUpdated) onCloudUpdated();
           }
-        }).catch((err) => {
+        } catch (err) {
           console.warn('[Supabase] Initial fetch warning:', err);
-        });
+        }
       }
 
       const docRef = doc(db, 'dnd_campaigns', activeCode);
@@ -1910,8 +1903,22 @@ export class CloudSyncService {
               })),
             };
           });
-          const mergedSessions = this.mergeSessions(localSessions, hydratedSessions, activeDeletedSessionsSet);
-          CampaignManager.saveSessions(mergedSessions);
+          let finalSessions: Session[];
+          if (isSupabaseConfigured() && localSessions.length > 0) {
+            finalSessions = localSessions.map((ls) => {
+              const sMedia = aggregatedSessionMedia[ls._id];
+              const matchRemote = hydratedSessions.find((hs) => hs._id === ls._id);
+              return {
+                ...ls,
+                coverImage: ls.coverImage || sMedia?.coverImage || matchRemote?.coverImage || '',
+                images: (ls.images && ls.images.length > 0) ? ls.images : (sMedia?.images || matchRemote?.images || []),
+              };
+            });
+            CampaignManager.saveSessionsLocalOnly(finalSessions);
+          } else {
+            finalSessions = this.mergeSessions(localSessions, hydratedSessions, activeDeletedSessionsSet);
+            CampaignManager.saveSessions(finalSessions);
+          }
         }
       }
 
@@ -1921,7 +1928,11 @@ export class CloudSyncService {
           console.warn('[CloudSync] Remote chapters are empty but local has data. Preserving local chapters.');
         } else {
           const mergedChapters = this.mergeChapters(localChapters, remote.chapters);
-          CampaignManager.saveChapters(mergedChapters);
+          if (isSupabaseConfigured() && localChapters.length > 0) {
+            CampaignManager.saveChaptersLocalOnly(mergedChapters);
+          } else {
+            CampaignManager.saveChapters(mergedChapters);
+          }
         }
       }
 
@@ -1949,7 +1960,11 @@ export class CloudSyncService {
               };
             });
           const mergedEntities = this.mergeEntities(localEntities, hydratedEntities, activeDeletedEntitiesSet);
-          CampaignManager.saveEntities(mergedEntities);
+          if (isSupabaseConfigured() && localEntities.length > 0) {
+            CampaignManager.saveEntitiesLocalOnly(mergedEntities);
+          } else {
+            CampaignManager.saveEntities(mergedEntities);
+          }
         }
       }
 
@@ -1984,7 +1999,11 @@ export class CloudSyncService {
             };
           });
           const mergedNotes = this.mergeNotes(localNotes, hydratedNotes, activeDeletedNotesSet);
-          CampaignManager.saveNotes(mergedNotes);
+          if (isSupabaseConfigured() && localNotes.length > 0) {
+            CampaignManager.saveNotesLocalOnly(mergedNotes);
+          } else {
+            CampaignManager.saveNotes(mergedNotes);
+          }
         }
       }
 
@@ -2004,7 +2023,11 @@ export class CloudSyncService {
             };
           });
           const mergedMaps = this.mergeMaps(localMaps, hydratedMaps);
-          CampaignManager.saveMaps(mergedMaps);
+          if (isSupabaseConfigured() && localMaps.length > 0) {
+            CampaignManager.saveMapsLocalOnly(mergedMaps);
+          } else {
+            CampaignManager.saveMaps(mergedMaps);
+          }
         }
       }
 
@@ -2018,9 +2041,17 @@ export class CloudSyncService {
       }
 
       if (aggregatedAudioLogs.length > 0) {
-        CampaignManager.saveAudioLogs(aggregatedAudioLogs);
+        if (isSupabaseConfigured()) {
+          CampaignManager.saveAudioLogsLocalOnly(aggregatedAudioLogs);
+        } else {
+          CampaignManager.saveAudioLogs(aggregatedAudioLogs);
+        }
       } else if (Array.isArray(remote.audioLogs) && remote.audioLogs.length > 0) {
-        CampaignManager.saveAudioLogs(remote.audioLogs);
+        if (isSupabaseConfigured()) {
+          CampaignManager.saveAudioLogsLocalOnly(remote.audioLogs);
+        } else {
+          CampaignManager.saveAudioLogs(remote.audioLogs);
+        }
       }
 
       const incomingScrapbook = aggregatedScrapbookItems.length > 0
@@ -2030,7 +2061,11 @@ export class CloudSyncService {
       if (incomingScrapbook.length > 0) {
         const localScrapbook = CampaignManager.getScrapbookItems();
         const mergedScrapbook = this.mergeScrapbookItems(localScrapbook, incomingScrapbook, new Set(CampaignManager.getDeletedScrapbookIds()));
-        CampaignManager.saveScrapbookItems(mergedScrapbook);
+        if (isSupabaseConfigured() && localScrapbook.length > 0) {
+          CampaignManager.saveScrapbookItemsLocalOnly(mergedScrapbook);
+        } else {
+          CampaignManager.saveScrapbookItems(mergedScrapbook);
+        }
       }
 
       if (Array.isArray(remote.characterBios)) {

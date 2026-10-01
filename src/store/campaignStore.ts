@@ -2468,6 +2468,9 @@ export class CampaignManager {
     this.addDeletedNoteId(id);
     const notes = this.getNotes().filter((n) => n._id !== id);
     this.saveNotes(notes);
+    if (isSupabaseConfigured()) {
+      SupabaseSyncService.deleteNote(id);
+    }
   }
 
   static togglePinNote(id: string) {
@@ -3111,6 +3114,9 @@ export class CampaignManager {
     this.addDeletedSessionId(id);
     const sessions = this.getSessions().filter((s) => s._id !== id);
     this.saveSessions(sessions);
+    if (isSupabaseConfigured()) {
+      SupabaseSyncService.deleteSession(id);
+    }
   }
 
   // === CHAPTERS / NARRATIVE ARCS ===
@@ -3269,6 +3275,9 @@ export class CampaignManager {
   static deleteChapter(id: string) {
     const chapters = this.getChapters().filter((c) => c.id !== id);
     this.saveChapters(chapters);
+    if (isSupabaseConfigured()) {
+      SupabaseSyncService.deleteChapter(id);
+    }
   }
 
   static addEventToSession(
@@ -3811,6 +3820,9 @@ export class CampaignManager {
     const entity = this.getEntities().find((e) => e._id === id);
     const entities = this.getEntities().filter((e) => e._id !== id);
     this.saveEntities(entities);
+    if (isSupabaseConfigured()) {
+      SupabaseSyncService.deleteEntity(id);
+    }
 
     if (entity?.type === "place") {
       const maps = this.getMaps();
@@ -4132,6 +4144,9 @@ export class CampaignManager {
     const map = this.getMaps().find((m) => m.id === id);
     const maps = this.getMaps().filter((m) => m.id !== id);
     this.saveMaps(maps);
+    if (isSupabaseConfigured()) {
+      SupabaseSyncService.deleteMap(id);
+    }
 
     if (map) {
       const entities = this.getEntities();
@@ -4319,6 +4334,12 @@ export class CampaignManager {
     }
   }
 
+  static saveAudioLogsLocalOnly(logs: AudioLog[]) {
+    const key = this.getStorageKey("audio_logs");
+    setCached(key, logs);
+    safeLocalStorageSetItem(key, JSON.stringify(logs));
+  }
+
   static addAudioLog(data: Omit<AudioLog, "id" | "createdAt">): AudioLog {
     const logs = this.getAudioLogs();
     const newLog: AudioLog = {
@@ -4334,6 +4355,9 @@ export class CampaignManager {
   static deleteAudioLog(id: string) {
     const logs = this.getAudioLogs().filter((l) => l.id !== id);
     this.saveAudioLogs(logs);
+    if (isSupabaseConfigured()) {
+      SupabaseSyncService.deleteAudioLog(id);
+    }
   }
 
   // === SCRAPBOOK & VISUAL GALLERY ===
@@ -4365,6 +4389,16 @@ export class CampaignManager {
     }
   }
 
+  static saveScrapbookItemsLocalOnly(items: ScrapbookItem[]) {
+    const key = this.getStorageKey("scrapbook");
+    setCached(key, items);
+    safeLocalStorageSetItem(key, JSON.stringify(items));
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("chronicle_scrapbook_updated"));
+      window.dispatchEvent(new CustomEvent("chronicle_data_updated"));
+    }
+  }
+
   static addScrapbookItem(
     item: Omit<ScrapbookItem, "id" | "createdAt">,
   ): ScrapbookItem {
@@ -4383,6 +4417,9 @@ export class CampaignManager {
     this.addDeletedScrapbookId(id);
     const items = this.getScrapbookItems().filter((i) => i.id !== id);
     this.saveScrapbookItems(items);
+    if (isSupabaseConfigured()) {
+      SupabaseSyncService.deleteScrapbookItem(id);
+    }
   }
 
   /**
