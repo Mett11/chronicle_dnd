@@ -78,12 +78,17 @@ export class SupabaseSyncService {
       }
 
       const campRow = campaignRes.data || {};
+      const dossier = campRow.dossier || {};
+      const chaptersMeta = dossier.chaptersMeta || {};
+      const mapsMeta = dossier.mapsMeta || {};
+      const mapFolders = Array.isArray(dossier.mapFolders) ? dossier.mapFolders : [];
 
       const chapters: CampaignChapter[] = (chaptersRes.data || []).map((row) => ({
         id: row.id,
         name: row.title || 'Capitolo',
         description: row.synopsis || '',
         order: row.order_index ?? row.number ?? 0,
+        coverImageUrl: chaptersMeta[row.id]?.coverImageUrl || (row as any).cover_image_url || (row as any).image_url || undefined,
       }));
 
       const sessions: Session[] = (sessionsRes.data || []).map((row) => {
@@ -161,6 +166,8 @@ export class SupabaseSyncService {
       const maps: WorldMap[] = (mapsRes.data || []).map((row) => ({
         id: row.id,
         title: row.title || 'Mappa',
+        description: mapsMeta[row.id]?.description || (row as any).description || '',
+        folderId: mapsMeta[row.id]?.folderId || (row as any).folder_id || undefined,
         imageUrl: row.image_url || '',
         pins: Array.isArray(row.pins) ? row.pins : [],
         createdAt: row.created_at || new Date().toISOString(),
@@ -196,6 +203,7 @@ export class SupabaseSyncService {
         aiConfig: campRow.ai_config || {},
         activePlayers: Array.isArray(campRow.active_players) ? campRow.active_players : [],
         dossier: campRow.dossier || {},
+        mapFolders,
         chapters,
         sessions,
         entities,
@@ -398,9 +406,98 @@ export class SupabaseSyncService {
 
       const { error } = await supabase.from('chapters').upsert(payload, { onConflict: 'id' });
       if (error) console.error('[Supabase] Error saving chapter:', error);
+
+      // Save coverImageUrl into campaign dossier
+      if (chapter.coverImageUrl !== undefined) {
+        this.saveChapterCover(code, chapter.id, chapter.coverImageUrl || '').catch(() => {});
+      }
+
       return !error;
     } catch (err) {
       console.error('[Supabase] Failed to save chapter:', err);
+      return false;
+    }
+  }
+
+  /**
+   * Persists chapter cover image URL to campaign dossier
+   */
+  static async saveChapterCover(campaignCode: string, chapterId: string, coverImageUrl: string): Promise<boolean> {
+    if (!isSupabaseConfigured() || !campaignCode || !chapterId) return false;
+    try {
+      const code = campaignCode.trim();
+      const { data: camp } = await supabase.from('campaigns').select('dossier').eq('code', code).maybeSingle();
+      const dossier = camp?.dossier || {};
+      const chaptersMeta = dossier.chaptersMeta || {};
+      chaptersMeta[chapterId] = { ...(chaptersMeta[chapterId] || {}), coverImageUrl };
+      await supabase.from('campaigns').update({
+        dossier: { ...dossier, chaptersMeta },
+        updated_at: new Date().toISOString(),
+      }).eq('code', code);
+      return true;
+    } catch (err) {
+      console.error('[Supabase] Failed to save chapter cover:', err);
+      return false;
+    }
+  }
+
+  /**
+   * Persists map folders hierarchy into campaign dossier
+   */
+  static async saveMapFolders(campaignCode: string, folders: any[]): Promise<boolean> {
+    if (!isSupabaseConfigured() || !campaignCode) return false;
+    try {
+      const code = campaignCode.trim();
+      const { data: camp } = await supabase.from('campaigns').select('dossier').eq('code', code).maybeSingle();
+      const dossier = camp?.dossier || {};
+      await supabase.from('campaigns').update({
+        dossier: { ...dossier, mapFolders: folders || [] },
+        updated_at: new Date().toISOString(),
+      }).eq('code', code);
+      return true;
+    } catch (err) {
+      console.error('[Supabase] Failed to save map folders:', err);
+      return false;
+    }
+  }
+
+  /**
+   * Persists map metadata (description, folderId) into campaign dossier
+   */
+  static async saveMapMeta(campaignCode: string, mapId: string, meta: { folderId?: string; description?: string }): Promise<boolean> {
+    if (!isSupabaseConfigured() || !campaignCode || !mapId) return false;
+    try {
+      const code = campaignCode.trim();
+      const { data: camp } = await supabase.from('campaigns').select('dossier').eq('code', code).maybeSingle();
+      const dossier = camp?.dossier || {};
+      const mapsMeta = dossier.mapsMeta || {};
+      mapsMeta[mapId] = { ...(mapsMeta[mapId] || {}), ...meta };
+      await supabase.from('campaigns').update({
+        dossier: { ...dossier, mapsMeta },
+        updated_at: new Date().toISOString(),
+      }).eq('code', code);
+      return true;
+    } catch (err) {
+      console.error('[Supabase] Failed to save map metadata:', err);
+      return false;
+    }
+  }
+
+  /**
+   * Persists active party members / user accounts into campaign row in Supabase
+   */
+  static async saveActivePlayers(campaignCode: string, accounts: any[]): Promise<boolean> {
+    if (!isSupabaseConfigured() || !campaignCode) return false;
+    try {
+      const code = campaignCode.trim();
+      const { error } = await supabase.from('campaigns').update({
+        active_players: accounts || [],
+        updated_at: new Date().toISOString(),
+      }).eq('code', code);
+      if (error) console.error('[Supabase] Error saving active players:', error);
+      return !error;
+    } catch (err) {
+      console.error('[Supabase] Failed to save active players:', err);
       return false;
     }
   }
@@ -438,6 +535,11 @@ export class SupabaseSyncService {
 
       const { error } = await supabase.from('maps').upsert(payload, { onConflict: 'id' });
       if (error) console.error('[Supabase] Error saving map:', error);
+
+      if (map.folderId !== undefined || map.description !== undefined) {
+        this.saveMapMeta(code, map.id, { folderId: map.folderId, description: map.description }).catch(() => {});
+      }
+
       return !error;
     } catch (err) {
       console.error('[Supabase] Failed to save map:', err);

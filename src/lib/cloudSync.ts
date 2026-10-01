@@ -473,7 +473,14 @@ export class CloudSyncService {
    * Directly syncs accounts array to Firestore global document
    */
   static async syncAccountsToCloud(accounts: UserAccount[]) {
-    if (isSupabaseConfigured() || checkIsQuotaExhausted()) return;
+    if (isSupabaseConfigured()) {
+      const activeCode = CampaignManager.getActiveCampaignCode();
+      if (activeCode && activeCode !== '__NONE__') {
+        SupabaseSyncService.saveActivePlayers(activeCode, accounts).catch(() => {});
+      }
+      return;
+    }
+    if (checkIsQuotaExhausted()) return;
     try {
       const docRef = doc(db, 'dnd_global', 'accounts');
       const deletedIds = CampaignManager.getDeletedAccountIds();
@@ -967,6 +974,9 @@ export class CloudSyncService {
             }
             if (Array.isArray(supaData.maps) && supaData.maps.length > 0) {
               CampaignManager.saveMapsLocalOnly(supaData.maps);
+            }
+            if (Array.isArray(supaData.mapFolders) && supaData.mapFolders.length > 0) {
+              CampaignManager.saveMapFoldersLocalOnly(supaData.mapFolders);
             }
             if (Array.isArray(supaData.scrapbookItems) && supaData.scrapbookItems.length > 0) {
               CampaignManager.saveScrapbookItemsLocalOnly(supaData.scrapbookItems);

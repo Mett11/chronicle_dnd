@@ -3877,6 +3877,20 @@ export class CampaignManager {
     setCached(key, sanitized);
     safeLocalStorageSetItem(key, JSON.stringify(sanitized));
     CloudSyncService.triggerCloudSave();
+    if (isSupabaseConfigured()) {
+      const code = this.getActiveCampaignCode() || 'default';
+      SupabaseSyncService.saveMapFolders(code, sanitized).catch(() => {});
+    }
+    try {
+      window.dispatchEvent(new CustomEvent('chronicle_map_folders_updated', { detail: { folders: sanitized } }));
+    } catch {}
+  }
+
+  static saveMapFoldersLocalOnly(folders: MapFolder[]) {
+    const key = this.getStorageKey("map_folders");
+    const sanitized = sanitizeArray<MapFolder>(folders);
+    setCached(key, sanitized);
+    safeLocalStorageSetItem(key, JSON.stringify(sanitized));
     try {
       window.dispatchEvent(new CustomEvent('chronicle_map_folders_updated', { detail: { folders: sanitized } }));
     } catch {}
