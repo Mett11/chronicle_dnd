@@ -997,6 +997,8 @@ PG party: ${playerNames.join(', ')}.`;
 
   const handleConvertToParty = (item: ExtractedEntityItem) => {
     CampaignManager.addUnregisteredPlayer(item.name.trim());
+    CloudSyncService.syncAccountsToCloud(CampaignManager.getAccounts());
+    CloudSyncService.triggerCloudSave();
     setItems((prev) =>
       prev.map((i) =>
         i.id === item.id

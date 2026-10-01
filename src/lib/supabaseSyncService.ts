@@ -254,7 +254,9 @@ export class SupabaseSyncService {
         dmId: campRow.dm_id || '',
         calendarSystem: campRow.calendar_system || {},
         aiConfig: campRow.ai_config || {},
-        activePlayers: Array.isArray(campRow.active_players) ? campRow.active_players : [],
+        activePlayers: Array.isArray(campRow.active_players) && campRow.active_players.length > 0
+          ? campRow.active_players
+          : (Array.isArray(dossier.activePlayers) ? dossier.activePlayers : []),
         dossier,
         characterBios: Array.isArray(dossier.characterBios) ? dossier.characterBios : [],
         familyRelations: Array.isArray(dossier.familyRelations) ? dossier.familyRelations : [],
@@ -608,10 +610,21 @@ export class SupabaseSyncService {
     if (!isSupabaseConfigured() || !campaignCode) return false;
     try {
       const code = campaignCode.trim();
+      const sanitized = Array.isArray(accounts) ? accounts.filter((a) => a && a.id) : [];
+
+      // Also get existing dossier to safely mirror activePlayers
+      const { data: camp } = await supabase.from('campaigns').select('dossier').eq('code', code).maybeSingle();
+      const dossier = camp?.dossier || {};
+
       const { error } = await supabase.from('campaigns').update({
-        active_players: accounts || [],
+        active_players: sanitized,
+        dossier: {
+          ...dossier,
+          activePlayers: sanitized,
+        },
         updated_at: new Date().toISOString(),
       }).eq('code', code);
+
       if (error) console.error('[Supabase] Error saving active players:', error);
       return !error;
     } catch (err) {

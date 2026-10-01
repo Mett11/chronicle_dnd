@@ -680,19 +680,40 @@ export class CloudSyncService {
       }
     });
 
+    const activeCode = CampaignManager.getActiveCampaignCode();
+    const cleanActiveCode = (activeCode || '').trim().toUpperCase();
+
     remoteAccounts.forEach((acc) => {
       if (acc && acc.id && !deletedIds.has(acc.id)) {
         const userExpelled = expelledMap.get(acc.id);
         const joined = (acc.joinedCampaigns || []).filter(
           (code) => !userExpelled?.has(code.toUpperCase())
         );
+        // If restored from campaign active_players and joined is empty or missing current campaign, ensure it's joined
+        if (cleanActiveCode && !userExpelled?.has(cleanActiveCode) && !joined.some((c) => c.toUpperCase() === cleanActiveCode)) {
+          joined.push(cleanActiveCode);
+        }
+
         const dm = (acc.dmCampaigns || []).filter(
           (code) => !userExpelled?.has(code.toUpperCase())
         );
+
+        const profiles = { ...(acc.campaignProfiles || {}) };
+        if (cleanActiveCode && !profiles[cleanActiveCode] && acc.characterName) {
+          profiles[cleanActiveCode] = {
+            characterName: acc.characterName,
+            avatarUrl: acc.avatarUrl || '',
+            color: acc.color || '#6366f1',
+            status: 'active',
+            tags: [],
+          };
+        }
+
         mergedMap.set(acc.id, {
           ...acc,
           joinedCampaigns: joined,
           dmCampaigns: dm,
+          campaignProfiles: profiles,
         });
       }
     });
@@ -961,61 +982,65 @@ export class CloudSyncService {
           if (supaData) {
             console.log(`[CloudSync] Hydrated from Supabase: ${supaData.sessions?.length || 0} sessions, ${supaData.notes?.length || 0} notes, ${supaData.entities?.length || 0} entities`);
             if (supaData.title) {
-              const allCamps = CampaignManager.getCampaigns();
-              const idx = allCamps.findIndex((c) => c.code === activeCode);
-              if (idx !== -1) {
-                if (allCamps[idx].name !== supaData.title) {
-                  allCamps[idx].name = supaData.title;
+              try {
+                const allCamps = CampaignManager.getCampaigns();
+                const idx = allCamps.findIndex((c) => c.code === activeCode);
+                if (idx !== -1) {
+                  if (allCamps[idx].name !== supaData.title) {
+                    allCamps[idx].name = supaData.title;
+                    CampaignManager.saveCampaignsLocalOnly(allCamps);
+                  }
+                } else {
+                  allCamps.push({
+                    code: activeCode,
+                    name: supaData.title,
+                    createdAt: new Date().toISOString(),
+                  });
                   CampaignManager.saveCampaignsLocalOnly(allCamps);
                 }
-              } else {
-                allCamps.push({
-                  code: activeCode,
+                CampaignManager.updateCampaignMeta(activeCode, {
                   name: supaData.title,
-                  createdAt: new Date().toISOString(),
+                  dmId: supaData.dmId || undefined,
                 });
-                CampaignManager.saveCampaignsLocalOnly(allCamps);
+              } catch (e) {
+                console.warn('[Supabase] meta hydration warn:', e);
               }
-              CampaignManager.updateCampaignMeta(activeCode, {
-                name: supaData.title,
-                dmId: supaData.dmId || undefined,
-              });
             }
             if (Array.isArray(supaData.sessions)) {
-              CampaignManager.saveSessionsLocalOnly(supaData.sessions);
+              try { CampaignManager.saveSessionsLocalOnly(supaData.sessions); } catch (e) { console.warn(e); }
             }
             if (Array.isArray(supaData.chapters)) {
-              CampaignManager.saveChaptersLocalOnly(supaData.chapters);
+              try { CampaignManager.saveChaptersLocalOnly(supaData.chapters); } catch (e) { console.warn(e); }
             }
             if (Array.isArray(supaData.notes)) {
-              CampaignManager.saveNotesLocalOnly(supaData.notes);
+              try { CampaignManager.saveNotesLocalOnly(supaData.notes); } catch (e) { console.warn(e); }
             }
             if (Array.isArray(supaData.entities)) {
-              CampaignManager.saveEntitiesLocalOnly(supaData.entities);
+              try { CampaignManager.saveEntitiesLocalOnly(supaData.entities); } catch (e) { console.warn(e); }
             }
             if (Array.isArray(supaData.maps)) {
-              CampaignManager.saveMapsLocalOnly(supaData.maps);
+              try { CampaignManager.saveMapsLocalOnly(supaData.maps); } catch (e) { console.warn(e); }
             }
             if (Array.isArray(supaData.mapFolders)) {
-              CampaignManager.saveMapFoldersLocalOnly(supaData.mapFolders);
+              try { CampaignManager.saveMapFoldersLocalOnly(supaData.mapFolders); } catch (e) { console.warn(e); }
             }
             if (Array.isArray(supaData.scrapbookItems)) {
-              CampaignManager.saveScrapbookItemsLocalOnly(supaData.scrapbookItems);
+              try { CampaignManager.saveScrapbookItemsLocalOnly(supaData.scrapbookItems); } catch (e) { console.warn(e); }
             }
             if (Array.isArray(supaData.audioLogs)) {
-              CampaignManager.saveAudioLogsLocalOnly(supaData.audioLogs);
+              try { CampaignManager.saveAudioLogsLocalOnly(supaData.audioLogs); } catch (e) { console.warn(e); }
             }
             if (Array.isArray(supaData.characterBios)) {
-              CampaignManager.saveAllCharacterBiosLocalOnly(supaData.characterBios);
+              try { CampaignManager.saveAllCharacterBiosLocalOnly(supaData.characterBios); } catch (e) { console.warn(e); }
             }
             if (Array.isArray(supaData.familyRelations)) {
-              CampaignManager.saveAllFamilyRelationsLocalOnly(supaData.familyRelations);
+              try { CampaignManager.saveAllFamilyRelationsLocalOnly(supaData.familyRelations); } catch (e) { console.warn(e); }
             }
             if (Array.isArray(supaData.worldLoreArticles)) {
-              CampaignManager.saveAllWorldLoreArticlesLocalOnly(supaData.worldLoreArticles);
+              try { CampaignManager.saveAllWorldLoreArticlesLocalOnly(supaData.worldLoreArticles); } catch (e) { console.warn(e); }
             }
             if (Array.isArray(supaData.activePlayers)) {
-              this.mergeRemoteAccounts(supaData.activePlayers);
+              try { this.mergeRemoteAccounts(supaData.activePlayers); } catch (e) { console.warn(e); }
             }
 
             this.isCampaignHydrated = true;
@@ -1025,17 +1050,17 @@ export class CloudSyncService {
               window.dispatchEvent(new CustomEvent('chronicle_chapters_updated'));
               window.dispatchEvent(new CustomEvent('chronicle_data_updated'));
             }
-            if (onCloudUpdated) onCloudUpdated();
           }
         } catch (err) {
           console.warn('[Supabase] Initial fetch warning:', err);
-        }
-
-        // When Supabase is configured, PostgreSQL is the active database.
-        // We completely bypass Firestore document reads, writes, and real-time onSnapshot listeners.
-        this.isCampaignHydrated = true;
-        if (typeof localStorage !== 'undefined') {
-          localStorage.setItem('hasPendingUpload', 'false');
+        } finally {
+          this.isCampaignHydrated = true;
+          if (typeof localStorage !== 'undefined') {
+            localStorage.setItem('hasPendingUpload', 'false');
+          }
+          if (onCloudUpdated) {
+            try { onCloudUpdated(); } catch {}
+          }
         }
         return;
       }

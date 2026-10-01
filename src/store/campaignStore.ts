@@ -4716,6 +4716,22 @@ export class CampaignManager {
     }
   }
 
+  static saveAllFamilyRelationsLocalOnly(relations: CharacterRelationship[]) {
+    const key = this.getStorageKey("family_relations");
+    const seen = new Set<string>();
+    const sanitized = (relations || []).filter((r) => {
+      if (!r || !r.id) return false;
+      if (seen.has(r.id)) return false;
+      seen.add(r.id);
+      return true;
+    });
+    setCached(key, sanitized);
+    safeLocalStorageSetItem(key, JSON.stringify(sanitized));
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("chronicle_family_tree_updated"));
+    }
+  }
+
   static getFamilyRelations(playerId: string): CharacterRelationship[] {
     if (!playerId) return [];
     const all = this.getAllFamilyRelations();
@@ -5024,6 +5040,10 @@ export class CampaignManager {
     if (typeof window !== "undefined") {
       window.dispatchEvent(new CustomEvent("chronicle_world_lore_updated"));
     }
+  }
+
+  static saveAllWorldLoreArticlesLocalOnly(articles: WorldLoreArticle[]) {
+    this.saveWorldLoreArticlesLocalOnly(articles);
   }
 
   static saveWorldLoreArticle(article: WorldLoreArticle): WorldLoreArticle {

@@ -96,17 +96,23 @@ function AppContent() {
 
   const [isCampaignHydrating, setIsCampaignHydrating] = useState(false);
 
-  // Initialize Real-Time Firebase Firestore Cloud Sync when a campaign is active
+  // Initialize Real-Time Cloud Sync when a campaign is active
   useEffect(() => {
+    let safetyTimer: any = null;
     if (campaignCode) {
       const hasLocalSessions = CampaignManager.getSessions().length > 0;
       const hasLocalEntities = CampaignManager.getEntities().length > 0;
       if (!hasLocalSessions && !hasLocalEntities) {
         setIsCampaignHydrating(true);
+        // Safety timeout: Never leave user stuck on loading spinner for more than 4 seconds
+        safetyTimer = setTimeout(() => {
+          setIsCampaignHydrating(false);
+        }, 4000);
       }
 
       CloudSyncService.stop();
       CloudSyncService.init(() => {
+        if (safetyTimer) clearTimeout(safetyTimer);
         setIsCampaignHydrating(false);
         // Trigger subtle local UI refresh when new updates arrive from cloud
         setForceTick((prev) => prev + 1);
@@ -116,6 +122,7 @@ function AppContent() {
       CloudSyncService.stop();
     }
     return () => {
+      if (safetyTimer) clearTimeout(safetyTimer);
       CloudSyncService.stop();
     };
   }, [campaignCode]);
