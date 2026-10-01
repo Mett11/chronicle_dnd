@@ -76,16 +76,19 @@ export class SupabaseSyncService {
           .from('character_bios')
           .select('*')
           .eq('campaign_code', cleanCode)
+          .then(res => res)
           .catch(() => ({ data: [] })),
         supabase
           .from('family_relations')
           .select('*')
           .eq('campaign_code', cleanCode)
+          .then(res => res)
           .catch(() => ({ data: [] })),
         supabase
           .from('world_lore_articles')
           .select('*')
           .eq('campaign_code', cleanCode)
+          .then(res => res)
           .catch(() => ({ data: [] })),
       ]);
 
