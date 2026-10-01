@@ -1,7 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { doc, getDoc } from 'firebase/firestore';
-import { db } from '../lib/firebase';
 import { CampaignManager } from '../store/campaignStore';
 import { StorylineFullscreenViewer, StorylineSlide } from '../components/StorylineFullscreenViewer';
 import { Film, Sparkles, Compass, AlertCircle, RefreshCw } from 'lucide-react';
@@ -10,64 +8,6 @@ import { extractTextFromContent, safeString } from '../lib/sanitize';
 import { generateCampaignShareToken, slugifyCampaignTitle } from '../lib/shareToken';
 import { isSupabaseConfigured } from '../lib/supabase';
 import { SupabaseSyncService } from '../lib/supabaseSyncService';
-
-function withTimeout<T>(promise: Promise<T>, timeoutMs = 4000): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<T>((_, reject) => setTimeout(() => reject(new Error('Timeout caricamento presentazione.')), timeoutMs)),
-  ]);
-}
-
-async function extractPresentationFromSnap(publicSnap: any, targetDocId: string) {
-  const publicData = publicSnap.data();
-  let pSessions = Array.isArray(publicData?.sessions) ? publicData.sessions : [];
-  const pChapters = Array.isArray(publicData?.chapters) ? publicData.chapters : [];
-  const chunkCount = publicData?._mediaChunkCount || 0;
-  const primaryDocId = publicData?.slug || targetDocId;
-
-  if (chunkCount > 0) {
-    try {
-      const chunkPromises: Promise<any>[] = [];
-      for (let i = 0; i < chunkCount; i++) {
-        chunkPromises.push(withTimeout(getDoc(doc(db, 'public_presentations', `${primaryDocId}__chunk_${i}`)), 3000));
-        if (targetDocId && targetDocId !== primaryDocId) {
-          chunkPromises.push(withTimeout(getDoc(doc(db, 'public_presentations', `${targetDocId}__chunk_${i}`)), 3000));
-        }
-      }
-      const chunkSnaps = await Promise.allSettled(chunkPromises);
-      const aggregatedSessionMedia: Record<string, string[]> = {};
-
-      chunkSnaps.forEach((res) => {
-        if (res.status === 'fulfilled' && res.value.exists()) {
-          const cData = res.value.data();
-          if (cData.sessionMedia) {
-            Object.assign(aggregatedSessionMedia, cData.sessionMedia);
-          }
-        }
-      });
-
-      pSessions = pSessions.map((s: any) => {
-        const chunkImgs = aggregatedSessionMedia[s._id];
-        const combinedImgs = (chunkImgs && chunkImgs.length > 0)
-          ? chunkImgs
-          : (s.images || []);
-        return {
-          ...s,
-          images: combinedImgs,
-          coverImage: s.coverImage || combinedImgs[0] || '',
-        };
-      });
-    } catch (chunkErr) {
-      console.warn('[PublicPresentation] Chunk restore warn:', chunkErr);
-    }
-  }
-
-  return {
-    sessions: pSessions,
-    chapters: pChapters,
-    campaignTitle: publicData?.campaignTitle || 'Cronaca di Campagna',
-  };
-}
 
 export function PublicPresentationView() {
   const { shareId, token, campaignCode: routeCode, code: altCode, campaignName, reversedCode } = useParams<{
@@ -131,208 +71,38 @@ export function PublicPresentationView() {
         return;
       }
 
-      // Fetch from Supabase if configured
-      if (isSupabaseConfigured()) {
-        try {
-          const upperCode = originalFromReversed || rawTarget.toUpperCase();
-          const targetCode = upperCode || activeCode || rawTarget;
-          const supaData = await SupabaseSyncService.fetchCampaignData(targetCode);
-          if (supaData && supaData.sessions && supaData.sessions.length > 0) {
-            if (isMounted) {
-              setSessions(supaData.sessions);
-              setChapters(supaData.chapters || []);
-              setCampaignTitle(localMeta?.name || `Campagna ${targetCode}`);
-              setLoading(false);
-            }
-            return;
+      // Fetch from Supabase
+      try {
+        const upperCode = originalFromReversed || rawTarget.toUpperCase();
+        const targetCode = upperCode || activeCode || rawTarget;
+        const supaData = await SupabaseSyncService.fetchCampaignData(targetCode);
+        if (supaData && supaData.sessions && supaData.sessions.length > 0) {
+          if (isMounted) {
+            setSessions(supaData.sessions);
+            setChapters(supaData.chapters || []);
+            setCampaignTitle(localMeta?.name || `Campagna ${targetCode}`);
+            setLoading(false);
           }
-        } catch (supaErr) {
-          console.warn('[PublicPresentationView] Supabase fetch error:', supaErr);
+          return;
         }
+      } catch (supaErr) {
+        console.warn('[PublicPresentationView] Supabase fetch error:', supaErr);
+      }
+
+      // Fallback to local sessions if available
+      if (localSessions && localSessions.length > 0) {
         if (isMounted) {
-          setError('Nessuna presentazione trovata per questa campagna.');
+          setSessions(localSessions);
+          setChapters(localChapters || []);
+          setCampaignTitle(localMeta?.name || 'Cronaca di Campagna');
           setLoading(false);
         }
         return;
       }
 
-      // Fetch from Firestore
-      try {
-        const slugLower = rawTarget.toLowerCase();
-        const upperCode = originalFromReversed || rawTarget.toUpperCase();
-
-        // 1. Try public presentation document by composite slug or slug
-        let slugSnap: any = null;
-        const candidateDocIds = Array.from(new Set([
-          compositeSlug,
-          slugLower,
-          campaignName ? slugifyCampaignTitle(campaignName) : '',
-          originalFromReversed,
-          upperCode,
-        ].filter(Boolean)));
-
-        for (const docId of candidateDocIds) {
-          try {
-            const snap = await withTimeout(getDoc(doc(db, 'public_presentations', docId)), 3000);
-            if (snap && snap.exists()) {
-              slugSnap = snap;
-              break;
-            }
-          } catch {}
-        }
-
-        if (slugSnap && slugSnap.exists()) {
-          const res = await extractPresentationFromSnap(slugSnap, slugLower);
-          const resHasArtwork = res.sessions.some((s: any) => (s.images && s.images.length > 0) || s.coverImage);
-
-          if (isMounted) {
-            if (!resHasArtwork && localSessions && localSessions.length > 0 && localHasArtwork) {
-              setSessions(localSessions);
-              setChapters(localChapters || res.chapters);
-              setCampaignTitle(localMeta?.name || res.campaignTitle);
-            } else {
-              setSessions(res.sessions);
-              setChapters(res.chapters);
-              setCampaignTitle(res.campaignTitle);
-            }
-            setLoading(false);
-          }
-          return;
-        }
-
-        // 1b. Try raw target as-is (e.g. legacy token p_...)
-        if (rawTarget !== slugLower) {
-          const rawDocRef = doc(db, 'public_presentations', rawTarget);
-          let rawSnap: any = null;
-          try {
-            rawSnap = await withTimeout(getDoc(rawDocRef), 3500);
-          } catch {}
-
-          if (rawSnap && rawSnap.exists()) {
-            const res = await extractPresentationFromSnap(rawSnap, rawTarget);
-            if (isMounted) {
-              setSessions(res.sessions);
-              setChapters(res.chapters);
-              setCampaignTitle(res.campaignTitle);
-              setLoading(false);
-            }
-            return;
-          }
-        }
-
-        // 1c. Try uppercase code or generated token
-        const computedToken = generateCampaignShareToken(upperCode);
-        if (computedToken) {
-          const altDocRef = doc(db, 'public_presentations', computedToken);
-          let altSnap: any = null;
-          try {
-            altSnap = await withTimeout(getDoc(altDocRef), 3500);
-          } catch {}
-
-          if (altSnap && altSnap.exists()) {
-            const res = await extractPresentationFromSnap(altSnap, computedToken);
-            if (isMounted) {
-              setSessions(res.sessions);
-              setChapters(res.chapters);
-              setCampaignTitle(res.campaignTitle);
-              setLoading(false);
-            }
-            return;
-          }
-        }
-
-        // 2. Fallback to local sessions if available
-        if (localSessions && localSessions.length > 0) {
-          if (isMounted) {
-            setSessions(localSessions);
-            setChapters(localChapters || []);
-            setCampaignTitle(localMeta?.name || 'Cronaca di Campagna');
-            setLoading(false);
-          }
-          return;
-        }
-
-        // 2. Fallback to dnd_campaigns if accessible
-        const docRef = doc(db, 'dnd_campaigns', upperCode);
-        const snap = await getDoc(docRef);
-
-        if (snap.exists()) {
-          const data = snap.data();
-          let loadedSessions: Session[] = Array.isArray(data?.sessions) ? data.sessions : [];
-          const meta = data?.campaignMeta;
-
-          // Restore media and historical sessions from chunks if present
-          if (data?._mediaChunkCount && data._mediaChunkCount > 0) {
-            try {
-              const chunkPromises: Promise<any>[] = [];
-              for (let i = 0; i < data._mediaChunkCount; i++) {
-                chunkPromises.push(getDoc(doc(db, 'dnd_campaigns', `${upperCode}__chunk_${i}`)));
-              }
-              const chunkSnaps = await Promise.all(chunkPromises);
-              const chunkHistoricalSessions: any[] = [];
-              const chunkSessionMedia: Record<string, any> = {};
-
-              chunkSnaps.forEach((cSnap) => {
-                if (cSnap.exists()) {
-                  const cData = cSnap.data();
-                  if (cData.sessionMedia) Object.assign(chunkSessionMedia, cData.sessionMedia);
-                  if (Array.isArray(cData.historicalSessions)) chunkHistoricalSessions.push(...cData.historicalSessions);
-                  if (Array.isArray(cData.sessions)) chunkHistoricalSessions.push(...cData.sessions);
-                }
-              });
-
-              // Combine recent + historical sessions
-              const sessionMap = new Map<string, any>();
-              [...loadedSessions, ...chunkHistoricalSessions].forEach((s) => {
-                if (s && s._id) sessionMap.set(s._id, s);
-              });
-              loadedSessions = Array.from(sessionMap.values());
-
-              // Reattach images, coverImage, and event images
-              loadedSessions = loadedSessions.map((s) => {
-                const media = chunkSessionMedia[s._id];
-                const sImages = (media && Array.isArray(media.images) && media.images.length > 0)
-                  ? media.images
-                  : (s.images || []);
-                const sCover = media?.coverImage || s.coverImage;
-                const sEvents = (s.events || []).map((evt: any) => {
-                  const evtImgs = media?.eventImages?.[evt.id];
-                  return {
-                    ...evt,
-                    images: (evtImgs && evtImgs.length > 0) ? evtImgs : (evt.images || []),
-                  };
-                });
-
-                return {
-                  ...s,
-                  images: sImages,
-                  coverImage: sCover,
-                  events: sEvents,
-                };
-              });
-            } catch (chunkErr) {
-              console.warn('[PublicPresentation] Chunk fetch warn:', chunkErr);
-            }
-          }
-
-          if (isMounted) {
-            setSessions(loadedSessions);
-            setCampaignTitle(meta?.name || 'Cronaca di Campagna');
-            setLoading(false);
-          }
-          return;
-        }
-
-        if (isMounted) {
-          setError('Nessuna cronaca pubblica trovata per questo link.');
-          setLoading(false);
-        }
-      } catch (err: any) {
-        console.error('[PublicPresentation] Fetch error:', err);
-        if (isMounted) {
-          setError(err?.message || 'Si è verificato un errore nel caricamento della cronaca.');
-          setLoading(false);
-        }
+      if (isMounted) {
+        setError('Nessuna presentazione trovata per questa campagna.');
+        setLoading(false);
       }
     }
 

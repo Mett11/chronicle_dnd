@@ -939,9 +939,9 @@ Rispondi ESCLUSIVAMENTE in formato JSON valido conforme al seguente schema:
 
           const interPartySummary = bio?.interPartyRelations
             ? Object.values(bio.interPartyRelations)
-                .map((r: any) => `${r.targetCharacterName}: fiducia=${r.trustLevel ?? 5}/10, att=${r.attitude || 'neutral'}`)
+                .map((r: any) => `${r.targetCharacterName}: Fiducia ${r.trustLevel ?? 5}/10, Atteggiamento "${r.attitude || 'neutral'}", Legame "${r.relationType || "Compagno d'Armi"}"${r.notes ? ` ("${r.notes}")` : ''}`)
                 .join(' | ')
-            : 'legame standard di gruppo';
+            : 'fiducia di base 5/10 con tutti i compagni';
 
           return `- [ID: ${p._id}] ${p.characterName || 'Personaggio'}${p.isDm ? ' (DM)' : ''}${
             p.isRegistered === false ? ' (Membro Party / Compagno Non Registrato)' : ''
@@ -992,11 +992,15 @@ REGOLE FONDAMENTALI DI ANALISI:
    - Non confondere PG diversi tra loro.
 1. ANCORAGGIO ALLA DATA DI LORE:
    - Tutte le voci di memoria (timelineMemories) e credenze (evolvingBeliefs) DEVONO fare riferimento alla Data di Lore della sessione ("${session.loreDate || 'Data della sessione'}").
-2. MEMORIA E CREDENZE DEI PG (playerProposals):
-   - Per ciascun membro del gruppo presente nella sessione, genera:
+2. MEMORIA, CREDENZE E RAPPORTI DEL PARTY (playerProposals):
+   - Per ciascun membro del gruppo (PG):
      * timelineMemories: 1-2 ricordi significativi (svolte, traumi, scoperte, imprese, patti o segreti personali).
-     * evolvingBeliefs: se il PG aveva una teoria o credenza e in questa sessione è stata confermata o smentita ('proven_fact', 'shattered_belief', 'active_theory', 'suspicion').
-     * interPartyRelationUpdates: se sono cambiate la stima, la fiducia (1-10) o il rapporto con altri compagni del gruppo.
+     * evolvingBeliefs: se il PG aveva una teoria o credenza su un PNG/luogo/oggetto e in questa sessione è stata confermata o smentita ('proven_fact', 'shattered_belief', 'active_theory', 'suspicion').
+     * interPartyRelationUpdates: MANDATORIO! Devi valutare e aggiornare il rapporto e il livello di FIDUCIA (scala 1-10, atteggiamento, legame) nei confronti di TUTTI GLI ALTRI PG DEL PARTY (coppie PG A -> PG B, PG B -> PG A, ecc.).
+       REGOLE MANDATORIE PER I RAPPORTI TRA COMPAGNI (PG ↔ PG):
+       - NON LIMITARTI A UN SOLO PERSONAGGIO O AL DM! Genera un aggiornamento di relazione per OGNI coppia di PG presente nel party.
+       - Ogni avventura, combattimento spalla a spalla, conversazione, strategia o scelta vissuta insieme fa EVOLVERE o RICONFERMARE il livello di fiducia (1-10) tra i compagni (es. collaborazione in combattimento +1 fiducia, disaccordo -1 fiducia, stima reciproca +1 fiducia).
+       - Compila 'newTrust' (1-10), 'newAttitude', 'newRelationType', e spiega sempre la motivazione narratica in 'reason' e 'notes' basata sugli eventi di questa sessione.
      * suggestedCurrentStatus: stato o riflessione attuale del PG dopo questa sessione.
 3. MEMORIA E RELAZIONI DELLE ENTITÀ / PNG (detectedEntities):
    - Per i PNG/entità comparsi o rilevanti nella sessione:

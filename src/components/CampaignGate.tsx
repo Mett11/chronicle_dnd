@@ -25,8 +25,6 @@ import { CampaignManager } from '../store/campaignStore';
 import { useAuth } from './AuthProvider';
 import { CampaignMeta, CampaignProfile } from '../types';
 import { ConfirmModal } from './ConfirmModal';
-import { doc, getDoc } from 'firebase/firestore';
-import { db } from '../lib/firebase';
 import { isSupabaseConfigured } from '../lib/supabase';
 import { SupabaseSyncService } from '../lib/supabaseSyncService';
 
@@ -197,37 +195,19 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
       let existing = allCamp.find((c) => c.code === cleanCode);
 
       // Check remote Cloud if not found locally
-      if (!existing) {
-        if (isSupabaseConfigured()) {
-          try {
-            const supaData = await SupabaseSyncService.fetchCampaignData(cleanCode);
-            if (
-              supaData &&
-              ((supaData.sessions && supaData.sessions.length > 0) ||
-                (supaData.notes && supaData.notes.length > 0) ||
-                (supaData.entities && supaData.entities.length > 0))
-            ) {
-              existing = CampaignManager.createCampaign(cleanCode, `Campagna ${cleanCode}`);
-            }
-          } catch (supaErr) {
-            console.warn('Errore verifica supabase campagna:', supaErr);
+      if (!existing && isSupabaseConfigured()) {
+        try {
+          const supaData = await SupabaseSyncService.fetchCampaignData(cleanCode);
+          if (
+            supaData &&
+            ((supaData.sessions && supaData.sessions.length > 0) ||
+              (supaData.notes && supaData.notes.length > 0) ||
+              (supaData.entities && supaData.entities.length > 0))
+          ) {
+            existing = CampaignManager.createCampaign(cleanCode, `Campagna ${cleanCode}`);
           }
-        } else {
-          try {
-            const docRef = doc(db, 'dnd_campaigns', cleanCode);
-            const snap = await getDoc(docRef);
-            if (snap.exists()) {
-              const data = snap.data();
-              const campName = data.campaignMeta?.name || `Campagna ${cleanCode}`;
-              existing = CampaignManager.createCampaign(cleanCode, campName);
-            }
-          } catch (err: any) {
-            if (err?.code === 'resource-exhausted') {
-              existing = CampaignManager.createCampaign(cleanCode, `Campagna ${cleanCode}`);
-            } else {
-              console.warn('Errore verifica cloud campagna:', err);
-            }
-          }
+        } catch (supaErr) {
+          console.warn('Errore verifica supabase campagna:', supaErr);
         }
       }
 

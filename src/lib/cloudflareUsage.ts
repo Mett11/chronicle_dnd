@@ -4,21 +4,7 @@
  * Supports persistent cloud storage via Google Firebase Firestore to survive browser cache clearance.
  */
 
-import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { db } from './firebase';
-import { isSupabaseConfigured } from './supabase';
-import { CampaignManager } from '../store/campaignStore';
-
-export interface CloudflareUsageLog {
-  id: string;
-  timestamp: string; // ISO String
-  model: string;     // Model ID (e.g. "@cf/meta/llama-3.3-70b-instruct-fp8")
-  promptTextLength: number;
-  responseTextLength: number;
-  estimatedPromptTokens: number;
-  estimatedResponseTokens: number;
-  neuronsConsumed: number;
-}
+import { CloudflareUsageLog, ModelLimit, CLOUDFLARE_MODEL_METADATA } from '../types';
 
 export interface ModelLimit {
   modelId: string;
@@ -135,66 +121,17 @@ export class CloudflareUsageTracker {
   }
 
   /**
-   * Triggers a cloud pull from Firestore for the active campaign to sync usage logs
+   * Triggers a pull for usage logs
    */
   static async pullFromCloud(): Promise<CloudflareUsageLog[]> {
-    if (typeof window === 'undefined' || this.isSyncingWithCloud || isSupabaseConfigured()) return this.getLogs();
-    
-    const activeCode = CampaignManager.getActiveCampaignCode();
-    if (!activeCode || activeCode === '__NONE__') return this.getLogs();
-
-    this.isSyncingWithCloud = true;
-    try {
-      const docRef = doc(db, 'cloudflare_usage', activeCode);
-      const snap = await getDoc(docRef);
-      if (snap.exists()) {
-        const data = snap.data();
-        if (data && Array.isArray(data.logs)) {
-          // Merge local and cloud logs, preventing duplicates by log ID
-          const localLogs = this.getLogs();
-          const localMap = new Map(localLogs.map(l => [l.id, l]));
-          
-          data.logs.forEach((cloudLog: CloudflareUsageLog) => {
-            if (cloudLog && cloudLog.id) {
-              localMap.set(cloudLog.id, cloudLog);
-            }
-          });
-
-          const mergedLogs = Array.from(localMap.values())
-            .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
-            .slice(-1000); // keep max 1000 logs
-
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(mergedLogs));
-          window.dispatchEvent(new CustomEvent('chronicle_cloudflare_usage_updated'));
-          return mergedLogs;
-        }
-      }
-    } catch (err) {
-      console.warn('[CloudflareUsageTracker] Error pulling from Firestore:', err);
-    } finally {
-      this.isSyncingWithCloud = false;
-    }
     return this.getLogs();
   }
 
   /**
-   * Synchronizes the current logs to Cloud Firestore for persistent storage
+   * Synchronizes usage logs
    */
-  static async pushToCloud(logs: CloudflareUsageLog[]): Promise<void> {
-    if (typeof window === 'undefined' || isSupabaseConfigured()) return;
-
-    const activeCode = CampaignManager.getActiveCampaignCode();
-    if (!activeCode || activeCode === '__NONE__') return;
-
-    try {
-      const docRef = doc(db, 'cloudflare_usage', activeCode);
-      await setDoc(docRef, {
-        logs: logs.slice(-500), // Only persist up to 500 logs on Firestore to minimize write weight
-        _updatedAt: new Date().toISOString()
-      }, { merge: true });
-    } catch (err) {
-      console.warn('[CloudflareUsageTracker] Error pushing to Firestore:', err);
-    }
+  static async pushToCloud(_logs: CloudflareUsageLog[]): Promise<void> {
+    // Supabase / local storage handles usage
   }
 
   /**
@@ -418,19 +355,12 @@ export class CloudflareUsageTracker {
   }
 
   /**
-   * Resets usage statistics and clears Firestore Document
+   * Resets usage statistics
    */
   static async clearLogs(): Promise<void> {
     if (typeof window === 'undefined') return;
     try {
       localStorage.removeItem(STORAGE_KEY);
-      
-      const activeCode = CampaignManager.getActiveCampaignCode();
-      if (!isSupabaseConfigured() && activeCode && activeCode !== '__NONE__') {
-        const docRef = doc(db, 'cloudflare_usage', activeCode);
-        await setDoc(docRef, { logs: [], _updatedAt: new Date().toISOString() });
-      }
-
       window.dispatchEvent(new CustomEvent('chronicle_cloudflare_usage_updated'));
     } catch (e) {
       console.warn('[CloudflareUsageTracker] Error clearing logs:', e);

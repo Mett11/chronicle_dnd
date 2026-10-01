@@ -153,6 +153,8 @@ export class SupabaseSyncService {
           sessionType: meta.sessionType || (row as any).session_type || 'mixed',
           quotes: Array.isArray(meta.quotes) ? meta.quotes : (Array.isArray((row as any).quotes) ? (row as any).quotes : []),
           audioLogs: Array.isArray(meta.audioLogs) ? meta.audioLogs : (Array.isArray((row as any).audio_logs) ? (row as any).audio_logs : []),
+          excludedPlayerIds: Array.isArray(meta.excludedPlayerIds) ? meta.excludedPlayerIds : [],
+          attendees: Array.isArray(meta.attendees) ? meta.attendees : [],
           tags: cleanTags,
         };
       });
@@ -180,8 +182,6 @@ export class SupabaseSyncService {
           location: customAttrs.location || undefined,
           mapId: customAttrs.mapId || undefined,
           pinId: customAttrs.pinId || undefined,
-          type: entityType,
-          images: entityImages,
         };
       });
 
@@ -335,6 +335,8 @@ export class SupabaseSyncService {
         sessionType: session.sessionType || 'mixed',
         quotes: Array.isArray(session.quotes) ? session.quotes : [],
         audioLogs: Array.isArray(session.audioLogs) ? session.audioLogs : [],
+        excludedPlayerIds: Array.isArray(session.excludedPlayerIds) ? session.excludedPlayerIds : [],
+        attendees: Array.isArray(session.attendees) ? session.attendees : [],
         gazetteConfig: session.gazetteConfig || null,
       };
 

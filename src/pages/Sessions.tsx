@@ -421,6 +421,8 @@ export function Sessions() {
     recapText: string;
     sessionImages: string[];
     eventsList: Omit<SessionEvent, 'id'>[];
+    excludedPlayerIds?: string[];
+    attendees?: Player[];
     entitiesExtracted?: boolean;
     entitiesExtractedAt?: string;
     memorySynced?: boolean;
@@ -441,6 +443,8 @@ export function Sessions() {
         loreEndMonth: payload.loreMeta?.endMonth,
         loreYear: payload.loreMeta?.year,
         loreEndYear: payload.loreMeta?.endYear,
+        excludedPlayerIds: payload.excludedPlayerIds,
+        attendees: payload.attendees,
         recap: [
           {
             _type: 'block',
@@ -475,6 +479,8 @@ export function Sessions() {
         loreEndMonth: payload.loreMeta?.endMonth,
         loreYear: payload.loreMeta?.year,
         loreEndYear: payload.loreMeta?.endYear,
+        excludedPlayerIds: payload.excludedPlayerIds,
+        attendees: payload.attendees,
         recap: [
           {
             _type: 'block',
@@ -885,6 +891,27 @@ export function Sessions() {
                                   <Brain size={10} className="text-purple-400" /> Memoria Sync
                                 </span>
                               )}
+                              {sess.excludedPlayerIds && sess.excludedPlayerIds.length > 0 && (
+                                <span
+                                  className={`text-[10px] px-1.5 py-0.5 rounded border flex items-center gap-1 ${
+                                    player && sess.excludedPlayerIds.includes(player._id)
+                                      ? 'text-amber-300 bg-amber-500/10 border-amber-500/25'
+                                      : 'text-content-3 bg-surface-2 border-surface-3'
+                                  }`}
+                                  title={
+                                    player && sess.excludedPlayerIds.includes(player._id)
+                                      ? 'Non eri presente a questa sessione'
+                                      : `${sess.excludedPlayerIds.length} PG non presenti a questa sessione`
+                                  }
+                                >
+                                  <Users size={10} />
+                                  {player && sess.excludedPlayerIds.includes(player._id) ? (
+                                    <span>Assente</span>
+                                  ) : (
+                                    <span>{allPlayers.filter((p) => !p.isDm && !(sess.excludedPlayerIds || []).includes(p._id)).length} PG</span>
+                                  )}
+                                </span>
+                              )}
                             </div>
 
                             <span className="text-[11px] font-mono text-primary group-hover:translate-x-0.5 transition-transform flex items-center gap-1 font-semibold shrink-0">
@@ -1095,6 +1122,80 @@ export function Sessions() {
                         onEntityClick={setInspectingEntity}
                       />
                     </h2>
+
+                    {/* Party Presence Strip */}
+                    {(() => {
+                      const partyList = allPlayers.filter((p) => !p.isDm);
+                      const excludedSet = new Set(selectedSession.excludedPlayerIds || []);
+                      const presentParty = partyList.filter((p) => !excludedSet.has(p._id));
+                      const excludedParty = partyList.filter((p) => excludedSet.has(p._id));
+                      const isCurrentUserExcluded = Boolean(player && !player.isDm && excludedSet.has(player._id));
+
+                      return (
+                        <div className="pt-2 space-y-2">
+                          {/* Exclusion Alert for current player */}
+                          {isCurrentUserExcluded && (
+                            <div className="p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/25 text-amber-300 text-xs font-mono flex items-start gap-2">
+                              <AlertCircle size={15} className="shrink-0 text-amber-400 mt-0.5" />
+                              <div className="min-w-0">
+                                <span className="font-semibold block">Il tuo personaggio non era presente a questa sessione</span>
+                                <span className="text-[11px] text-content-3 font-sans">
+                                  Il tuo eroe non possiede ricordi diretti degli avvenimenti vissuti dal gruppo in questa cronaca. Puoi comunque leggere il diario e sincronizzare la conoscenza se ti verrà raccontata in gioco!
+                                </span>
+                              </div>
+                            </div>
+                          )}
+
+                          <div className="flex flex-wrap items-center justify-between gap-2 bg-surface-1/60 border border-surface-2 p-2 sm:p-2.5 rounded-lg text-xs font-mono">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-[10.5px] text-content-3 uppercase tracking-wider flex items-center gap-1">
+                                <Users size={12} className="text-primary" />
+                                Party ({presentParty.length}/{partyList.length}):
+                              </span>
+                              {presentParty.map((p) => (
+                                <span
+                                  key={p._id}
+                                  className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-surface-2 text-content-1 border border-surface-3 text-[11px]"
+                                  title={`Presente alla sessione #${selectedSession.number}`}
+                                >
+                                  <span
+                                    className="w-2 h-2 rounded-full"
+                                    style={{ backgroundColor: p.color || '#10b981' }}
+                                  />
+                                  <span>{p.characterName}</span>
+                                </span>
+                              ))}
+
+                              {excludedParty.map((p) => (
+                                <span
+                                  key={p._id}
+                                  className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-surface-2/40 text-content-3/60 line-through border border-surface-3/40 text-[11px]"
+                                  title={`Non presente alla sessione #${selectedSession.number}`}
+                                >
+                                  <span className="text-rose-400 text-[10px]">🚫</span>
+                                  <span>{p.characterName}</span>
+                                </span>
+                              ))}
+                            </div>
+
+                            {player?.isDm && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setIsEditing(true);
+                                  setIsModalOpen(true);
+                                }}
+                                className="text-[10px] text-primary hover:underline flex items-center gap-1 cursor-pointer ml-auto"
+                                title="Modifica presenze ed esclusioni per questa sessione"
+                              >
+                                <Edit3 size={11} />
+                                <span>Modifica Presenze</span>
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   {/* SECTION 1: Main Chronicle Text (Recap) */}

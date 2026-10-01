@@ -1,6 +1,4 @@
-import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
-import { db, auth } from './firebase';
-import { isSupabaseConfigured } from './supabase';
+import { auth } from './firebase';
 import { UserPreferences } from '../types';
 
 export const DEFAULT_USER_PREFERENCES: UserPreferences = {
@@ -171,22 +169,11 @@ export class UserPreferencesService {
       );
     }
 
-    // 4. Sync to Firestore in real time
-    if (!isSupabaseConfigured() && norm && norm !== 'guest') {
-      try {
-        const prefRef = doc(db, 'user_preferences', norm);
-        const payload = sanitizeFirestorePayload(merged);
-        await setDoc(prefRef, payload, { merge: true });
-      } catch (err) {
-        console.warn('[UserPreferencesService] Firestore sync error:', err);
-      }
-    }
-
     return merged;
   }
 
   /**
-   * Saves AI model preferences specifically and persists to Firestore.
+   * Saves AI model preferences specifically.
    */
   static async saveAiPreferences(
     aiUpdates: Partial<UserPreferences['ai']>,
@@ -196,7 +183,7 @@ export class UserPreferencesService {
   }
 
   /**
-   * Saves reading and UI preferences (e.g. tutorialSeen) and persists to Firestore.
+   * Saves reading and UI preferences (e.g. tutorialSeen).
    */
   static async saveReadingPreferences(
     readingUpdates: Partial<UserPreferences['reading']>,
@@ -206,7 +193,7 @@ export class UserPreferencesService {
   }
 
   /**
-   * Gets dismissed notification IDs for a specific campaign, synced to Firestore.
+   * Gets dismissed notification IDs for a specific campaign.
    */
   static getDismissedNotificationIds(campaignCode: string, userId?: string): string[] {
     const code = (campaignCode || 'default').trim().toUpperCase();
@@ -227,7 +214,7 @@ export class UserPreferencesService {
   }
 
   /**
-   * Saves dismissed notification IDs for a campaign and syncs to Firestore.
+   * Saves dismissed notification IDs for a campaign.
    */
   static async saveDismissedNotificationIds(
     campaignCode: string,
@@ -259,41 +246,15 @@ export class UserPreferencesService {
   }
 
   /**
-   * Fetches preferences from Firestore once.
+   * Fetches preferences from LocalStorage.
    */
   static async fetchPreferencesFromFirestore(userId: string): Promise<UserPreferences | null> {
     const norm = normalizeUserId(userId);
-    if (isSupabaseConfigured() || !norm || norm === 'guest') return null;
-    try {
-      const ref = doc(db, 'user_preferences', norm);
-      const snap = await getDoc(ref);
-      if (snap.exists()) {
-        const data = snap.data() as UserPreferences;
-        const merged: UserPreferences = {
-          ...DEFAULT_USER_PREFERENCES,
-          ...data,
-          theme: { ...DEFAULT_USER_PREFERENCES.theme, ...(data.theme || {}) },
-          ai: { ...DEFAULT_USER_PREFERENCES.ai, ...(data.ai || {}) },
-          reading: { ...DEFAULT_USER_PREFERENCES.reading, ...(data.reading || {}) },
-          notifications: {
-            dismissedByCampaign: {
-              ...(DEFAULT_USER_PREFERENCES.notifications?.dismissedByCampaign || {}),
-              ...(data.notifications?.dismissedByCampaign || {}),
-            },
-          },
-        };
-        localStorage.setItem(getStorageKey(norm), JSON.stringify(merged));
-        this.applyThemeToDOM(merged.theme);
-        return merged;
-      }
-    } catch (e) {
-      console.warn('[UserPreferencesService] Error fetching preferences:', e);
-    }
-    return null;
+    return this.getLocalPreferences(norm);
   }
 
   /**
-   * Listens for real-time changes on Firestore path `user_preferences/{userId}`.
+   * Listens for preference changes.
    */
   static subscribeUserPreferences(
     userId: string,
@@ -305,74 +266,25 @@ export class UserPreferencesService {
       return () => {};
     }
 
-    if (this.activeUnsubscribe && this.activeUserId === norm) {
-      // Already subscribed to this user
-      return this.activeUnsubscribe;
-    }
-
-    if (this.activeUnsubscribe) {
-      this.activeUnsubscribe();
-      this.activeUnsubscribe = null;
-    }
-
-    this.activeUserId = norm;
-
-    // Load initial local preference first
+    // Load initial local preference
     const initialLocal = this.getLocalPreferences(norm);
     this.applyThemeToDOM(initialLocal.theme);
     onUpdate(initialLocal);
 
-    if (isSupabaseConfigured()) {
-      return () => {};
-    }
+    const handler = (e: Event) => {
+      const customEvent = e as CustomEvent;
+      if (customEvent.detail?.userId === norm && customEvent.detail?.preferences) {
+        onUpdate(customEvent.detail.preferences);
+      }
+    };
 
-    try {
-      const prefRef = doc(db, 'user_preferences', norm);
-      this.activeUnsubscribe = onSnapshot(
-        prefRef,
-        (snapshot) => {
-          if (snapshot.exists()) {
-            const data = snapshot.data() as UserPreferences;
-            const merged: UserPreferences = {
-              ...DEFAULT_USER_PREFERENCES,
-              ...data,
-              theme: { ...DEFAULT_USER_PREFERENCES.theme, ...(data.theme || {}) },
-              ai: { ...DEFAULT_USER_PREFERENCES.ai, ...(data.ai || {}) },
-              reading: { ...DEFAULT_USER_PREFERENCES.reading, ...(data.reading || {}) },
-              notifications: {
-                dismissedByCampaign: {
-                  ...(DEFAULT_USER_PREFERENCES.notifications?.dismissedByCampaign || {}),
-                  ...(data.notifications?.dismissedByCampaign || {}),
-                },
-              },
-            };
-
-            localStorage.setItem(getStorageKey(norm), JSON.stringify(merged));
-            this.applyThemeToDOM(merged.theme);
-            onUpdate(merged);
-
-            if (typeof window !== 'undefined') {
-              window.dispatchEvent(
-                new CustomEvent('chronicle_user_preferences_updated', {
-                  detail: { userId: norm, preferences: merged },
-                })
-              );
-            }
-          }
-        },
-        (error) => {
-          console.warn('[UserPreferencesService] Subscription error:', error);
-        }
-      );
-    } catch (err) {
-      console.warn('[UserPreferencesService] Failed to subscribe:', err);
+    if (typeof window !== 'undefined') {
+      window.addEventListener('chronicle_user_preferences_updated', handler);
     }
 
     return () => {
-      if (this.activeUnsubscribe) {
-        this.activeUnsubscribe();
-        this.activeUnsubscribe = null;
-        this.activeUserId = null;
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('chronicle_user_preferences_updated', handler);
       }
     };
   }

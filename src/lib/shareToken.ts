@@ -1,7 +1,3 @@
-import { doc, getDoc } from 'firebase/firestore';
-import { db } from './firebase';
-import { isSupabaseConfigured } from './supabase';
-
 /**
  * Transforms a campaign name into a clean, URL-safe slug.
  * e.g. "Palazzo di Vetro" -> "palazzo-di-vetro", "L'Ombra dell'Antico" -> "lombra-dellantico"
@@ -93,7 +89,6 @@ export async function copyTextToClipboard(text: string): Promise<boolean> {
 
 /**
  * Resolves a unique, human-readable presentation slug based on the campaign name.
- * Handles homonyms across different users/campaigns sequentially (e.g. "palazzo", "palazzo-2", "palazzo-3").
  */
 export async function resolveCampaignPresentationSlug(
   campaignCode: string,
@@ -101,52 +96,7 @@ export async function resolveCampaignPresentationSlug(
 ): Promise<string> {
   const cleanCode = (campaignCode || '').trim().toUpperCase();
   const rawBaseSlug = slugifyCampaignTitle(campaignTitle || cleanCode);
-  const baseSlug = rawBaseSlug.length > 0 ? rawBaseSlug : 'campagna';
-
-  if (isSupabaseConfigured()) {
-    return baseSlug;
-  }
-
-  try {
-    // 1. Check if the base slug document exists in Firestore public_presentations
-    const baseRef = doc(db, 'public_presentations', baseSlug);
-    const baseSnap = await Promise.race([
-      getDoc(baseRef),
-      new Promise<any>((_, reject) => setTimeout(() => reject(new Error('Timeout resolving slug')), 2500))
-    ]);
-
-    if (!baseSnap.exists()) {
-      return baseSlug;
-    }
-
-    const baseData = baseSnap.data();
-    // If the base slug already belongs to THIS exact campaign, reuse it directly
-    if (baseData?.campaignCode === cleanCode) {
-      return baseSlug;
-    }
-
-    // 2. Homonymy detected: search sequentially for the next available slot or our existing reservation
-    for (let seq = 2; seq <= 50; seq++) {
-      const candidateSlug = `${baseSlug}-${seq}`;
-      const candidateRef = doc(db, 'public_presentations', candidateSlug);
-      const candidateSnap = await getDoc(candidateRef);
-
-      if (!candidateSnap.exists()) {
-        return candidateSlug;
-      }
-
-      const candidateData = candidateSnap.data();
-      if (candidateData?.campaignCode === cleanCode) {
-        return candidateSlug;
-      }
-    }
-
-    // Fallback in extreme homonymy scenario
-    return `${baseSlug}-${(cleanCode || 'c').toLowerCase().slice(0, 8)}`;
-  } catch (err) {
-    console.warn('[ShareToken] Error resolving unique presentation slug:', err);
-    return baseSlug;
-  }
+  return rawBaseSlug.length > 0 ? rawBaseSlug : 'campagna';
 }
 
 /**

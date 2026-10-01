@@ -1,5 +1,4 @@
-import { doc, getDoc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
-import { db, auth } from './firebase';
+import { auth } from './firebase';
 import { CampaignManager } from '../store/campaignStore';
 import { UserProfileSyncService } from './userProfileSync';
 import { SupabaseSyncService } from './supabaseSyncService';
@@ -356,10 +355,17 @@ export class CloudSyncService {
         (r.events || []).forEach((e: any) => { if (e && e.id) eventMap.set(e.id, e); });
         (l.events || []).forEach((e: any) => { if (e && e.id) eventMap.set(e.id, { ...(eventMap.get(e.id) || {}), ...e }); });
 
-        // Merge images union to ensure neither local nor remote uploaded images are wiped
-        const mergedImages = (l.images && l.images.length > 0)
-          ? (r.images && r.images.length > 0 ? Array.from(new Set([...r.images, ...l.images])) : l.images)
-          : (r.images || []);
+        // Merge images: preserve local ordering while appending any missing remote media
+        let mergedImages = r.images || [];
+        if (l.images && l.images.length > 0) {
+          if (!r.images || r.images.length === 0) {
+            mergedImages = l.images;
+          } else {
+            const localSet = new Set(l.images);
+            const extraRemote = r.images.filter((img) => !localSet.has(img));
+            mergedImages = [...l.images, ...extraRemote];
+          }
+        }
 
         map.set(l._id, {
           ...r,
@@ -470,189 +476,45 @@ export class CloudSyncService {
   }
 
   /**
-   * Directly syncs accounts array to Firestore global document
+   * Directly syncs accounts array to Supabase
    */
   static async syncAccountsToCloud(accounts: UserAccount[]) {
-    if (isSupabaseConfigured()) {
-      const activeCode = CampaignManager.getActiveCampaignCode();
-      if (activeCode && activeCode !== '__NONE__') {
-        SupabaseSyncService.saveActivePlayers(activeCode, accounts).catch(() => {});
-      }
-      return;
-    }
-    if (checkIsQuotaExhausted()) return;
-    try {
-      const docRef = doc(db, 'dnd_global', 'accounts');
-      const deletedIds = CampaignManager.getDeletedAccountIds();
-      // Never store plaintext passwords in Firestore and filter out deleted accounts
-      const sanitizedAccounts = accounts
-        .filter((acc) => acc && acc.id && !deletedIds.includes(acc.id))
-        .map((acc) => {
-          const { password, ...rest } = acc;
-          return {
-            ...rest,
-            password: '',
-          };
-        });
-      const payload = sanitizeFirestorePayload({
-        _updatedAt: new Date().toISOString(),
-        accounts: sanitizedAccounts,
-        deletedAccountIds: deletedIds,
-      });
-      await setDoc(docRef, payload);
-      const curr = CampaignManager.getCurrentAccount();
-      if (curr) {
-        UserProfileSyncService.syncUserProfile(curr).catch(() => {});
-      }
-    } catch (e: any) {
-      if (e?.code === 'resource-exhausted') {
-        markQuotaExhausted();
-      } else {
-        console.warn('Sync accounts to cloud error:', e);
-      }
+    const activeCode = CampaignManager.getActiveCampaignCode();
+    if (activeCode && activeCode !== '__NONE__') {
+      SupabaseSyncService.saveActivePlayers(activeCode, accounts).catch(() => {});
     }
   }
 
   /**
-   * Directly syncs global campaigns array to Firestore global document
+   * Directly syncs global campaigns
    */
-  static async syncCampaignsToCloud(campaigns: CampaignMeta[]) {
-    if (isSupabaseConfigured() || checkIsQuotaExhausted()) return;
-    try {
-      const docRef = doc(db, 'dnd_global', 'campaigns');
-      const payload = sanitizeFirestorePayload({
-        _updatedAt: new Date().toISOString(),
-        campaigns,
-      });
-      await setDoc(docRef, payload);
-    } catch (e: any) {
-      if (e?.code === 'resource-exhausted') {
-        markQuotaExhausted();
-      } else {
-        console.warn('Sync campaigns to cloud error:', e);
-      }
-    }
+  static async syncCampaignsToCloud(_campaigns: CampaignMeta[]) {
+    // Supabase handles campaign persistence
   }
 
   /**
-   * Deletes a campaign document and syncs updated global campaigns and accounts in Firestore
+   * Deletes a campaign and syncs updated state
    */
   static async deleteCampaignFromCloud(
-    campaignCode: string,
-    updatedCampaigns: CampaignMeta[],
-    updatedAccounts: UserAccount[]
+    _campaignCode: string,
+    _updatedCampaigns: CampaignMeta[],
+    _updatedAccounts: UserAccount[]
   ) {
-    if (isSupabaseConfigured() || checkIsQuotaExhausted()) return;
-    try {
-      const campDocRef = doc(db, 'dnd_campaigns', campaignCode);
-      await deleteDoc(campDocRef);
-      await deleteDoc(doc(db, 'dnd_campaigns', `${campaignCode}__dm_secrets`)).catch(() => {});
-    } catch (e: any) {
-      if (e?.code === 'resource-exhausted') {
-        markQuotaExhausted();
-      } else {
-        console.warn(`Error deleting campaign doc ${campaignCode} from cloud:`, e);
-      }
-    }
-
-    try {
-      await this.syncCampaignsToCloud(updatedCampaigns);
-      await this.syncAccountsToCloud(updatedAccounts);
-    } catch (e) {
-      console.warn('Error syncing updated global state after campaign deletion:', e);
-    }
+    // Supabase handles campaign deletion
   }
 
   /**
-   * Immediate synchronous/async fetch for user accounts from Firestore
+   * Immediate synchronous/async fetch for user accounts
    */
   static async fetchGlobalAccountsNow() {
-    if (checkIsQuotaExhausted()) return;
-    try {
-      const docRef = doc(db, 'dnd_global', 'accounts');
-      const snap = await getDoc(docRef);
-      if (snap.exists()) {
-        const data = snap.data();
-        if (Array.isArray(data?.deletedAccountIds)) {
-          data.deletedAccountIds.forEach((id: string) => CampaignManager.addDeletedAccountId(id));
-        }
-        if (Array.isArray(data?.accounts)) {
-          this.mergeRemoteAccounts(data.accounts, data.deletedAccountIds || []);
-          // Also sync activePlayers to Supabase campaign row if Supabase is active
-          const activeCode = CampaignManager.getActiveCampaignCode();
-          if (isSupabaseConfigured() && activeCode && activeCode !== '__NONE__') {
-            SupabaseSyncService.saveCampaign(activeCode, {
-              activePlayers: data.accounts,
-              dmId: CampaignManager.getCurrentAccount()?.id,
-            }).catch(() => {});
-          }
-        }
-      }
-    } catch (e) {
-      console.warn('fetchGlobalAccountsNow warning:', e);
-    }
+    // Supabase handles account profile hydration
   }
 
   /**
    * Initializes real-time listener for global accounts & campaigns
    */
   static initGlobalSync() {
-    if (isSupabaseConfigured() || this.isGlobalInitialized || checkIsQuotaExhausted()) return;
-    this.isGlobalInitialized = true;
-
-    try {
-      // 1. Initial fetch & listener for global accounts
-      const accDocRef = doc(db, 'dnd_global', 'accounts');
-      getDoc(accDocRef).then((snap) => {
-        if (snap.exists()) {
-          const data = snap.data();
-          if (Array.isArray(data?.deletedAccountIds)) {
-            data.deletedAccountIds.forEach((id: string) => CampaignManager.addDeletedAccountId(id));
-          }
-          if (Array.isArray(data?.accounts)) {
-            this.mergeRemoteAccounts(data.accounts, data.deletedAccountIds || []);
-          }
-        }
-      }).catch((e) => console.warn('Global accounts fetch warn:', e));
-
-      this.unsubscribeGlobalAccounts = onSnapshot(accDocRef, (snap) => {
-        if (snap.exists()) {
-          const data = snap.data();
-          if (Array.isArray(data?.deletedAccountIds)) {
-            data.deletedAccountIds.forEach((id: string) => CampaignManager.addDeletedAccountId(id));
-          }
-          if (Array.isArray(data?.accounts)) {
-            this.mergeRemoteAccounts(data.accounts, data.deletedAccountIds || []);
-          }
-        }
-      }, (err) => {
-        if (err?.code === 'resource-exhausted') markQuotaExhausted();
-      });
-
-      // 2. Initial fetch & listener for global campaigns
-      const campDocRef = doc(db, 'dnd_global', 'campaigns');
-      getDoc(campDocRef).then((snap) => {
-        if (snap.exists()) {
-          const data = snap.data();
-          if (Array.isArray(data?.campaigns)) {
-            this.mergeRemoteCampaigns(data.campaigns);
-          }
-        }
-      }).catch((e) => console.warn('Global campaigns fetch warn:', e));
-
-      this.unsubscribeGlobalCampaigns = onSnapshot(campDocRef, (snap) => {
-        if (snap.exists()) {
-          const data = snap.data();
-          if (Array.isArray(data?.campaigns)) {
-            this.mergeRemoteCampaigns(data.campaigns);
-          }
-        }
-      }, (err) => {
-        if (err?.code === 'resource-exhausted') markQuotaExhausted();
-      });
-    } catch (e) {
-      console.warn('initGlobalSync warning:', e);
-    }
+    // Supabase handles global sync
   }
 
   private static mergeRemoteAccounts(remoteAccounts: UserAccount[], remoteDeletedIds: string[] = []) {
@@ -1072,140 +934,11 @@ export class CloudSyncService {
         }
         return;
       }
-
-      const docRef = doc(db, 'dnd_campaigns', activeCode);
-
-      // 1. Initial Fetch from Firestore with strict hydration gate
-      getDoc(docRef).then(async (snap) => {
-        if (snap.exists()) {
-          const remoteData = snap.data();
-          if (remoteData) {
-            await this.applyRemoteData(remoteData, activeCode);
-          }
-
-          // Also eagerly fetch DM secrets if user is DM before declaring hydration complete
-          const currentAccount = CampaignManager.getCurrentAccount();
-          const meta = CampaignManager.getCampaignMeta() || remoteData?.campaignMeta;
-          const authUid = auth.currentUser?.uid;
-          const isDm = Boolean(
-            currentAccount?.isDm ||
-            (activeCode && currentAccount?.dmCampaigns?.includes(activeCode)) ||
-            (currentAccount && meta?.dmId && (meta.dmId === currentAccount.id || meta.dmId === currentAccount.email)) ||
-            (authUid && meta && ((meta as any).dmUid === authUid || meta.dmId === authUid || meta.dmId === `usr_${authUid}` || meta.dmId === `usr_g_${authUid}`))
-          );
-          if (isDm) {
-            try {
-              const dmDocRef = doc(db, 'dnd_campaigns', `${activeCode}__dm_secrets`);
-              const dmSnap = await getDoc(dmDocRef);
-              if (dmSnap.exists()) {
-                this.applyDmSecrets(dmSnap.data(), activeCode);
-              }
-            } catch (dmErr) {
-              if ((dmErr as any)?.code !== 'permission-denied') {
-                console.warn('Initial DM secrets fetch warn:', dmErr);
-              }
-            }
-          }
-
-          this.isCampaignHydrated = true;
-          if (typeof localStorage !== 'undefined') {
-            localStorage.setItem('hasPendingUpload', 'false');
-          }
-          if (onCloudUpdated) onCloudUpdated();
-        } else {
-          // Document does not exist yet in Firestore
-          this.isCampaignHydrated = true;
-          const currentSessions = CampaignManager.getSessions();
-          const currentEntities = CampaignManager.getEntities();
-          if (currentSessions.length > 0 || currentEntities.length > 0) {
-            this.uploadLocalToCloud();
-          }
-          if (onCloudUpdated) onCloudUpdated();
-        }
-      }).catch((err) => {
-        this.isCampaignHydrated = true;
-        if (err?.code === 'resource-exhausted') {
-          markQuotaExhausted();
-          this.stop();
-          console.warn('Firestore quota limit reached. Running safely in local storage mode.');
-        } else {
-          console.warn('Firestore initial fetch warning:', err);
-        }
-        if (onCloudUpdated) onCloudUpdated();
-      });
-
-      // 2. Real-time Listener for updates across devices/tabs
-      this.unsubscribeSnapshot = onSnapshot(docRef, async (snapshot) => {
-        if (!snapshot.exists()) return;
-        const data = snapshot.data();
-        if (!data || !data._updatedAt) return;
-
-        if (isApplyingRemoteUpdate) {
-          pendingRemoteSnapshot = { data, code: activeCode };
-          return;
-        }
-
-        await this.applyRemoteData(data, activeCode);
-        this.isCampaignHydrated = true;
-        if (typeof localStorage !== 'undefined') {
-          localStorage.setItem('hasPendingUpload', 'false');
-        }
-        if (onCloudUpdated) onCloudUpdated();
-      }, (error) => {
-        if (error?.code === 'resource-exhausted') {
-          markQuotaExhausted();
-          this.stop();
-          console.warn('Firestore real-time sync paused: free tier daily quota reached. Local persistence active.');
-        } else {
-          console.warn('Firestore snapshot listener warning:', error);
-        }
-      });
-
-      // 3. DM Secrets Listener (Phase 3.2): Isolated strictly to the Dungeon Master
-      const attachDmSecrets = () => {
-        const currentAccount = CampaignManager.getCurrentAccount();
-        const meta = CampaignManager.getCampaignMeta();
-        const authUid = auth.currentUser?.uid;
-        const isDm = Boolean(
-          currentAccount?.isDm ||
-          (activeCode && currentAccount?.dmCampaigns?.includes(activeCode)) ||
-          (currentAccount && meta?.dmId && (meta.dmId === currentAccount.id || meta.dmId === currentAccount.email)) ||
-          (authUid && meta && ((meta as any).dmUid === authUid || meta.dmId === authUid || meta.dmId === `usr_${authUid}` || meta.dmId === `usr_g_${authUid}`))
-        );
-        if (isDm && !this.unsubscribeDmSecretsSnapshot) {
-          const dmDocRef = doc(db, 'dnd_campaigns', `${activeCode}__dm_secrets`);
-          getDoc(dmDocRef).then((dmSnap) => {
-            if (dmSnap.exists()) {
-              this.applyDmSecrets(dmSnap.data(), activeCode);
-            }
-          }).catch((err) => {
-            if (err?.code !== 'permission-denied') {
-              console.warn('Initial DM secrets fetch warn:', err);
-            }
-          });
-
-          this.unsubscribeDmSecretsSnapshot = onSnapshot(dmDocRef, (dmSnap) => {
-            if (dmSnap.exists()) {
-              this.applyDmSecrets(dmSnap.data(), activeCode);
-            }
-          }, (err) => {
-            if (err?.code !== 'permission-denied') {
-              console.warn('DM secrets snapshot listener warning:', err);
-            }
-          });
-        }
-      };
-
-      attachDmSecrets();
-      if (typeof window !== 'undefined') {
-        const handleAccountChange = () => attachDmSecrets();
-        window.addEventListener('chronicle_accounts_updated', handleAccountChange);
-        window.addEventListener('chronicle_campaigns_updated', handleAccountChange);
-        window.addEventListener('chronicle_campaign_changed', handleAccountChange);
-      }
+      this.isCampaignHydrated = true;
+      if (onCloudUpdated) onCloudUpdated();
     } catch (e) {
       this.isCampaignHydrated = true;
-      console.warn('Could not initialize Firebase Cloud Sync:', e);
+      console.warn('Could not initialize Cloud Sync:', e);
     }
   }
 
@@ -1257,52 +990,10 @@ export class CloudSyncService {
   }
 
   /**
-   * Completely clears and resets the remote Firestore document for a campaign
+   * Completely clears and resets local campaign data
    */
-  static async wipeCloudCampaign(campaignCode?: string) {
-    if (checkIsQuotaExhausted()) return;
-    try {
-      const targetCode = campaignCode || CampaignManager.getActiveCampaignCode() || 'default_campaign';
-      const docRef = doc(db, 'dnd_campaigns', targetCode);
-      const cleanPayload = {
-        _updatedAt: new Date().toISOString(),
-        campaignMeta: { code: targetCode, name: 'Nuova Campagna', createdAt: new Date().toISOString() },
-        sessions: [],
-        chapters: [],
-        entities: [],
-        notes: [],
-        calendar: null,
-        maps: [],
-        mapFolders: [],
-        audioLogs: [],
-        scrapbookItems: [],
-        accounts: [],
-        characterBios: [],
-        familyRelations: [],
-        worldLoreArticles: [],
-        _mediaChunkCount: 0,
-        _hasMediaChunks: false,
-      };
-      lastSyncedPayloadHash = JSON.stringify(cleanPayload);
-      await setDoc(docRef, cleanPayload);
-
-      // Clean up any chunk documents (0..10 and __chunks)
-      const deletePromises: Promise<any>[] = [
-        deleteDoc(doc(db, 'dnd_campaigns', `${targetCode}__chunks`)).catch(() => {}),
-        deleteDoc(doc(db, 'dnd_campaigns', `${targetCode}__dm_secrets`)).catch(() => {}),
-      ];
-      for (let i = 0; i < 15; i++) {
-        deletePromises.push(deleteDoc(doc(db, 'dnd_campaigns', `${targetCode}__chunk_${i}`)).catch(() => {}));
-      }
-      await Promise.all(deletePromises);
-    } catch (e: any) {
-      if (e?.code === 'resource-exhausted') {
-        markQuotaExhausted();
-        this.stop();
-      } else {
-        console.warn('Failed to wipe Firestore campaign document:', e);
-      }
-    }
+  static async wipeCloudCampaign(_campaignCode?: string) {
+    // Supabase handles campaign reset
   }
 
   private static async uploadLocalToCloud(force: boolean = false): Promise<{ success: boolean; error?: string }> {
@@ -1328,18 +1019,30 @@ export class CloudSyncService {
         return { success: false, error: 'Nessuna campagna attiva valida.' };
       }
 
-      // When Supabase is configured, PostgreSQL is the source of truth for all structured data.
-      // We skip uploading the monolithic 1.2MB document to Firestore to prevent the 1MB Firestore size limit error.
-      if (isSupabaseConfigured()) {
-        if (typeof localStorage !== 'undefined') {
-          localStorage.setItem('hasPendingUpload', 'false');
-          localStorage.setItem('chronicle_last_cloud_sync_time', new Date().toISOString());
-        }
-        if (typeof window !== 'undefined') {
-          window.dispatchEvent(new CustomEvent('chronicle_cloud_sync_status', { detail: { status: 'synced', time: new Date().toISOString() } }));
-        }
-        return { success: true };
+      const nowIso = new Date().toISOString();
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem('hasPendingUpload', 'false');
+        localStorage.setItem('chronicle_last_cloud_sync_time', nowIso);
       }
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('chronicle_cloud_sync_status', { detail: { status: 'synced', time: nowIso } }));
+      }
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: e?.message || 'Errore durante la sincronizzazione.' };
+    } finally {
+      isUploadInFlight = false;
+      if (hasQueuedUpload) {
+        hasQueuedUpload = false;
+        setTimeout(() => {
+          this.uploadLocalToCloud();
+        }, 500);
+      }
+    }
+  }
+
+  private static async _legacyUnusedUpload() {
+    try {
 
       const docRef = doc(db, 'dnd_campaigns', activeCode);
       const currentAccount = CampaignManager.getCurrentAccount();
@@ -2489,43 +2192,6 @@ export class CloudSyncService {
         });
       }
 
-      if (isSupabaseConfigured()) {
-        return { success: true, url: shareUrl, shareToken: slug, slug };
-      }
-
-      // 1. Write main presentation document with timeout (compositeDocId and slug)
-      await withTimeout(setDoc(doc(db, 'public_presentations', compositeDocId), finalMainPayload), 5000);
-      if (slug && slug !== compositeDocId) {
-        withTimeout(setDoc(doc(db, 'public_presentations', slug), finalMainPayload), 3000).catch(() => {});
-      }
-
-      // 2. Write chunk documents if present with timeout
-      if (mediaChunkPayloads.length > 0) {
-        const chunkPromises: Promise<any>[] = [];
-        mediaChunkPayloads.forEach((chunkData, chunkIdx) => {
-          chunkPromises.push(
-            withTimeout(
-              setDoc(doc(db, 'public_presentations', `${slug}__chunk_${chunkIdx}`), {
-                slug,
-                campaignCode: code,
-                sessionMedia: chunkData,
-                _updatedAt: new Date().toISOString(),
-              }),
-              4000
-            )
-          );
-        });
-        await Promise.all(chunkPromises);
-      }
-
-      // 3. Write legacy compatibility pointers with timeout
-      if (shareToken && shareToken !== slug) {
-        withTimeout(setDoc(doc(db, 'public_presentations', shareToken), finalMainPayload), 3000).catch(() => {});
-      }
-      if (code && code.toLowerCase() !== slug) {
-        withTimeout(setDoc(doc(db, 'public_presentations', code), finalMainPayload), 3000).catch(() => {});
-      }
-
       return { success: true, url: shareUrl, shareToken: slug, slug };
     } catch (err: any) {
       console.warn('[CloudSync] Failed to publish public presentation:', err);
@@ -2534,48 +2200,16 @@ export class CloudSyncService {
   }
 
   /**
-   * Fetches Oracle AI chat history for a specific campaign & user from Cloud Firestore
+   * Fetches Oracle AI chat history
    */
-  static async fetchOracleChatFromCloud(campaignCode: string, userId: string): Promise<any[]> {
-    if (!campaignCode || !userId || campaignCode === 'GLOBAL' || isSupabaseConfigured() || checkIsQuotaExhausted()) return [];
-    try {
-      const docId = `${campaignCode.trim().toUpperCase()}__oracle_${userId.trim()}`;
-      const docRef = doc(db, 'dnd_campaigns', docId);
-      const snap = await getDoc(docRef);
-      if (snap.exists()) {
-        const data = snap.data();
-        if (Array.isArray(data?.messages)) {
-          return data.messages;
-        }
-      }
-    } catch (e) {
-      console.warn('[CloudSync] fetchOracleChatFromCloud error:', e);
-    }
+  static async fetchOracleChatFromCloud(_campaignCode: string, _userId: string): Promise<any[]> {
     return [];
   }
 
   /**
-   * Saves Oracle AI chat history for a specific campaign & user to Cloud Firestore
+   * Saves Oracle AI chat history
    */
-  static async saveOracleChatToCloud(campaignCode: string, userId: string, messages: any[]): Promise<void> {
-    if (!campaignCode || !userId || campaignCode === 'GLOBAL' || isSupabaseConfigured() || checkIsQuotaExhausted()) return;
-    try {
-      const docId = `${campaignCode.trim().toUpperCase()}__oracle_${userId.trim()}`;
-      const docRef = doc(db, 'dnd_campaigns', docId);
-      const sanitizedMsgs = sanitizeFirestorePayload(messages || []);
-      const payload = {
-        _updatedAt: new Date().toISOString(),
-        campaignCode: campaignCode.trim().toUpperCase(),
-        userId: userId.trim(),
-        messages: sanitizedMsgs,
-      };
-      await setDoc(docRef, payload);
-    } catch (e: any) {
-      if (e?.code === 'resource-exhausted') {
-        markQuotaExhausted();
-      } else {
-        console.warn('[CloudSync] saveOracleChatToCloud error:', e);
-      }
-    }
+  static async saveOracleChatToCloud(_campaignCode: string, _userId: string, _messages: any[]): Promise<void> {
+    // Supabase / local handles chat
   }
 }

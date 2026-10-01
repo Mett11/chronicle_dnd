@@ -302,6 +302,9 @@ export function CharacterBackgroundTab({ player, onBioUpdated, isOtherPlayerView
     personalNotes: false,
     quests: true,
     memories: true,
+    timelineMemories: true,
+    evolvingBeliefs: true,
+    interPartyRelations: true,
     worldLore: true,
   };
 
@@ -592,24 +595,38 @@ export function CharacterBackgroundTab({ player, onBioUpdated, isOtherPlayerView
             </span>
           </div>
 
-          {isEditing && (
-            <button
-              type="button"
-              onClick={handleAddTimelineMemory}
-              className="px-2.5 py-1 bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-300 border border-indigo-500/30 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
-            >
-              <Plus size={13} /> Aggiungi Ricordo
-            </button>
-          )}
+          <div className="flex items-center gap-2">
+            {renderPrivacyToggle('timelineMemories', 'Timeline Memorie')}
+            {isEditing && (
+              <button
+                type="button"
+                onClick={handleAddTimelineMemory}
+                className="px-2.5 py-1 bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-300 border border-indigo-500/30 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+              >
+                <Plus size={13} /> Aggiungi Ricordo
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Timeline Memories list */}
-        <div className="space-y-3">
-          {(isEditing ? draft.timelineMemories || [] : bio.timelineMemories || []).length === 0 ? (
-            <div className="p-6 text-center text-xs text-content-3 bg-surface-2/20 rounded-xl border border-surface-3">
-              Nessuna memoria o svolta registrata. Verranno generate automaticamente durante la sincronizzazione delle sessioni o puoi aggiungerne manualmente.
+        {isOtherPlayerView && currentPrivacy.timelineMemories === false ? (
+          <div className="bg-surface-2/30 border border-surface-3 rounded-xl p-6 text-center space-y-2">
+            <div className="w-10 h-10 rounded-full bg-surface-2 border border-surface-3 flex items-center justify-center mx-auto text-content-3">
+              <Lock size={18} />
             </div>
-          ) : (
+            <p className="text-xs font-semibold text-content-2">Cronologia Memorie Riservata</p>
+            <p className="text-[11px] text-content-3 max-w-sm mx-auto leading-relaxed">
+              {player.characterName || 'Il personaggio'} ha scelto di non condividere la propria timeline memorie con il gruppo.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {(isEditing ? draft.timelineMemories || [] : bio.timelineMemories || []).length === 0 ? (
+              <div className="p-6 text-center text-xs text-content-3 bg-surface-2/20 rounded-xl border border-surface-3">
+                Nessuna memoria o svolta registrata. Verranno generate automaticamente durante la sincronizzazione delle sessioni o puoi aggiungerne manualmente.
+              </div>
+            ) : (
             (isEditing ? draft.timelineMemories || [] : bio.timelineMemories || []).map((mem, idx) => {
               const catInfo = MEMORY_CATEGORY_LABELS[mem.category] || MEMORY_CATEGORY_LABELS.event;
               return (
@@ -711,6 +728,7 @@ export function CharacterBackgroundTab({ player, onBioUpdated, isOtherPlayerView
             })
           )}
         </div>
+        )}
       </div>
 
       {/* 4. Credenze, Teorie & Verità di Campagna */}
@@ -726,24 +744,38 @@ export function CharacterBackgroundTab({ player, onBioUpdated, isOtherPlayerView
             </span>
           </div>
 
-          {isEditing && (
-            <button
-              type="button"
-              onClick={handleAddBelief}
-              className="px-2.5 py-1 bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
-            >
-              <Plus size={13} /> Nuova Teoria
-            </button>
-          )}
+          <div className="flex items-center gap-2">
+            {renderPrivacyToggle('evolvingBeliefs', 'Teorie e Credenze')}
+            {isEditing && (
+              <button
+                type="button"
+                onClick={handleAddBelief}
+                className="px-2.5 py-1 bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+              >
+                <Plus size={13} /> Nuova Teoria
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Beliefs list */}
-        <div className="space-y-3">
-          {(isEditing ? draft.evolvingBeliefs || [] : bio.evolvingBeliefs || []).length === 0 ? (
-            <div className="p-6 text-center text-xs text-content-3 bg-surface-2/20 rounded-xl border border-surface-3">
-              Nessuna teoria o credenza registrata per questo personaggio.
+        {isOtherPlayerView && currentPrivacy.evolvingBeliefs === false ? (
+          <div className="bg-surface-2/30 border border-surface-3 rounded-xl p-6 text-center space-y-2">
+            <div className="w-10 h-10 rounded-full bg-surface-2 border border-surface-3 flex items-center justify-center mx-auto text-content-3">
+              <Lock size={18} />
             </div>
-          ) : (
+            <p className="text-xs font-semibold text-content-2">Teorie e Credenze Riservate</p>
+            <p className="text-[11px] text-content-3 max-w-sm mx-auto leading-relaxed">
+              {player.characterName || 'Il personaggio'} ha scelto di non condividere le proprie teorie con il gruppo.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {(isEditing ? draft.evolvingBeliefs || [] : bio.evolvingBeliefs || []).length === 0 ? (
+              <div className="p-6 text-center text-xs text-content-3 bg-surface-2/20 rounded-xl border border-surface-3">
+                Nessuna teoria o credenza registrata per questo personaggio.
+              </div>
+            ) : (
             (isEditing ? draft.evolvingBeliefs || [] : bio.evolvingBeliefs || []).map((bel, idx) => {
               const statusInfo = BELIEF_STATUS_LABELS[bel.status] || BELIEF_STATUS_LABELS.active_theory;
               return (
@@ -865,6 +897,7 @@ export function CharacterBackgroundTab({ player, onBioUpdated, isOtherPlayerView
             })
           )}
         </div>
+        )}
       </div>
 
       {/* 5. Relazioni Inter-Party & Fiducia nel Gruppo (PG ↔ PG) */}
@@ -876,9 +909,20 @@ export function CharacterBackgroundTab({ player, onBioUpdated, isOtherPlayerView
               Rapporti &amp; Fiducia con i Compagni del Party (PG ↔ PG)
             </h3>
           </div>
+          {renderPrivacyToggle('interPartyRelations', 'Rapporti Party')}
         </div>
 
-        {partyCompanions.length === 0 ? (
+        {isOtherPlayerView && currentPrivacy.interPartyRelations === false ? (
+          <div className="bg-surface-2/30 border border-surface-3 rounded-xl p-6 text-center space-y-2">
+            <div className="w-10 h-10 rounded-full bg-surface-2 border border-surface-3 flex items-center justify-center mx-auto text-content-3">
+              <Lock size={18} />
+            </div>
+            <p className="text-xs font-semibold text-content-2">Rapporti e Fiducia Riservati</p>
+            <p className="text-[11px] text-content-3 max-w-sm mx-auto leading-relaxed">
+              {player.characterName || 'Il personaggio'} ha scelto di tenere riservate le proprie impressioni e livelli di fiducia verso i compagni.
+            </p>
+          </div>
+        ) : partyCompanions.length === 0 ? (
           <div className="p-6 text-center text-xs text-content-3 bg-surface-2/20 rounded-xl border border-surface-3">
             Nessun altro compagno d&apos;avventura registrato nel gruppo.
           </div>

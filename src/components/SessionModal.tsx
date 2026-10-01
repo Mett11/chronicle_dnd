@@ -59,6 +59,8 @@ interface SessionModalProps {
     recapText: string;
     sessionImages: string[];
     eventsList: Omit<SessionEvent, 'id'>[];
+    excludedPlayerIds?: string[];
+    attendees?: Player[];
     entitiesExtracted?: boolean;
     entitiesExtractedAt?: string;
     memorySynced?: boolean;
@@ -112,6 +114,7 @@ export function SessionModal({
   const [hasExtractedEntitiesAt, setHasExtractedEntitiesAt] = useState<string | undefined>(undefined);
   const [isMemorySynced, setIsMemorySynced] = useState(false);
   const [isMemorySyncedAt, setIsMemorySyncedAt] = useState<string | undefined>(undefined);
+  const [excludedPlayerIds, setExcludedPlayerIds] = useState<string[]>([]);
 
   // Media Picker (from Campaign Maps & Codex Places)
   const [isMediaPickerOpen, setIsMediaPickerOpen] = useState(false);
@@ -137,6 +140,9 @@ export function SessionModal({
   
   // Campaign Maps & Entities
   const worldMaps = useMemo(() => CampaignManager.getMaps(), [isOpen]);
+  const campaignPartyPlayers = useMemo(() => {
+    return CampaignManager.getStoredPlayers().filter((p) => !p.isDm);
+  }, [isOpen]);
   const allEntities = useMemo(() => {
     return CampaignManager.getEntities().filter((e) => {
       if (e.type === 'quest' && e.questScope === 'personal' && e.assigneePlayerId !== player?._id && !player?.isDm) {
@@ -307,6 +313,14 @@ export function SessionModal({
       setHasExtractedEntitiesAt(initialSession.entitiesExtractedAt);
       setIsMemorySynced(Boolean(initialSession.memorySynced));
       setIsMemorySyncedAt(initialSession.memorySyncedAt);
+
+      // Initialize excludedPlayerIds
+      let initialExcluded = initialSession.excludedPlayerIds;
+      if (!initialExcluded && initialSession.attendees && initialSession.attendees.length > 0) {
+        const attendeeIds = new Set(initialSession.attendees.map((a) => a._id));
+        initialExcluded = campaignPartyPlayers.filter((p) => !attendeeIds.has(p._id)).map((p) => p._id);
+      }
+      setExcludedPlayerIds(initialExcluded || []);
     } else {
       const nextNum =
         existingSessions.length > 0 ? Math.max(...existingSessions.map((s) => s.number)) + 1 : 1;
@@ -327,6 +341,7 @@ export function SessionModal({
       setChapterName(defaultChap?.name || '');
       setIsAddingNewChapterInline(false);
       setInlineNewChapterName('');
+      setExcludedPlayerIds([]);
       setDate(new Date().toISOString().split('T')[0]);
       setLoreDate(initialFormatted);
       setHasExtractedEntities(false);
@@ -400,6 +415,8 @@ export function SessionModal({
       finalChapterName = created.name;
     }
 
+    const presentPlayers = campaignPartyPlayers.filter((p) => !excludedPlayerIds.includes(p._id));
+
     onSave({
       number,
       title: title.trim(),
@@ -412,6 +429,8 @@ export function SessionModal({
       recapText,
       sessionImages,
       eventsList,
+      excludedPlayerIds,
+      attendees: presentPlayers,
       entitiesExtracted: hasExtractedEntities,
       entitiesExtractedAt: hasExtractedEntitiesAt,
       memorySynced: isMemorySynced,
@@ -683,6 +702,78 @@ export function SessionModal({
                     </div>
                   </div>
                 </div>
+
+                {/* Party Presence & Player Exclusion Block */}
+                {campaignPartyPlayers.length > 0 && (
+                  <div className="bg-surface-2/60 border border-surface-3 rounded-2xl p-4 sm:p-5 space-y-3.5 shadow-xs">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-xs font-semibold text-content-1 uppercase tracking-wider flex items-center gap-2">
+                        <Users size={14} className="text-primary" />
+                        Presenza Personaggi del Party (PG)
+                      </h4>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setExcludedPlayerIds([])}
+                          className="text-[11px] font-mono text-primary hover:underline cursor-pointer"
+                        >
+                          Tutti Presenti
+                        </button>
+                      </div>
+                    </div>
+                    <p className="text-[11px] text-content-3">
+                      Seleziona i personaggi che hanno preso parte a questa sessione. Se un PG si è unito alla campagna in seguito (es. dopo 20 sessioni) o era assente, deselezionalo per escluderlo dai ricordi di questi eventi.
+                    </p>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+                      {campaignPartyPlayers.map((p) => {
+                        const isExcluded = excludedPlayerIds.includes(p._id);
+                        return (
+                          <div
+                            key={p._id}
+                            onClick={() => {
+                              setExcludedPlayerIds((prev) =>
+                                isExcluded ? prev.filter((id) => id !== p._id) : [...prev, p._id]
+                              );
+                            }}
+                            className={`flex items-center justify-between p-2.5 rounded-xl border transition-all cursor-pointer ${
+                              isExcluded
+                                ? 'bg-surface-1/40 border-surface-3/50 text-content-3/70 opacity-65'
+                                : 'bg-surface-1 border-primary/40 text-content-1 shadow-xs'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <div
+                                className="w-7 h-7 rounded-lg flex items-center justify-center text-white text-[11px] font-bold overflow-hidden shrink-0 border border-surface-3"
+                                style={{ backgroundColor: p.color || '#6366f1' }}
+                              >
+                                {p.avatarUrl ? (
+                                  <img src={p.avatarUrl} alt="" className="w-full h-full object-cover" />
+                                ) : (
+                                  p.characterName?.charAt(0).toUpperCase() || 'P'
+                                )}
+                              </div>
+                              <div className="min-w-0">
+                                <span className={`font-semibold text-xs truncate block ${isExcluded ? 'line-through text-content-3' : 'text-content-1'}`}>
+                                  {p.characterName}
+                                </span>
+                                <span className="text-[10px] font-mono text-content-3">
+                                  {isExcluded ? '🚫 Non presente (Escluso)' : '✅ Presente / Partecipe'}
+                                </span>
+                              </div>
+                            </div>
+                            <input
+                              type="checkbox"
+                              checked={!isExcluded}
+                              onChange={() => {}}
+                              className="accent-primary rounded cursor-pointer"
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 

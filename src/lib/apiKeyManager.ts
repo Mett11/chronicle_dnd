@@ -1,5 +1,4 @@
-import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
-import { db, auth } from './firebase';
+import { auth } from './firebase';
 import { isSupabaseConfigured } from './supabase';
 import { SupabaseSyncService } from './supabaseSyncService';
 import { encryptApiKey, decryptApiKey } from './cryptoUtils';
@@ -190,39 +189,6 @@ export class ApiKeyManager {
       }
     }
 
-    // 2. Fetch authoritative keys from Firestore if campaign code is valid
-    if (!isSupabaseConfigured() && campCode && campCode !== 'CAMPAIGN') {
-      try {
-        const campaignKeysRef = doc(db, 'campaigns', campCode, 'config', 'ai_keys');
-        const snap = await getDoc(campaignKeysRef);
-        if (snap.exists()) {
-          const data = snap.data();
-          const [gemini, openrouter, groq, cfId, cfToken] = await Promise.all([
-            decryptApiKey(data.geminiKey || data.geminiKeyPlain || '', campCode, ['CAMPAIGN', 'campaign', 'chronicle_default']),
-            decryptApiKey(data.openrouterKey || data.openrouterKeyPlain || '', campCode, ['CAMPAIGN', 'campaign', 'chronicle_default']),
-            decryptApiKey(data.groqApiKey || '', campCode, ['CAMPAIGN', 'campaign', 'chronicle_default']),
-            decryptApiKey(data.cloudflareAccountId || '', campCode, ['CAMPAIGN', 'campaign', 'chronicle_default']),
-            decryptApiKey(data.cloudflareApiToken || '', campCode, ['CAMPAIGN', 'campaign', 'chronicle_default']),
-          ]);
-          const resolvedGemini = gemini.trim() || (data.geminiKeyPlain || '').trim();
-          const resolvedOpenRouter = openrouter.trim() || (data.openrouterKeyPlain || '').trim();
-          cachedCampaignKeys = {
-            geminiKey: resolvedGemini,
-            openrouterKey: resolvedOpenRouter,
-            groqApiKey: groq.trim(),
-            cloudflareAccountId: cfId.trim(),
-            cloudflareApiToken: cfToken.trim(),
-          };
-          persistFastVault();
-          if (typeof window !== 'undefined') {
-            window.dispatchEvent(new CustomEvent('chronicle_campaign_keys_updated', { detail: cachedCampaignKeys }));
-          }
-        }
-      } catch (err) {
-        console.warn('[ApiKeyManager] Firestore campaign keys preload error:', err);
-      }
-    }
-
     return { ...cachedCampaignKeys };
   }
 
@@ -262,38 +228,6 @@ export class ApiKeyManager {
         console.warn('[ApiKeyManager] Preload personal keys warning:', e);
       }
     }
-
-    // 2. Fetch authoritative secrets from Firestore (vital on cache clear)
-    if (!isSupabaseConfigured()) {
-      try {
-        const secretRef = doc(db, 'users', uid, 'private', 'secrets');
-      const snap = await getDoc(secretRef);
-      if (snap.exists()) {
-        const data = snap.data();
-        const [gemini, openrouter, groq, cfId, cfToken] = await Promise.all([
-          decryptApiKey(data.geminiKey || '', uid, [uid, 'usr_' + uid, 'usr_g_' + uid, 'chronicle_default', 'personal']),
-          decryptApiKey(data.openrouterKey || '', uid, [uid, 'usr_' + uid, 'usr_g_' + uid, 'chronicle_default', 'personal']),
-          decryptApiKey(data.groqApiKey || '', uid, [uid, 'usr_' + uid, 'usr_g_' + uid, 'chronicle_default', 'personal']),
-          decryptApiKey(data.cloudflareAccountId || '', uid, [uid, 'usr_' + uid, 'usr_g_' + uid, 'chronicle_default', 'personal']),
-          decryptApiKey(data.cloudflareApiToken || '', uid, [uid, 'usr_' + uid, 'usr_g_' + uid, 'chronicle_default', 'personal']),
-        ]);
-        cachedPersonalUserId = uid;
-        cachedPersonalKeys = {
-          geminiKey: gemini.trim(),
-          openrouterKey: openrouter.trim(),
-          groqApiKey: groq.trim(),
-          cloudflareAccountId: cfId.trim(),
-          cloudflareApiToken: cfToken.trim(),
-        };
-        persistFastVault();
-        if (typeof window !== 'undefined') {
-          window.dispatchEvent(new CustomEvent('chronicle_api_keys_updated', { detail: cachedPersonalKeys }));
-        }
-      }
-    } catch (err) {
-      console.warn('[ApiKeyManager] Firestore personal keys preload error:', err);
-    }
-  }
 
     return { ...cachedPersonalKeys };
   }
@@ -718,30 +652,11 @@ export class ApiKeyManager {
       }
     }
 
-    // Sync to Firestore under users/{uid}/private/secrets (encrypted at rest)
-    if (!isSupabaseConfigured()) {
-      try {
-        const secretRef = doc(db, 'users', uid, 'private', 'secrets');
-        await setDoc(
-          secretRef,
-          {
-            ...encryptedPayload,
-            isEncrypted: true,
-            encryptionAlgo: 'AES-GCM-256-PBKDF2',
-            updatedAt: new Date().toISOString(),
-          },
-          { merge: true }
-        );
-      } catch (err) {
-        console.warn('[ApiKeyManager] Firestore personal secrets save error:', err);
-      }
-    }
-
     return updated;
   }
 
   /**
-   * Saves campaign keys to LocalStorage cache and Firestore under `campaigns/{campaignCode}/config/ai_keys`.
+   * Saves campaign keys to LocalStorage cache and Supabase.
    * Automatically encrypts all credentials using AES-GCM 256-bit with campaign code derivation.
    */
   static async saveCampaignKeys(
@@ -804,27 +719,6 @@ export class ApiKeyManager {
       SupabaseSyncService.saveCampaignAiKeys(cleanCode, encryptedPayload).catch((err) => {
         console.warn('[ApiKeyManager] Supabase campaign keys save warn:', err);
       });
-    }
-
-    if (cleanCode && cleanCode !== 'CAMPAIGN') {
-      try {
-        const campaignKeysRef = doc(db, 'campaigns', cleanCode, 'config', 'ai_keys');
-        await setDoc(
-          campaignKeysRef,
-          {
-            ...encryptedPayload,
-            geminiKeyPlain: updated.geminiKey || '',
-            openrouterKeyPlain: updated.openrouterKey || '',
-            isEncrypted: true,
-            encryptionAlgo: 'AES-GCM-256-PBKDF2',
-            updatedAt: new Date().toISOString(),
-            updatedBy: updatedBy || 'Dungeon Master',
-          },
-          { merge: true }
-        ).catch(() => {});
-      } catch (err) {
-        console.warn('[ApiKeyManager] Firestore campaign keys save error:', err);
-      }
     }
 
     return updated;
@@ -913,135 +807,53 @@ export class ApiKeyManager {
       return () => {};
     }
 
-    if (isSupabaseConfigured()) {
-      return () => {};
+    // Load initial keys
+    onUpdate(this.getPersonalKeys(uid));
+
+    const handler = (e: Event) => {
+      const customEvent = e as CustomEvent;
+      if (customEvent.detail) {
+        onUpdate(customEvent.detail);
+      }
+    };
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('chronicle_api_keys_updated', handler);
     }
 
-    try {
-      const secretRef = doc(db, 'users', uid, 'private', 'secrets');
-      return onSnapshot(
-        secretRef,
-        async (snapshot) => {
-          if (snapshot.exists()) {
-            const data = snapshot.data();
-            const salt = uid;
-            const additionalSalts = [uid, 'usr_' + uid, 'usr_g_' + uid, 'chronicle_default', 'personal'];
-            const [gemini, openrouter, groq, cfId, cfToken] = await Promise.all([
-              decryptApiKey(data.geminiKey || '', salt, additionalSalts),
-              decryptApiKey(data.openrouterKey || '', salt, additionalSalts),
-              decryptApiKey(data.groqApiKey || '', salt, additionalSalts),
-              decryptApiKey(data.cloudflareAccountId || '', salt, additionalSalts),
-              decryptApiKey(data.cloudflareApiToken || '', salt, additionalSalts),
-            ]);
-
-            const keys: ApiKeysConfig = {
-              geminiKey: gemini.trim(),
-              openrouterKey: openrouter.trim(),
-              groqApiKey: groq.trim(),
-              cloudflareAccountId: cfId.trim(),
-              cloudflareApiToken: cfToken.trim(),
-            };
-
-            cachedPersonalUserId = uid;
-            cachedPersonalKeys = { ...keys };
-            persistFastVault();
-            onUpdate(keys);
-          } else {
-            // Document does NOT exist (new user account)
-            // Check if there are local keys strictly saved for this user
-            const storageKey = this.getPersonalStorageKey(uid);
-            const raw = storageKey ? localStorage.getItem(storageKey) : null;
-            if (!raw) {
-              const empty: ApiKeysConfig = {
-                geminiKey: '',
-                openrouterKey: '',
-                groqApiKey: '',
-                cloudflareAccountId: '',
-                cloudflareApiToken: '',
-              };
-              cachedPersonalUserId = uid;
-              cachedPersonalKeys = { ...empty };
-              onUpdate(empty);
-            }
-          }
-        },
-        (err) => {
-          console.warn('[ApiKeyManager] Personal secrets subscription error:', err);
-        }
-      );
-    } catch (e) {
-      console.warn('[ApiKeyManager] Failed to subscribe personal keys:', e);
-      return () => {};
-    }
+    return () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('chronicle_api_keys_updated', handler);
+      }
+    };
   }
 
   /**
-   * Subscribe to real-time changes for Campaign Shared Keys (`campaigns/{campaignCode}/config/ai_keys`).
-   * Automatically decrypts credentials so party members always have the fresh keys set by the DM.
+   * Subscribe to real-time changes for Campaign Shared Keys.
    */
   static subscribeCampaignKeys(
     campaignCode: string,
     onUpdate: (keys: ApiKeysConfig) => void
   ): () => void {
-    const cleanCode = (campaignCode || this.getEffectiveCampaignCode()).trim().toUpperCase() || 'CAMPAIGN';
-    
-    // Pass current cached keys immediately to avoid delay
+    // Pass current cached keys immediately
     onUpdate(this.getCampaignKeys());
 
-    if (!cleanCode || cleanCode === 'CAMPAIGN' || isSupabaseConfigured()) {
-      return () => {};
+    const handler = (e: Event) => {
+      const customEvent = e as CustomEvent;
+      if (customEvent.detail) {
+        onUpdate(customEvent.detail);
+      }
+    };
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('chronicle_campaign_keys_updated', handler);
     }
 
-    try {
-      const campaignKeysRef = doc(db, 'campaigns', cleanCode, 'config', 'ai_keys');
-      return onSnapshot(
-        campaignKeysRef,
-        async (snapshot) => {
-          if (snapshot.exists()) {
-            const data = snapshot.data();
-            const salt = cleanCode;
-            const [gemini, openrouter, groq, cfId, cfToken] = await Promise.all([
-              decryptApiKey(data.geminiKey || data.geminiKeyPlain || '', salt),
-              decryptApiKey(data.openrouterKey || data.openrouterKeyPlain || '', salt),
-              decryptApiKey(data.groqApiKey || '', salt),
-              decryptApiKey(data.cloudflareAccountId || '', salt),
-              decryptApiKey(data.cloudflareApiToken || '', salt),
-            ]);
-
-            const resolvedGemini =
-              gemini.trim() ||
-              (data.geminiKeyPlain || '').trim() ||
-              (data.geminiKey && !data.geminiKey.startsWith('enc:') ? data.geminiKey.trim() : '');
-
-            const resolvedOpenRouter =
-              openrouter.trim() ||
-              (data.openrouterKeyPlain || '').trim() ||
-              (data.openrouterKey && !data.openrouterKey.startsWith('enc:') ? data.openrouterKey.trim() : '');
-
-            const keys: ApiKeysConfig = {
-              geminiKey: resolvedGemini,
-              openrouterKey: resolvedOpenRouter,
-              groqApiKey: groq.trim(),
-              cloudflareAccountId: cfId.trim(),
-              cloudflareApiToken: cfToken.trim(),
-            };
-
-            cachedCampaignKeys = { ...keys };
-            persistFastVault();
-            if (typeof window !== 'undefined') {
-              window.dispatchEvent(new CustomEvent('chronicle_campaign_keys_updated', { detail: keys }));
-            }
-            onUpdate(keys);
-          }
-        },
-        (err) => {
-          console.warn('[ApiKeyManager] Campaign keys subscription error:', err);
-        }
-      );
-    } catch (e) {
-      console.warn('[ApiKeyManager] Failed to subscribe campaign keys:', e);
-      return () => {};
-    }
+    return () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('chronicle_campaign_keys_updated', handler);
+      }
+    };
   }
 
   // Helper calls for backward compatibility

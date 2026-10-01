@@ -291,6 +291,8 @@ export interface Session {
   images?: string[];
   coverImage?: any;
   attendees?: Player[];
+  excludedPlayerIds?: string[]; // IDs dei PG che non erano presenti (es. entrati in campagna successivamente)
+  attendeePlayerIds?: string[]; // IDs dei PG presenti alla sessione
   audioLogs?: AudioLog[];
   quotes?: { speaker: string; text: string }[];
   entitiesExtracted?: boolean;
