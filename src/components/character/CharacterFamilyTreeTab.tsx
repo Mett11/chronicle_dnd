@@ -94,6 +94,8 @@ export function CharacterFamilyTreeTab({
   const [initialSideOfFamily, setInitialSideOfFamily] = useState<'paternal' | 'maternal' | 'direct' | 'unspecified' | null>(null);
   const [selectedRelationForDetail, setSelectedRelationForDetail] = useState<CharacterRelationship | null>(null);
   const [relationToDelete, setRelationToDelete] = useState<CharacterRelationship | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const loadData = () => {
     let rels = CampaignManager.getFamilyRelations(player._id);
@@ -117,17 +119,31 @@ export function CharacterFamilyTreeTab({
     };
   }, [player._id, isReadOnly]);
 
-  const handleSaveRelation = (relation: CharacterRelationship) => {
+  const handleSaveRelation = async (relation: CharacterRelationship) => {
     if (isReadOnly) return;
-    const exists = relations.some((r) => r.id === relation.id);
-    if (exists || selectedRelationForEdit) {
-      CampaignManager.updateFamilyRelation(relation);
-    } else {
-      CampaignManager.addFamilyRelation(relation);
-    }
-    loadData();
-    if (selectedRelationForDetail?.id === relation.id) {
-      setSelectedRelationForDetail(relation);
+    setIsSaving(true);
+    setSaveError(null);
+    try {
+      const exists = relations.some((r) => r.id === relation.id);
+      let res;
+      if (exists || selectedRelationForEdit) {
+        res = await CampaignManager.updateFamilyRelation(relation);
+      } else {
+        const addRes = await CampaignManager.addFamilyRelation(relation);
+        res = { success: addRes.success, error: addRes.error };
+      }
+      if (res.success) {
+        loadData();
+        if (selectedRelationForDetail?.id === relation.id) {
+          setSelectedRelationForDetail(relation);
+        }
+      } else {
+        setSaveError(res.error || 'Errore durante il salvataggio su Supabase.');
+      }
+    } catch (err: any) {
+      setSaveError(err?.message || 'Errore di connessione cloud.');
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -141,15 +157,27 @@ export function CharacterFamilyTreeTab({
     handleSaveRelation(updated);
   };
 
-  const handleDeleteRelation = () => {
+  const handleDeleteRelation = async () => {
     if (isReadOnly) return;
     if (!relationToDelete) return;
-    CampaignManager.deleteFamilyRelation(relationToDelete.id);
-    if (selectedRelationForDetail?.id === relationToDelete.id) {
-      setSelectedRelationForDetail(null);
+    setIsSaving(true);
+    setSaveError(null);
+    try {
+      const res = await CampaignManager.deleteFamilyRelation(relationToDelete.id);
+      if (res.success) {
+        if (selectedRelationForDetail?.id === relationToDelete.id) {
+          setSelectedRelationForDetail(null);
+        }
+        setRelationToDelete(null);
+        loadData();
+      } else {
+        setSaveError(res.error || 'Errore durante la cancellazione su Supabase.');
+      }
+    } catch (err: any) {
+      setSaveError(err?.message || 'Errore di connessione.');
+    } finally {
+      setIsSaving(false);
     }
-    setRelationToDelete(null);
-    loadData();
   };
 
   const handleAddMemberSlot = (
@@ -465,7 +493,32 @@ export function CharacterFamilyTreeTab({
   ) : null;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 relative">
+      {isSaving && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-md z-[9999] flex flex-col items-center justify-center gap-4 animate-fadeIn">
+          <div className="w-16 h-16 border-4 border-t-primary border-r-primary border-b-surface-3 border-l-surface-3 rounded-full animate-spin"></div>
+          <div className="text-center space-y-1">
+            <h3 className="font-heading font-bold text-lg text-content-1">Sincronizzazione in Corso</h3>
+            <p className="text-sm text-content-3">Salvataggio atomico e persistente sul Cloud...</p>
+          </div>
+        </div>
+      )}
+
+      {saveError && (
+        <div className="bg-red-500/10 border border-red-500/20 p-4 rounded-2xl flex items-center justify-between gap-3 text-red-200 text-xs animate-fadeIn">
+          <div className="flex items-center gap-2">
+            <span className="font-semibold">Errore di Sincronizzazione:</span> {saveError}
+          </div>
+          <button
+            type="button"
+            onClick={() => setSaveError(null)}
+            className="text-red-400 hover:text-red-300 font-bold px-2 py-1"
+          >
+            Chiudi
+          </button>
+        </div>
+      )}
+
       {/* Header & Main Switcher */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-surface-1 border border-surface-2 p-5 rounded-3xl shadow-sm">
         <div className="flex items-center gap-3.5">

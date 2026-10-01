@@ -157,6 +157,8 @@ export function CharacterBackgroundTab({
   const [draft, setDraft] = useState<CharacterBio>(bio);
   const [newTraitInput, setNewTraitInput] = useState('');
   const [saveSuccessNotice, setSaveSuccessNotice] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   // Sync calendar and players updates
   useEffect(() => {
@@ -211,18 +213,30 @@ export function CharacterBackgroundTab({
     setIsEditing(false);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
+    setIsSaving(true);
+    setSaveError(null);
     const toSave: CharacterBio = {
       ...draft,
       playerId: player._id,
       updatedAt: new Date().toISOString(),
     };
-    CampaignManager.saveCharacterBio(toSave);
-    setBio(toSave);
-    setIsEditing(false);
-    setSaveSuccessNotice(true);
-    setTimeout(() => setSaveSuccessNotice(false), 3000);
-    if (onBioUpdated) onBioUpdated(toSave);
+    try {
+      const res = await CampaignManager.saveCharacterBio(toSave);
+      if (res.success) {
+        setBio(toSave);
+        setIsEditing(false);
+        setSaveSuccessNotice(true);
+        setTimeout(() => setSaveSuccessNotice(false), 3000);
+        if (onBioUpdated) onBioUpdated(toSave);
+      } else {
+        setSaveError(res.error || 'Errore durante il salvataggio sul cloud.');
+      }
+    } catch (err: any) {
+      setSaveError(err?.message || 'Errore di connessione con il cloud.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleAddTrait = () => {
@@ -395,7 +409,32 @@ export function CharacterBackgroundTab({
   const showPartySections = activeSectionMode === 'all' || activeSectionMode === 'party';
 
   return (
-    <div className="space-y-6 font-body">
+    <div className="space-y-6 font-body relative">
+      {isSaving && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-md z-[9999] flex flex-col items-center justify-center gap-4 animate-fadeIn">
+          <div className="w-16 h-16 border-4 border-t-primary border-r-primary border-b-surface-3 border-l-surface-3 rounded-full animate-spin"></div>
+          <div className="text-center space-y-1">
+            <h3 className="font-heading font-bold text-lg text-content-1">Sincronizzazione in Corso</h3>
+            <p className="text-sm text-content-3">Salvataggio atomico e persistente sul Cloud...</p>
+          </div>
+        </div>
+      )}
+
+      {saveError && (
+        <div className="bg-red-500/10 border border-red-500/20 p-4 rounded-2xl flex items-center justify-between gap-3 text-red-200 text-xs animate-fadeIn">
+          <div className="flex items-center gap-2">
+            <span className="font-semibold">Errore di Sincronizzazione:</span> {saveError}
+          </div>
+          <button
+            type="button"
+            onClick={() => setSaveError(null)}
+            className="text-red-400 hover:text-red-300 font-bold px-2 py-1"
+          >
+            Chiudi
+          </button>
+        </div>
+      )}
+
       {/* Top Header & Edit Action Bar */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-surface-1 border border-surface-2 p-4 rounded-2xl shadow-sm">
         <div className="flex items-center gap-2.5">

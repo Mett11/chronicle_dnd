@@ -158,6 +158,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         refreshPlayers();
         ApiKeyManager.preloadAllKeys(firebaseUser.uid);
         if (matched) {
+          let activeCode = CampaignManager.getActiveCampaignCode();
+          if (!activeCode) {
+            const defaultCode =
+              matched.lastCampaignCode ||
+              (matched.joinedCampaigns && matched.joinedCampaigns[0]) ||
+              (matched.dmCampaigns && matched.dmCampaigns[0]) ||
+              null;
+            if (defaultCode) {
+              CampaignManager.setActiveCampaignCode(defaultCode);
+            }
+          }
+          CloudSyncService.init();
           UserProfileSyncService.syncUserProfile(matched, firebaseUser.uid);
         }
       } else {

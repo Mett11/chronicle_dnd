@@ -40,6 +40,7 @@ import {
   Skull,
   UserCheck,
   AlertCircle,
+  User,
   Tag,
   Link2,
   Brain,
@@ -1124,75 +1125,22 @@ export function Sessions() {
                       />
                     </h2>
 
-                    {/* Party Presence Strip */}
+                    {/* Exclusion Alert for current player */}
                     {(() => {
-                      const partyList = allPlayers.filter((p) => !p.isDm);
                       const excludedSet = new Set(selectedSession.excludedPlayerIds || []);
-                      const presentParty = partyList.filter((p) => !excludedSet.has(p._id));
-                      const excludedParty = partyList.filter((p) => excludedSet.has(p._id));
                       const isCurrentUserExcluded = Boolean(player && !player.isDm && excludedSet.has(player._id));
+                      if (!isCurrentUserExcluded) return null;
 
                       return (
-                        <div className="pt-2 space-y-2">
-                          {/* Exclusion Alert for current player */}
-                          {isCurrentUserExcluded && (
-                            <div className="p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/25 text-amber-300 text-xs font-mono flex items-start gap-2">
-                              <AlertCircle size={15} className="shrink-0 text-amber-400 mt-0.5" />
-                              <div className="min-w-0">
-                                <span className="font-semibold block">Il tuo personaggio non era presente a questa sessione</span>
-                                <span className="text-[11px] text-content-3 font-sans">
-                                  Il tuo eroe non possiede ricordi diretti degli avvenimenti vissuti dal gruppo in questa cronaca. Puoi comunque leggere il diario e sincronizzare la conoscenza se ti verrà raccontata in gioco!
-                                </span>
-                              </div>
-                            </div>
-                          )}
-
-                          <div className="flex flex-wrap items-center justify-between gap-2 bg-surface-1/60 border border-surface-2 p-2 sm:p-2.5 rounded-lg text-xs font-mono">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className="text-[10.5px] text-content-3 uppercase tracking-wider flex items-center gap-1">
-                                <Users size={12} className="text-primary" />
-                                Party ({presentParty.length}/{partyList.length}):
+                        <div className="pt-2">
+                          <div className="p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/25 text-amber-300 text-xs font-mono flex items-start gap-2">
+                            <AlertCircle size={15} className="shrink-0 text-amber-400 mt-0.5" />
+                            <div className="min-w-0">
+                              <span className="font-semibold block">Il tuo personaggio non era presente a questa sessione</span>
+                              <span className="text-[11px] text-content-3 font-sans">
+                                Il tuo eroe non possiede ricordi diretti degli avvenimenti vissuti dal gruppo in questa cronaca. Puoi comunque leggere il diario e sincronizzare la conoscenza se ti verrà raccontata in gioco!
                               </span>
-                              {presentParty.map((p) => (
-                                <span
-                                  key={p._id}
-                                  className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-surface-2 text-content-1 border border-surface-3 text-[11px]"
-                                  title={`Presente alla sessione #${selectedSession.number}`}
-                                >
-                                  <span
-                                    className="w-2 h-2 rounded-full"
-                                    style={{ backgroundColor: p.color || '#10b981' }}
-                                  />
-                                  <span>{p.characterName}</span>
-                                </span>
-                              ))}
-
-                              {excludedParty.map((p) => (
-                                <span
-                                  key={p._id}
-                                  className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-surface-2/40 text-content-3/60 line-through border border-surface-3/40 text-[11px]"
-                                  title={`Non presente alla sessione #${selectedSession.number}`}
-                                >
-                                  <span className="text-rose-400 text-[10px]">🚫</span>
-                                  <span>{p.characterName}</span>
-                                </span>
-                              ))}
                             </div>
-
-                            {player?.isDm && (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setIsEditing(true);
-                                  setIsModalOpen(true);
-                                }}
-                                className="text-[10px] text-primary hover:underline flex items-center gap-1 cursor-pointer ml-auto"
-                                title="Modifica presenze ed esclusioni per questa sessione"
-                              >
-                                <Edit3 size={11} />
-                                <span>Modifica Presenze</span>
-                              </button>
-                            )}
                           </div>
                         </div>
                       );
@@ -1206,7 +1154,31 @@ export function Sessions() {
                         Diario &amp; Cronaca
                       </span>
 
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {/* Attendance / Participants Jump Button */}
+                        {(() => {
+                          const excludedSet = new Set(selectedSession.excludedPlayerIds || []);
+                          const activeTotalCount = allPlayers.filter((p) => !excludedSet.has(p._id)).length;
+
+                          return (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const el = document.getElementById('session-participants-section');
+                                if (el) {
+                                  el.scrollIntoView({ behavior: 'smooth' });
+                                }
+                              }}
+                              className="px-2 sm:px-2.5 py-1 rounded-lg text-xs font-mono flex items-center gap-1.5 bg-surface-2 text-content-2 border border-surface-3 hover:text-content-1 hover:border-primary/40 transition-all cursor-pointer shadow-xs"
+                              title="Vai alla gestione presenze e lista partecipanti della seduta"
+                            >
+                              <Users size={12} className="text-primary" />
+                              <span className="hidden sm:inline">Presenze ({activeTotalCount}/{allPlayers.length})</span>
+                              <span className="sm:hidden font-bold text-[11px]">{activeTotalCount}</span>
+                            </button>
+                          );
+                        })()}
+
                         {orphanTagsInCurrentSession.length > 0 && (
                           <button
                             type="button"
@@ -1217,20 +1189,21 @@ export function Sessions() {
                                 })
                               );
                             }}
-                            className="px-2.5 py-1 rounded-lg text-xs font-mono flex items-center gap-1.5 bg-amber-500/10 text-amber-300 border border-amber-500/30 hover:bg-amber-500/20 hover:border-amber-500/50 transition-all cursor-pointer shadow-sm"
+                            className="px-2 sm:px-2.5 py-1 rounded-lg text-xs font-mono flex items-center gap-1.5 bg-amber-500/10 text-amber-300 border border-amber-500/30 hover:bg-amber-500/20 hover:border-amber-500/50 transition-all cursor-pointer shadow-sm"
                             title={`Rilevati ${orphanTagsInCurrentSession.length} tag orfani nel testo: ${orphanTagsInCurrentSession.join(', ')}. Clicca per risolverli.`}
                           >
                             <Link2 size={12} className="text-amber-400" />
-                            <span>
+                            <span className="hidden sm:inline">
                               {orphanTagsInCurrentSession.length} tag orfan{orphanTagsInCurrentSession.length > 1 ? 'i' : 'o'}
                             </span>
+                            <span className="sm:hidden font-bold text-[11px]">{orphanTagsInCurrentSession.length}</span>
                           </button>
                         )}
 
                         <button
                           type="button"
                           onClick={handleToggleMentionTags}
-                          className={`px-2.5 py-1 rounded-lg text-xs font-mono flex items-center gap-1.5 border transition-all cursor-pointer ${
+                          className={`px-2 sm:px-2.5 py-1 rounded-lg text-xs font-mono flex items-center gap-1.5 border transition-all cursor-pointer ${
                             showMentionTags
                               ? 'bg-primary/10 text-primary border-primary/30 hover:bg-primary/20'
                               : 'bg-surface-2 text-content-3 border-surface-3 hover:text-content-1 hover:border-content-3/40'
@@ -1242,7 +1215,7 @@ export function Sessions() {
                           }
                         >
                           <Tag size={12} className={showMentionTags ? 'text-primary' : 'text-content-3'} />
-                          <span>{showMentionTags ? 'Tag Entità: ATTIVI' : 'Lettura Pulita'}</span>
+                          <span className="hidden sm:inline">{showMentionTags ? 'Tag Entità: ATTIVI' : 'Lettura Pulita'}</span>
                         </button>
                       </div>
                     </div>
@@ -1378,57 +1351,98 @@ export function Sessions() {
                     </section>
                   )}
 
-                  {/* SECTION 5: Partecipanti al Tavolo */}
-                  {allPlayers && allPlayers.length > 0 && (
-                    <section className="space-y-3 pt-4 border-t border-surface-2">
-                      <h3 className="font-serif font-bold text-sm sm:text-base text-content-1 flex items-center gap-2">
-                        <Users size={14} className="text-primary" />
-                        <span>Partecipanti alla Seduta ({allPlayers.length})</span>
-                      </h3>
-                      <div className="divide-y divide-surface-2 border border-surface-2 rounded-xl bg-surface-1 overflow-hidden">
-                        {allPlayers.map((p) => (
-                          <div
-                            key={p._id}
-                            className="p-3 sm:p-3.5 flex items-center justify-between gap-3"
-                          >
-                            <div className="flex items-center gap-3">
+                  {/* SECTION 5: Partecipanti alla Seduta */}
+                  {allPlayers && allPlayers.length > 0 && (() => {
+                    const excludedSet = new Set(selectedSession.excludedPlayerIds || []);
+                    const activeTotalCount = allPlayers.filter((p) => !excludedSet.has(p._id)).length;
+
+                    return (
+                      <section id="session-participants-section" className="space-y-3 pt-4 border-t border-surface-2 scroll-mt-6">
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <h3 className="font-serif font-bold text-sm sm:text-base text-content-1 flex items-center gap-2">
+                            <Users size={15} className="text-primary" />
+                            <span>Partecipanti alla Seduta ({activeTotalCount}/{allPlayers.length} Attivi)</span>
+                          </h3>
+
+                          {player?.isDm && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setIsEditing(true);
+                                setIsModalOpen(true);
+                              }}
+                              className="px-2.5 py-1 bg-surface-2 hover:bg-surface-3 text-primary text-xs font-mono rounded border border-surface-3 flex items-center gap-1.5 transition-colors cursor-pointer"
+                              title="Modifica presenze ed esclusioni per questa sessione"
+                            >
+                              <Edit3 size={12} />
+                              <span className="hidden sm:inline">Modifica Presenze</span>
+                            </button>
+                          )}
+                        </div>
+
+                        <div className="divide-y divide-surface-2 border border-surface-2 rounded-xl bg-surface-1 overflow-hidden">
+                          {allPlayers.map((p) => {
+                            const isExcluded = excludedSet.has(p._id);
+
+                            return (
                               <div
-                                className="w-8 h-8 rounded-lg flex items-center justify-center text-white text-xs font-bold overflow-hidden shrink-0 border border-surface-2"
-                                style={{ backgroundColor: p.color || '#6366f1' }}
+                                key={p._id}
+                                className={`p-3 sm:p-3.5 flex items-center justify-between gap-3 transition-colors ${
+                                  isExcluded ? 'bg-surface-2/20' : ''
+                                }`}
                               >
-                                {p.avatarUrl ? (
-                                  <img src={p.avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
-                                ) : (
-                                  p.characterName?.charAt(0).toUpperCase() || 'P'
-                                )}
+                                <div className="flex items-center gap-3 min-w-0">
+                                  <div
+                                    className={`w-8 h-8 rounded-lg flex items-center justify-center text-white text-xs font-bold overflow-hidden shrink-0 border border-surface-2 ${
+                                      isExcluded ? 'grayscale opacity-50' : ''
+                                    }`}
+                                    style={{ backgroundColor: p.color || '#6366f1' }}
+                                  >
+                                    {p.avatarUrl ? (
+                                      <img src={p.avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
+                                    ) : (
+                                      p.characterName?.charAt(0).toUpperCase() || 'P'
+                                    )}
+                                  </div>
+                                  <div className="min-w-0">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <h5 className={`font-serif font-semibold text-xs text-content-1 truncate ${isExcluded ? 'line-through text-content-3' : ''}`}>
+                                        {p.characterName}
+                                      </h5>
+                                      {isExcluded && (
+                                        <span className="px-1.5 py-0.2 rounded bg-rose-500/10 text-rose-300 border border-rose-500/25 text-[10px] font-mono flex items-center gap-1">
+                                          <span>🚫</span>
+                                          <span className="hidden sm:inline">Escluso</span>
+                                        </span>
+                                      )}
+                                    </div>
+                                    <p className="text-[10px] text-content-3 font-mono uppercase truncate">
+                                      {p.isDm ? 'Dungeon Master' : 'Personaggio Giocante'}
+                                    </p>
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center gap-2 shrink-0">
+                                  {p.isDm && (
+                                    <span className="text-[10px] font-mono text-primary font-semibold hidden sm:inline">[DM]</span>
+                                  )}
+                                  <Link
+                                    to={`/profile?player=${p._id}`}
+                                    className="px-2.5 py-1 bg-surface-2 hover:bg-surface-3 text-content-2 hover:text-content-1 text-xs font-mono rounded border border-surface-2 flex items-center gap-1 transition-colors"
+                                    title={`Visualizza il profilo dossier di ${p.characterName}`}
+                                  >
+                                    <User size={12} className="sm:hidden text-content-3" />
+                                    <span className="hidden sm:inline">Profilo</span>
+                                    <ChevronRight size={12} />
+                                  </Link>
+                                </div>
                               </div>
-                              <div>
-                                <h5 className="font-serif font-semibold text-xs text-content-1">
-                                  {p.characterName}
-                                </h5>
-                                <p className="text-[10px] text-content-3 font-mono uppercase">
-                                  {p.isDm ? 'Dungeon Master' : 'Personaggio Giocante'}
-                                </p>
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              {p.isDm && (
-                                <span className="text-[10px] font-mono text-primary font-semibold">[DM]</span>
-                              )}
-                              <Link
-                                to={`/profile?player=${p._id}`}
-                                className="px-2.5 py-1 bg-surface-2 hover:bg-surface-3 text-content-2 hover:text-content-1 text-xs font-mono rounded border border-surface-2 flex items-center gap-1 transition-colors"
-                                title={`Visualizza il profilo dossier di ${p.characterName}`}
-                              >
-                                <span>Profilo</span>
-                                <ChevronRight size={12} />
-                              </Link>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </section>
-                  )}
+                            );
+                          })}
+                        </div>
+                      </section>
+                    );
+                  })()}
                   {/* Session Prev/Next Bottom Stepper */}
                   <div className="pt-6 pb-6 border-t border-surface-2 flex items-center justify-between gap-3 text-xs font-mono">
                     <button

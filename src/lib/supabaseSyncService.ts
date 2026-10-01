@@ -29,6 +29,9 @@ export class SupabaseSyncService {
         mapsRes,
         scrapbookRes,
         audioRes,
+        characterBiosRes,
+        familyRelationsRes,
+        worldLoreArticlesRes,
       ] = await Promise.all([
         supabase
           .from('campaigns')
@@ -68,6 +71,22 @@ export class SupabaseSyncService {
           .select('*')
           .or(`campaign_code.eq.${cleanCode},campaign_code.eq.${rawCode}`)
           .order('created_at', { ascending: false }),
+        // Standard safe reads for newly added standalone tables
+        supabase
+          .from('character_bios')
+          .select('*')
+          .eq('campaign_code', cleanCode)
+          .catch(() => ({ data: [] })),
+        supabase
+          .from('family_relations')
+          .select('*')
+          .eq('campaign_code', cleanCode)
+          .catch(() => ({ data: [] })),
+        supabase
+          .from('world_lore_articles')
+          .select('*')
+          .eq('campaign_code', cleanCode)
+          .catch(() => ({ data: [] })),
       ]);
 
       if (campaignRes.error) {
@@ -77,7 +96,7 @@ export class SupabaseSyncService {
         console.warn('[Supabase] Warning reading sessions table:', sessionsRes.error.message);
       }
 
-        const campRow = campaignRes.data || {};
+      const campRow = campaignRes.data || {};
       const dossier = campRow.dossier || {};
       const chaptersMeta = dossier.chaptersMeta || {};
       const mapsMeta = dossier.mapsMeta || {};
@@ -245,6 +264,72 @@ export class SupabaseSyncService {
         createdAt: row.created_at || new Date().toISOString(),
       }));
 
+      // --- HYDRATION & AUTO-MIGRATION LAYER FOR NEW TABLES ---
+      const characterBiosRows = characterBiosRes?.data || [];
+      const familyRelationsRows = familyRelationsRes?.data || [];
+      const worldLoreArticlesRows = worldLoreArticlesRes?.data || [];
+
+      let characterBios: any[] = [];
+      if (characterBiosRows && characterBiosRows.length > 0) {
+        characterBios = characterBiosRows.map((row: any) => ({
+          playerId: row.player_id,
+          campaignCode: row.campaign_code,
+          characterName: row.name || '',
+          name: row.name || '',
+          avatarUrl: row.avatar_url || '',
+          color: row.color || '#6366f1',
+          characterClass: row.class_level || '',
+          characterAlignment: row.alignment || '',
+          backstoryMarkdown: row.background || '',
+          personalityTraits: row.personality ? row.personality.split(', ') : [],
+          ideals: row.ideals || '',
+          bonds: row.bonds || '',
+          flaws: row.flaws || '',
+          timelineMemories: Array.isArray(row.timeline_memories) ? row.timeline_memories : [],
+          evolvingBeliefs: Array.isArray(row.evolving_beliefs) ? row.evolving_beliefs : [],
+          interPartyRelations: row.inter_party_relations && typeof row.inter_party_relations === 'object' ? row.inter_party_relations : {},
+          updatedAt: row.updated_at || new Date().toISOString(),
+        }));
+      } else if (Array.isArray(dossier.characterBios) && dossier.characterBios.length > 0) {
+        console.log('[Supabase Migration] Migrating legacy character bios to new character_bios table...');
+        characterBios = dossier.characterBios;
+        this.saveCharacterBios(cleanCode, characterBios).catch(() => {});
+      }
+
+      let familyRelations: any[] = [];
+      if (familyRelationsRows && familyRelationsRows.length > 0) {
+        familyRelations = familyRelationsRows.map((row: any) => ({
+          id: row.id,
+          playerId: row.source_entity_id,
+          linkedEntityId: row.target_entity_id,
+          relationshipType: row.relationship_type,
+          bio: row.description || '',
+          sharedWithParty: !row.is_secret,
+          updatedAt: row.updated_at || new Date().toISOString(),
+        }));
+      } else if (Array.isArray(dossier.familyRelations) && dossier.familyRelations.length > 0) {
+        console.log('[Supabase Migration] Migrating legacy family relations to new table...');
+        familyRelations = dossier.familyRelations;
+        this.saveFamilyRelations(cleanCode, familyRelations).catch(() => {});
+      }
+
+      let worldLoreArticles: any[] = [];
+      if (worldLoreArticlesRows && worldLoreArticlesRows.length > 0) {
+        worldLoreArticles = worldLoreArticlesRows.map((row: any) => ({
+          _id: row.id,
+          _createdAt: row.updated_at || new Date().toISOString(),
+          title: row.title || 'Senza Titolo',
+          fullContentMarkdown: row.content || '',
+          category: row.category_id || 'general',
+          images: Array.isArray(row.images) ? row.images : [],
+          dmOnly: Boolean(row.is_draft),
+        }));
+      } else if (Array.isArray(dossier.worldLoreArticles) && dossier.worldLoreArticles.length > 0) {
+        console.log('[Supabase Migration] Migrating legacy world lore articles...');
+        worldLoreArticles = dossier.worldLoreArticles;
+        this.saveWorldLoreArticles(cleanCode, worldLoreArticles).catch(() => {});
+      }
+
       return {
         campaignCode: campRow.code || cleanCode,
         title: campRow.title || cleanCode,
@@ -258,9 +343,9 @@ export class SupabaseSyncService {
           ? campRow.active_players
           : (Array.isArray(dossier.activePlayers) ? dossier.activePlayers : []),
         dossier,
-        characterBios: Array.isArray(dossier.characterBios) ? dossier.characterBios : [],
-        familyRelations: Array.isArray(dossier.familyRelations) ? dossier.familyRelations : [],
-        worldLoreArticles: Array.isArray(dossier.worldLoreArticles) ? dossier.worldLoreArticles : [],
+        characterBios,
+        familyRelations,
+        worldLoreArticles,
         mapFolders,
         chapters,
         sessions,
@@ -713,12 +798,39 @@ export class SupabaseSyncService {
   }
 
   /**
-   * Persists character bios into campaign dossier
+   * Persists character bios into campaign dossier and separate character_bios table atomically
    */
   static async saveCharacterBios(campaignCode: string, bios: any[]): Promise<boolean> {
     if (!isSupabaseConfigured() || !campaignCode) return false;
     try {
       const code = campaignCode.trim();
+
+      // Write atomically to the new 'character_bios' table
+      const upsertPromises = (bios || []).map((bio) => {
+        if (!bio || !bio.playerId) return Promise.resolve();
+        const payload = {
+          player_id: bio.playerId,
+          campaign_code: code,
+          name: bio.characterName || bio.name || '',
+          avatar_url: bio.avatarUrl || '',
+          color: bio.color || '#6366f1',
+          class_level: bio.characterClass || bio.classLevel || '',
+          alignment: bio.characterAlignment || bio.alignment || '',
+          background: bio.backstoryMarkdown || bio.background || '',
+          personality: Array.isArray(bio.personalityTraits) ? bio.personalityTraits.join(', ') : (bio.personality || ''),
+          ideals: bio.ideals || '',
+          bonds: bio.bonds || '',
+          flaws: bio.flaws || '',
+          timeline_memories: bio.timelineMemories || [],
+          evolving_beliefs: bio.evolvingBeliefs || [],
+          inter_party_relations: bio.interPartyRelations || {},
+          updated_at: new Date().toISOString(),
+        };
+        return supabase.from('character_bios').upsert(payload, { onConflict: 'player_id' });
+      });
+
+      await Promise.all(upsertPromises);
+
       const { data: camp } = await supabase.from('campaigns').select('dossier').eq('code', code).maybeSingle();
       const dossier = camp?.dossier || {};
       await supabase.from('campaigns').update({
@@ -733,12 +845,31 @@ export class SupabaseSyncService {
   }
 
   /**
-   * Persists family relations into campaign dossier
+   * Persists family relations into campaign dossier and standalone table
    */
   static async saveFamilyRelations(campaignCode: string, relations: any[]): Promise<boolean> {
     if (!isSupabaseConfigured() || !campaignCode) return false;
     try {
       const code = campaignCode.trim();
+
+      // Atomic write to 'family_relations'
+      const upsertPromises = (relations || []).map((rel) => {
+        if (!rel || !rel.id) return Promise.resolve();
+        const payload = {
+          id: rel.id,
+          campaign_code: code,
+          source_entity_id: rel.playerId || '',
+          target_entity_id: rel.linkedEntityId || rel.linkedPlayerId || '',
+          relationship_type: rel.relationshipType || 'companion',
+          description: rel.bio || '',
+          is_secret: Boolean(rel.sharedWithParty === false),
+          updated_at: new Date().toISOString(),
+        };
+        return supabase.from('family_relations').upsert(payload, { onConflict: 'id' });
+      });
+
+      await Promise.all(upsertPromises);
+
       const { data: camp } = await supabase.from('campaigns').select('dossier').eq('code', code).maybeSingle();
       const dossier = camp?.dossier || {};
       await supabase.from('campaigns').update({
@@ -753,12 +884,31 @@ export class SupabaseSyncService {
   }
 
   /**
-   * Persists world lore articles into campaign dossier
+   * Persists world lore articles into campaign dossier and world_lore_articles table
    */
   static async saveWorldLoreArticles(campaignCode: string, articles: any[]): Promise<boolean> {
     if (!isSupabaseConfigured() || !campaignCode) return false;
     try {
       const code = campaignCode.trim();
+
+      // Atomic write to 'world_lore_articles'
+      const upsertPromises = (articles || []).map((art) => {
+        if (!art || !art._id) return Promise.resolve();
+        const payload = {
+          id: art._id,
+          campaign_code: code,
+          title: art.title || 'Senza Titolo',
+          content: art.fullContentMarkdown || '',
+          category_id: art.category || 'general',
+          images: art.images || [],
+          is_draft: Boolean(art.dmOnly),
+          updated_at: new Date().toISOString(),
+        };
+        return supabase.from('world_lore_articles').upsert(payload, { onConflict: 'id' });
+      });
+
+      await Promise.all(upsertPromises);
+
       const { data: camp } = await supabase.from('campaigns').select('dossier').eq('code', code).maybeSingle();
       const dossier = camp?.dossier || {};
       await supabase.from('campaigns').update({

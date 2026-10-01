@@ -1806,16 +1806,24 @@ export class CampaignManager {
     this.saveAccounts(accounts);
     this.setCurrentAccount(userAcc.id);
 
-    // On login, reset active campaign selection so user lands on Campaign Selector
-    localStorage.removeItem(`chronicle_user_${userAcc.id}_active_campaign`);
-    setCached(`chronicle_user_${userAcc.id}_active_campaign`, null);
-    localStorage.removeItem("chronicle_current_campaign");
-    setCached("chronicle_current_campaign", null);
+    // On login, preserve or restore active campaign selection if available
+    const existingActiveEmail = this.getActiveCampaignCode();
+    const candidateCodeEmail =
+      existingActiveEmail ||
+      userAcc.lastCampaignCode ||
+      (userAcc.joinedCampaigns && userAcc.joinedCampaigns[0]) ||
+      (userAcc.dmCampaigns && userAcc.dmCampaigns[0]) ||
+      null;
+
+    if (candidateCodeEmail) {
+      this.setActiveCampaignCode(candidateCodeEmail);
+      CloudSyncService.init();
+    }
 
     if (typeof window !== "undefined") {
       window.dispatchEvent(
         new CustomEvent("chronicle_campaign_changed", {
-          detail: { campaignCode: null },
+          detail: { campaignCode: candidateCodeEmail },
         }),
       );
       window.dispatchEvent(new CustomEvent("chronicle_accounts_updated"));
@@ -1873,16 +1881,24 @@ export class CampaignManager {
     this.saveAccounts(accounts);
     this.setCurrentAccount(userAcc.id);
 
-    // On login, reset active campaign selection so user lands on Campaign Selector
-    localStorage.removeItem(`chronicle_user_${userAcc.id}_active_campaign`);
-    setCached(`chronicle_user_${userAcc.id}_active_campaign`, null);
-    localStorage.removeItem("chronicle_current_campaign");
-    setCached("chronicle_current_campaign", null);
+    // On login, preserve or restore active campaign selection if available
+    const existingActiveGoogle = this.getActiveCampaignCode();
+    const candidateCodeGoogle =
+      existingActiveGoogle ||
+      userAcc.lastCampaignCode ||
+      (userAcc.joinedCampaigns && userAcc.joinedCampaigns[0]) ||
+      (userAcc.dmCampaigns && userAcc.dmCampaigns[0]) ||
+      null;
+
+    if (candidateCodeGoogle) {
+      this.setActiveCampaignCode(candidateCodeGoogle);
+      CloudSyncService.init();
+    }
 
     if (typeof window !== "undefined") {
       window.dispatchEvent(
         new CustomEvent("chronicle_campaign_changed", {
-          detail: { campaignCode: null },
+          detail: { campaignCode: candidateCodeGoogle },
         }),
       );
       window.dispatchEvent(new CustomEvent("chronicle_accounts_updated"));
@@ -4586,18 +4602,22 @@ export class CampaignManager {
     });
   }
 
-  static saveAllCharacterBios(bios: CharacterBio[]) {
+  static async saveAllCharacterBios(bios: CharacterBio[]): Promise<{ success: boolean; error?: string }> {
     const key = this.getStorageKey("character_bios");
     setCached(key, bios);
     safeLocalStorageSetItem(key, JSON.stringify(bios));
     if (isSupabaseConfigured()) {
       const code = this.getActiveCampaignCode() || 'default';
-      SupabaseSyncService.saveCharacterBios(code, bios);
+      const ok = await SupabaseSyncService.saveCharacterBios(code, bios);
+      if (!ok) {
+        return { success: false, error: "Errore di salvataggio dei personaggi su Supabase." };
+      }
     }
-    CloudSyncService.triggerCloudSave();
+    await CloudSyncService.syncNow(true);
     if (typeof window !== "undefined") {
       window.dispatchEvent(new CustomEvent("chronicle_character_bio_updated"));
     }
+    return { success: true };
   }
 
   static saveAllCharacterBiosLocalOnly(bios: CharacterBio[]) {
@@ -4627,8 +4647,8 @@ export class CampaignManager {
     return null;
   }
 
-  static saveCharacterBio(bio: CharacterBio) {
-    if (!bio.playerId) return;
+  static async saveCharacterBio(bio: CharacterBio): Promise<{ success: boolean; error?: string }> {
+    if (!bio.playerId) return { success: false, error: "playerId non valido." };
     const bios = this.getAllCharacterBios();
     const idx = bios.findIndex((b) => b.playerId === bio.playerId);
     const updatedBio: CharacterBio = {
@@ -4642,7 +4662,7 @@ export class CampaignManager {
     } else {
       bios.push(updatedBio);
     }
-    this.saveAllCharacterBios(bios);
+    return await this.saveAllCharacterBios(bios);
   }
 
   // === CHARACTER TIMELINE MEMORIES & BELIEFS (PG) ===
@@ -4714,7 +4734,7 @@ export class CampaignManager {
     });
   }
 
-  static saveAllFamilyRelations(relations: CharacterRelationship[]) {
+  static async saveAllFamilyRelations(relations: CharacterRelationship[]): Promise<{ success: boolean; error?: string }> {
     const key = this.getStorageKey("family_relations");
     // Ensure uniqueness by ID
     const seen = new Set<string>();
@@ -4728,12 +4748,16 @@ export class CampaignManager {
     safeLocalStorageSetItem(key, JSON.stringify(sanitized));
     if (isSupabaseConfigured()) {
       const code = this.getActiveCampaignCode() || 'default';
-      SupabaseSyncService.saveFamilyRelations(code, sanitized);
+      const ok = await SupabaseSyncService.saveFamilyRelations(code, sanitized);
+      if (!ok) {
+        return { success: false, error: "Errore di salvataggio delle relazioni su Supabase." };
+      }
     }
-    CloudSyncService.triggerCloudSave();
+    await CloudSyncService.syncNow(true);
     if (typeof window !== "undefined") {
       window.dispatchEvent(new CustomEvent("chronicle_family_tree_updated"));
     }
+    return { success: true };
   }
 
   static saveAllFamilyRelationsLocalOnly(relations: CharacterRelationship[]) {
@@ -4758,7 +4782,7 @@ export class CampaignManager {
     return all.filter((r) => r.playerId === playerId);
   }
 
-  static addFamilyRelation(relation: Omit<CharacterRelationship, "id"> & { id?: string }): CharacterRelationship {
+  static async addFamilyRelation(relation: Omit<CharacterRelationship, "id"> & { id?: string }): Promise<{ success: boolean; relation: CharacterRelationship; error?: string }> {
     const id = relation.id || `rel_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const newRelation: CharacterRelationship = {
       ...relation,
@@ -4767,21 +4791,21 @@ export class CampaignManager {
     };
     const all = this.getAllFamilyRelations().filter((r) => r.id !== id);
     const updated = [newRelation, ...all];
-    this.saveAllFamilyRelations(updated);
-    return newRelation;
+    const res = await this.saveAllFamilyRelations(updated);
+    return { success: res.success, relation: newRelation, error: res.error };
   }
 
-  static updateFamilyRelation(relation: CharacterRelationship) {
+  static async updateFamilyRelation(relation: CharacterRelationship): Promise<{ success: boolean; error?: string }> {
     const all = this.getAllFamilyRelations();
     const updated = all.map((r) => (r.id === relation.id ? relation : r));
-    this.saveAllFamilyRelations(updated);
+    return await this.saveAllFamilyRelations(updated);
   }
 
-  static deleteFamilyRelation(relationId: string) {
+  static async deleteFamilyRelation(relationId: string): Promise<{ success: boolean; error?: string }> {
     const all = this.getAllFamilyRelations();
     const targetRel = all.find((r) => r.id === relationId);
     const updated = all.filter((r) => r.id !== relationId);
-    this.saveAllFamilyRelations(updated);
+    const res = await this.saveAllFamilyRelations(updated);
 
     // If this relationship was linked to a Codex entity or matches an entity, remove that relationship from the entity's partyRelations
     if (targetRel) {
@@ -4841,6 +4865,7 @@ export class CampaignManager {
         }
       }
     }
+    return res;
   }
 
   private static _isReconcilingRelations = false;
@@ -5025,7 +5050,7 @@ export class CampaignManager {
     return articles.find((a) => a._id === id) || null;
   }
 
-  static saveAllWorldLoreArticles(articles: WorldLoreArticle[]) {
+  static async saveAllWorldLoreArticles(articles: WorldLoreArticle[]): Promise<{ success: boolean; error?: string }> {
     const key = this.getStorageKey("world_lore_articles");
     const seen = new Set<string>();
     const sanitized = articles.filter((a) => {
@@ -5038,12 +5063,16 @@ export class CampaignManager {
     safeLocalStorageSetItem(key, JSON.stringify(sanitized));
     if (isSupabaseConfigured()) {
       const code = this.getActiveCampaignCode() || 'default';
-      SupabaseSyncService.saveWorldLoreArticles(code, sanitized);
+      const ok = await SupabaseSyncService.saveWorldLoreArticles(code, sanitized);
+      if (!ok) {
+        return { success: false, error: "Errore di salvataggio degli articoli di lore su Supabase." };
+      }
     }
-    CloudSyncService.triggerCloudSave();
+    await CloudSyncService.syncNow(true);
     if (typeof window !== "undefined") {
       window.dispatchEvent(new CustomEvent("chronicle_world_lore_updated"));
     }
+    return { success: true };
   }
 
   static saveWorldLoreArticlesLocalOnly(articles: WorldLoreArticle[]) {
