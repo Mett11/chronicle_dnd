@@ -1,5 +1,6 @@
 import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
 import { db, auth } from './firebase';
+import { isSupabaseConfigured } from './supabase';
 import { encryptApiKey, decryptApiKey } from './cryptoUtils';
 
 export type KeySourceMode = 'campaign' | 'personal';
@@ -842,6 +843,10 @@ export class ApiKeyManager {
       return () => {};
     }
 
+    if (isSupabaseConfigured()) {
+      return () => {};
+    }
+
     try {
       const secretRef = doc(db, 'users', uid, 'private', 'secrets');
       return onSnapshot(
@@ -913,7 +918,7 @@ export class ApiKeyManager {
     // Pass current cached keys immediately to avoid delay
     onUpdate(this.getCampaignKeys());
 
-    if (!cleanCode || cleanCode === 'CAMPAIGN') {
+    if (!cleanCode || cleanCode === 'CAMPAIGN' || isSupabaseConfigured()) {
       return () => {};
     }
 

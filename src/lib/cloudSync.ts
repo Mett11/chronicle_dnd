@@ -582,7 +582,7 @@ export class CloudSyncService {
    * Initializes real-time listener for global accounts & campaigns
    */
   static initGlobalSync() {
-    if (this.isGlobalInitialized || checkIsQuotaExhausted()) return;
+    if (isSupabaseConfigured() || this.isGlobalInitialized || checkIsQuotaExhausted()) return;
     this.isGlobalInitialized = true;
 
     try {
@@ -978,6 +978,14 @@ export class CloudSyncService {
         } catch (err) {
           console.warn('[Supabase] Initial fetch warning:', err);
         }
+
+        // When Supabase is configured, PostgreSQL is the active database.
+        // We completely bypass Firestore document reads, writes, and real-time onSnapshot listeners.
+        this.isCampaignHydrated = true;
+        if (typeof localStorage !== 'undefined') {
+          localStorage.setItem('hasPendingUpload', 'false');
+        }
+        return;
       }
 
       const docRef = doc(db, 'dnd_campaigns', activeCode);

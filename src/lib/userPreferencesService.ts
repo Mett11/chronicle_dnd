@@ -1,5 +1,6 @@
 import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
 import { db, auth } from './firebase';
+import { isSupabaseConfigured } from './supabase';
 import { UserPreferences } from '../types';
 
 export const DEFAULT_USER_PREFERENCES: UserPreferences = {
@@ -320,6 +321,10 @@ export class UserPreferencesService {
     const initialLocal = this.getLocalPreferences(norm);
     this.applyThemeToDOM(initialLocal.theme);
     onUpdate(initialLocal);
+
+    if (isSupabaseConfigured()) {
+      return () => {};
+    }
 
     try {
       const prefRef = doc(db, 'user_preferences', norm);

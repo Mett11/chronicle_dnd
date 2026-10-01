@@ -69,9 +69,12 @@ export class FirebaseStorageService {
       } catch (supaErr) {
         console.warn('[Supabase Storage] Upload exception:', supaErr);
       }
+
+      // When Supabase is configured, do not fall back to Firebase Storage to avoid 404/CORS errors
+      return fallbackValue;
     }
 
-    // 2. SECONDARY STORAGE: Firebase Storage fallback
+    // 2. SECONDARY STORAGE: Firebase Storage fallback (only when Supabase is NOT configured)
     const uploadFirebaseTask = async (): Promise<string> => {
       const storageRef = ref(storage, storagePath);
 
