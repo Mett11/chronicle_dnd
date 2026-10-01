@@ -32,6 +32,8 @@ import {
   extractAllMentions,
   normalizeMentionKey,
   OrphanMentionInfo,
+  inferEntityTypeFromName,
+  buildCleanFallbackDescription,
 } from '../lib/mentionUtils';
 
 export interface ExtractedEntityItem {
@@ -271,12 +273,23 @@ export function EntityExtractionModal({
         const data = await res.json();
         if (data?.entity) {
           const e = data.entity;
-          const type = (['npc', 'place', 'monster', 'item', 'faction', 'quest'].includes(e.type) ? e.type : 'npc') as Entity['type'];
+          const inferredType = inferEntityTypeFromName(e.name || orphan.name);
+          let type = (['npc', 'place', 'monster', 'item', 'faction', 'quest'].includes(e.type) ? e.type : inferredType) as Entity['type'];
+          // If AI mistakenly labelled a restaurant/place as npc, auto-correct with strong heuristic
+          if (type === 'npc' && inferredType !== 'npc') {
+            type = inferredType;
+          }
+
+          let desc = (e.description || '').replace(/@\[(.*?)\]/g, '$1').replace(/@+/g, '').trim();
+          if (!desc || desc.length < 10) {
+            desc = buildCleanFallbackDescription(e.name || orphan.name, type, orphan.snippets);
+          }
+
           return {
             id: `orphan_ai_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
             name: e.name || orphan.name,
             type,
-            description: e.description || '',
+            description: desc,
             status: e.status || (type === 'quest' ? 'open' : 'alive'),
             location: e.location || '',
             aliases: Array.isArray(e.aliases) ? e.aliases : [],
@@ -296,18 +309,28 @@ export function EntityExtractionModal({
           contents: [{
             role: 'user',
             parts: [{
-              text: `Analizza l'entità "${orphan.name}" nel seguente contesto:\n${orphan.snippets.join('\n')}\nCrea un JSON con: name, type ('npc'|'place'|'monster'|'item'|'faction'|'quest'), description, status, location.`
+              text: `Analizza l'entità "${orphan.name}" nel seguente contesto:\n${orphan.snippets.join('\n')}\nCrea un JSON con: name, type ('place'|'npc'|'monster'|'item'|'faction'|'quest'), description (in italiano, completa, senza @), status, location.`
             }]
           }],
           config: { responseMimeType: 'application/json', temperature: 0.1 }
         });
         const parsed = JSON.parse(resp.text || '{}');
-        const type = (['npc', 'place', 'monster', 'item', 'faction', 'quest'].includes(parsed.type) ? parsed.type : 'npc') as Entity['type'];
+        const inferredType = inferEntityTypeFromName(parsed.name || orphan.name);
+        let type = (['npc', 'place', 'monster', 'item', 'faction', 'quest'].includes(parsed.type) ? parsed.type : inferredType) as Entity['type'];
+        if (type === 'npc' && inferredType !== 'npc') {
+          type = inferredType;
+        }
+
+        let desc = (parsed.description || '').replace(/@\[(.*?)\]/g, '$1').replace(/@+/g, '').trim();
+        if (!desc || desc.length < 10) {
+          desc = buildCleanFallbackDescription(parsed.name || orphan.name, type, orphan.snippets);
+        }
+
         return {
           id: `orphan_ai_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
           name: parsed.name || orphan.name,
           type,
-          description: parsed.description || '',
+          description: desc,
           status: parsed.status || (type === 'quest' ? 'open' : 'alive'),
           location: parsed.location || '',
           aliases: Array.isArray(parsed.aliases) ? parsed.aliases : [],
@@ -317,13 +340,16 @@ export function EntityExtractionModal({
       } catch {}
     }
 
-    // 3. Simple quick fallback
+    // 3. Smart clean fallback
+    const inferredType = inferEntityTypeFromName(orphan.name);
+    const cleanDesc = buildCleanFallbackDescription(orphan.name, inferredType, orphan.snippets);
+
     return {
       id: `orphan_quick_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       name: orphan.name,
-      type: 'npc',
-      description: orphan.snippets.length > 0 ? orphan.snippets[0].replace(/\.\.\./g, '').trim() : '',
-      status: 'alive',
+      type: inferredType,
+      description: cleanDesc,
+      status: inferredType === 'quest' ? 'open' : 'alive',
       location: '',
       aliases: [],
       selected: true,
@@ -906,9 +932,24 @@ PG party: ${playerNames.join(', ')}.`;
         const matchedPlayerName = playerNormMap.get(nameNorm) || aliasesNorm.map((a: string) => playerNormMap.get(a)).find(Boolean);
         const isPartyMember = Boolean(matchedPlayerName || ent.isPartyMember);
 
-        const type = (['npc', 'place', 'monster', 'item', 'faction', 'quest'].includes(ent.type)
+        const inferredType = inferEntityTypeFromName(rawName);
+        let type = (['npc', 'place', 'monster', 'item', 'faction', 'quest'].includes(ent.type)
           ? ent.type
-          : 'npc') as Entity['type'];
+          : inferredType) as Entity['type'];
+
+        // Auto-correct if AI classified a place/restaurant/tavern as npc
+        if (type === 'npc' && inferredType !== 'npc') {
+          type = inferredType;
+        }
+
+        let description = (ent.description?.trim() || '')
+          .replace(/@\[(.*?)\]/g, '$1')
+          .replace(/@([a-zA-Z0-9_'\u00C0-\u017F-]+)/g, '$1')
+          .trim();
+
+        if (!description || description.length < 10) {
+          description = buildCleanFallbackDescription(rawName, type);
+        }
 
         let status: Entity['status'] = 'alive';
         if (type === 'quest') {
@@ -921,7 +962,7 @@ PG party: ${playerNames.join(', ')}.`;
           id: `extracted_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 6)}`,
           name: rawName,
           type,
-          description: ent.description?.trim() || '',
+          description,
           status,
           location: ent.location || '',
           aliases,

@@ -351,34 +351,42 @@ Linee guida:
         : '';
 
       const systemInstruction = `Sei un assistente specializzato per Dungeon Master di D&D e giochi di ruolo fantasy.
-Il tuo compito è analizzare la cronaca di una sessione di gioco ed estrarre con estrema precisione le entità del mondo fantasy: PNG (personaggi non giocanti del DM), Mostri/Nemici, Luoghi/Città/Dungeon/Istituzioni, Fazioni/Ordini/Gilde, Oggetti Magici/Reliquie e Missioni/Quest citati nel testo.
+Il tuo compito è analizzare la cronaca di una sessione di gioco ed estrarre con estrema precisione le entità del mondo fantasy: PNG (personaggi non giocanti del DM), Mostri/Nemici, Luoghi/Città/Dungeon/Istituzioni/Locali, Fazioni/Ordini/Gilde, Oggetti Magici/Reliquie e Missioni/Quest citati nel testo.
 
 ${knownEntitiesPrompt}
 ${knownPlayersPrompt}
 ${taggedOrphansPrompt}
 
-REGOLE CRITICHE SUI NOMI E SULL'ESTRAZIONE:
-1. NOMI COMPLETI E MAI TRONCATI: Estrai sempre il NOME COMPLETO E PROPRIO per esteso dell'entità, inclusi toponimi, sigle, titoli e complementi.
-   - ESEMPI CORRETTI: "Accademia T.A.V.", "Porta Lumìnia", "Terra di Fiumi Spezzati", "Aula Magna", "Telonius", "Vhalheim".
-2. TIPOLOGIE AMMESSE: 'type' deve essere uno tra: 'npc', 'monster', 'place', 'item', 'faction', 'quest'.
-3. PERSONAGGI GIOCANTI / PARTY: Se un personaggio menzionato sembra essere un eroe/PG del party (anche se l'utente non lo ha ancora registrato formalmente nel sistema), inseriscilo comunque in 'newEntities' impostando 'isPartyMember': true. Il DM potrà decidere se registrarlo nel Party o mantenerlo nel compendio.
-4. ENTITÀ GIÀ REGISTRATE: Se un'entità è già presente nell'elenco delle entità note fornito, NON inserirla in 'newEntities'; segnalala solo in 'existingDetected'.
-5. QUALITÀ: Non inventare entità inesistenti. Non estrarre parole comuni isolate come "esame", "strada", "porta".
+REGOLE CRITICHE SUI NOMI, TIPOLOGIE E DESCRIZIONI:
+1. NOMI COMPLETI E MAI TRONCATI: Estrai sempre il NOME COMPLETO E PROPRIO per esteso dell'entità, inclusi toponimi, sigle, titoli e complementi (es. "Ristorante Trattoria del Fenomeno", "Accademia T.A.V.", "Porta Lumìnia", "Terra di Fiumi Spezzati").
+2. CLASSIFICAZIONE RIGOROSA DELLE TIPOLOGIE ('type'):
+   - 'place': Luoghi geografici, città, regioni, ma anche EDIFICI, STRUTTURE, LOCALI, RISTORANTI, TAVERNE, LOCANDE, ACCADEMIE, PORTE, TORRI (es. "Ristorante Trattoria del Fenomeno", "Locanda del Cinghiale", "Porta Lumìnia"). Non classificare mai locali o strutture come 'npc'!
+   - 'faction': Fazioni, gilde, ordini, sette, culti, clan, confraternite o eserciti.
+   - 'item': Oggetti magici, armi, reliquie, tomi, pergamene, pozioni, artefatti.
+   - 'monster': Mostri, creature selvatiche, aberrazioni o nemici non-umanoidi.
+   - 'quest': Missioni, contratti, profezie o obiettivi.
+   - 'npc': Personaggi singoli (PNG, figure storiche, mercanti, nobili).
+3. DESCRIZIONI NARRATIVE COMPLETE E AUTONOME:
+   - MAI incollare spezzoni grezzi tagliati a metà della cronaca.
+   - MAI includere tag come '@' o '@[' all'interno del campo description.
+   - Scrivi 2-3 frasi fluide e ben scritte in terza persona in italiano, che spieghino chiaramente cos'è l'entità e qual è il suo ruolo o cosa è accaduto in questa sessione.
+4. PERSONAGGI GIOCANTI / PARTY: Se un personaggio menzionato sembra essere un eroe/PG del party (anche se l'utente non lo ha ancora registrato formalmente nel sistema), inseriscilo comunque in 'newEntities' impostando 'isPartyMember': true.
+5. ENTITÀ GIÀ REGISTRATE: Se un'entità è già presente nell'elenco delle entità note fornito, NON inserirla in 'newEntities'; segnalala solo in 'existingDetected'.
 6. STRUTTURA:
    - 'name': Nome proprio completo e pulito.
-   - 'type': 'npc' | 'monster' | 'place' | 'item' | 'faction' | 'quest'.
-   - 'description': Descrizione sintetica (2-4 frasi in italiano) basata ESCLUSIVAMENTE sui fatti accaduti in questa sessione.
+   - 'type': 'place' | 'npc' | 'monster' | 'item' | 'faction' | 'quest'.
+   - 'description': Descrizione narrativa autonoma e completa in italiano.
    - 'status': 'alive' | 'dead' | 'open' | 'completed'.
    - 'location': Luogo in cui si trova, se specificato.
    - 'aliases': Eventuali soprannomi o acronimi.
-   - 'isPartyMember': boolean opzionale (true se si tratta o sembra un Personaggio Giocante/Eroe del party).
+   - 'isPartyMember': boolean opzionale.
 
 Rispondi ESCLUSIVAMENTE in formato JSON valido conforme al seguente schema:
 {
   "newEntities": [
     {
       "name": "string",
-      "type": "npc" | "monster" | "place" | "item" | "faction" | "quest",
+      "type": "place" | "npc" | "monster" | "item" | "faction" | "quest",
       "description": "string",
       "status": "alive" | "dead" | "open" | "completed",
       "location": "string opzionale",
@@ -663,14 +671,27 @@ Rispondi ESCLUSIVAMENTE in formato JSON valido conforme al seguente schema:
         return res.status(400).json({ error: 'Nessun nome di menzione fornito.' });
       }
 
-      const systemInstruction = `Sei un assistente per Dungeon Master di D&D e GDR fantasy.
-Ti viene fornito il nome di un'entità menzionata nella cronaca di gioco e alcuni passaggi di contesto.
-Il tuo compito è dedurre la tipologia più appropriata ('npc', 'place', 'monster', 'item', 'faction', 'quest') e scrivere una descrizione sintetica e coerente (2-3 frasi in italiano) basata sul contesto fornito.
+      const systemInstruction = `Sei un assistente specializzato per Dungeon Master di D&D e GDR fantasy.
+Ti viene fornito il nome di un'entità menzionata nella cronaca di gioco e i passaggi di contesto in cui appare.
+Il tuo compito è dedurre con precisione la tipologia corretta dell'entità e generare una descrizione sintetica (2-3 frasi in perfetto italiano) autonoma, narrativa e fluida.
+
+REGOLE CRITICHE SULLA TIPOLOGIA ('type'):
+- 'place': Assegna 'place' se il nome è o contiene una struttura, edificio, locale, attività, toponimo, città, taverna, locanda, ristorante, trattoria, accademia, tempio, torre, porta, bosco, fiume, etc. (Esempi: "Ristorante Trattoria del Fenomeno", "Taverna del Drago", "Accademia T.A.V.", "Porta Lumìnia", "Tabula"). NON classificare mai locali o strutture come 'npc'!
+- 'faction': Gilde, ordini, sette, culti, famiglie, clan, alleanze o eserciti.
+- 'item': Oggetti magici, armi, artefatti, pergamene, anelli, pozioni.
+- 'monster': Creature mostruose, mostri, bestie o nemici non-umanoidi.
+- 'quest': Missioni, contratti o compiti del party.
+- 'npc': Personaggi singoli (alleati, PNG del DM, figure chiave umane/umanoidi).
+
+REGOLE CRITICHE SULLA DESCRIZIONE ('description'):
+- NON copiare o incollare spezzoni grezzi di testo tagliati o frammentati.
+- NON includere simboli di markup come '@[' o '@'.
+- Scrivi una descrizione narrativa autonoma e completa in terza persona che spieghi cos'è questa entità e cosa è accaduto in relazione al gruppo durante la sessione (es. "Ristorante e trattoria situato a Tabula, scelto come punto di ritrovo dove i membri del gruppo e le sette eccezioni sono stati invitati per ricevere i dettagli del loro test pratico.").
 
 Rispondi ESCLUSIVAMENTE in formato JSON valido conforme al seguente schema:
 {
   "name": "${mentionName.trim()}",
-  "type": "npc" | "place" | "monster" | "item" | "faction" | "quest",
+  "type": "place" | "npc" | "monster" | "item" | "faction" | "quest",
   "description": "string",
   "status": "alive" | "dead" | "open" | "completed",
   "location": "string opzionale",

@@ -148,3 +148,107 @@ export function findOrphanMentions(
 
   return Array.from(orphanMap.values());
 }
+
+/**
+ * Heuristically infers entity type from keywords in the name.
+ */
+export function inferEntityTypeFromName(name: string): Entity['type'] {
+  if (!name) return 'npc';
+  const lower = name.toLowerCase();
+
+  // Places / Locations / Buildings / Establishments
+  const placeKeywords = [
+    'ristorante', 'trattoria', 'locanda', 'taverna', 'osteria', 'bar', 'pub', 'bottega',
+    'porta', 'torre', 'castello', 'rocca', 'fortezza', 'fortino', 'bastione', 'mura',
+    'bosco', 'foresta', 'città', 'citta', 'borgo', 'villaggio', 'paese', 'regno', 'impero',
+    'accademia', 'tempio', 'santuario', 'chiesa', 'cattedrale', 'monastero', 'convento',
+    'fiume', 'lago', 'mare', 'oceano', 'monte', 'montagna', 'collina', 'valle', 'passo',
+    'grotta', 'caverna', 'dungeon', 'miniera', 'cripta', 'tomba', 'necropoli', 'rovine',
+    'stanza', 'aula', 'piazza', 'strada', 'via', 'ponte', 'porto', 'isola', 'baia',
+    'palazzo', 'villa', 'magione', 'castello', 'sala', 'quartiere', 'distretto',
+  ];
+  if (placeKeywords.some((kw) => lower.includes(kw))) {
+    return 'place';
+  }
+
+  // Factions / Guilds / Orders / Clans
+  const factionKeywords = [
+    'gilda', 'ordine', 'setta', 'culto', 'clan', 'fazione', 'fratellanza', 'confraternita',
+    'armata', 'esercito', 'compagnia', 'lega', 'alleanza', 'sindacato', 'famiglia',
+    'guardia cittadina', 'inquisizione', 'circolo',
+  ];
+  if (factionKeywords.some((kw) => lower.includes(kw))) {
+    return 'faction';
+  }
+
+  // Items / Artifacts / Magic Equipment
+  const itemKeywords = [
+    'spada', 'lama', 'arco', 'balestra', 'bastone', 'bacchetta', 'pugnale', 'ascia', 'martello',
+    'tomo', 'grimorio', 'libro', 'pergamena', 'manuale', 'diario',
+    'anello', 'amuleto', 'collana', 'medaglione', 'pozione', 'elisir', 'fiala', 'calice',
+    'elmo', 'armatura', 'corazza', 'scudo', 'stivali', 'guanti', 'mantello', 'corona', 'tiara',
+    'reliquia', 'artefatto', 'chiave', 'sfera', 'cristallo', 'pietra', 'gemma',
+  ];
+  if (itemKeywords.some((kw) => lower.includes(kw))) {
+    return 'item';
+  }
+
+  // Monsters / Beasts / Undead
+  const monsterKeywords = [
+    'drago', 'demone', 'diavolo', 'spettro', 'fantasma', 'scheletro', 'zombie', 'ghoul',
+    'goblin', 'orco', 'troll', 'ogre', 'golem', 'idra', 'basilisco', 'chimera', 'manticora',
+    'beholder', 'lich', 'mostro', 'bestia', 'vampiro', 'lupo mannaro', 'ragno gigante',
+    'abominio', 'parassita', 'elementale',
+  ];
+  if (monsterKeywords.some((kw) => lower.includes(kw))) {
+    return 'monster';
+  }
+
+  // Quests / Missions
+  const questKeywords = [
+    'quest', 'missione', 'incarico', 'taglia', 'profezia', 'prova', 'contratto',
+  ];
+  if (questKeywords.some((kw) => lower.includes(kw))) {
+    return 'quest';
+  }
+
+  return 'npc';
+}
+
+/**
+ * Builds a clean, narrative fallback description if the AI is unavailable.
+ * Removes @ syntax and synthesizes a complete Italian sentence.
+ */
+export function buildCleanFallbackDescription(name: string, type: Entity['type'], snippets: string[] = []): string {
+  // If we have snippet text, clean it up
+  let contextClean = '';
+  if (snippets.length > 0) {
+    contextClean = snippets[0]
+      .replace(/@\[(.*?)\]/g, '$1')
+      .replace(/@([a-zA-Z0-9_'\u00C0-\u017F-]+)/g, '$1')
+      .replace(/\.\.\./g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  const typeLabels: Record<Entity['type'], string> = {
+    npc: `Personaggio incontrato o menzionato nella sessione di gioco.`,
+    place: `Luogo o struttura citata durante la sessione, rilevante per le vicende del gruppo.`,
+    item: `Oggetto o risorsa menzionata nel corso della cronaca di sessione.`,
+    faction: `Organizzazione o gruppo presente nelle vicende della sessione.`,
+    monster: `Creatura o avversario apparso negli eventi della sessione.`,
+    quest: `Missione o obiettivo emerso durante la sessione di gioco.`,
+  };
+
+  if (contextClean && contextClean.length > 25 && contextClean.length < 250) {
+    // If snippet has enough context, format it nicely
+    if (type === 'place') {
+      return `Luogo menzionato nella cronaca: "${contextClean.charAt(0).toUpperCase() + contextClean.slice(1)}."`;
+    }
+    if (type === 'npc') {
+      return `Figura citata nella sessione: "${contextClean.charAt(0).toUpperCase() + contextClean.slice(1)}."`;
+    }
+  }
+
+  return typeLabels[type] || `Entità citata nella sessione di gioco.`;
+}
