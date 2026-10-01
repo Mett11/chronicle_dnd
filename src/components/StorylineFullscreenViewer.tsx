@@ -32,7 +32,7 @@ import {
   Loader2,
   ExternalLink,
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { Link } from 'react-router-dom';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { Portal } from './Portal';

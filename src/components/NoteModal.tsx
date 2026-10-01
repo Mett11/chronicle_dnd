@@ -22,7 +22,7 @@ import { MentionInput } from './MentionInput';
 import { ImageGalleryUploader } from './ImageGalleryUploader';
 import { OcrButton } from './OcrButton';
 import { LoreDateInput } from './LoreDateInput';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { Portal } from './Portal';
 
 export interface NoteModalProps {

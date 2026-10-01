@@ -46,7 +46,7 @@ import { Pagination } from '../components/Pagination';
 import { OcrButton } from '../components/OcrButton';
 import { NoteModal } from '../components/NoteModal';
 import { QuestModal } from '../components/QuestModal';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { extractTextFromContent } from '../lib/sanitize';
 
 type MainTab = 'notes' | 'session' | 'quests';

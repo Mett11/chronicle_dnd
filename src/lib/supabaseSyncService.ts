@@ -172,6 +172,7 @@ export class SupabaseSyncService {
           imageUrl: row.image_url || entityImages[0] || '',
           images: entityImages,
           status: row.status || 'alive',
+          ...customAttrs,
           aliases: Array.isArray(customAttrs.aliases) ? customAttrs.aliases : [],
           progressNote: customAttrs.progressNote || '',
           aiConfig: customAttrs.aiConfig || undefined,
@@ -179,7 +180,6 @@ export class SupabaseSyncService {
           location: customAttrs.location || undefined,
           mapId: customAttrs.mapId || undefined,
           pinId: customAttrs.pinId || undefined,
-          ...customAttrs,
           type: entityType,
           images: entityImages,
         };

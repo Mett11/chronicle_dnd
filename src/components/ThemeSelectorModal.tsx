@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { X, Check, Sparkles, Palette, Moon, Sun, Search as SearchIcon } from 'lucide-react';
 import { CLASS_THEMES, ClassTheme, getStoredTheme, applyTheme } from '../lib/theme';
 import { CampaignManager } from '../store/campaignStore';
