@@ -4545,6 +4545,10 @@ export class CampaignManager {
     const key = this.getStorageKey("character_bios");
     setCached(key, bios);
     safeLocalStorageSetItem(key, JSON.stringify(bios));
+    if (isSupabaseConfigured()) {
+      const code = this.getActiveCampaignCode() || 'default';
+      SupabaseSyncService.saveCharacterBios(code, bios);
+    }
     CloudSyncService.triggerCloudSave();
     if (typeof window !== "undefined") {
       window.dispatchEvent(new CustomEvent("chronicle_character_bio_updated"));
@@ -4677,6 +4681,10 @@ export class CampaignManager {
     });
     setCached(key, sanitized);
     safeLocalStorageSetItem(key, JSON.stringify(sanitized));
+    if (isSupabaseConfigured()) {
+      const code = this.getActiveCampaignCode() || 'default';
+      SupabaseSyncService.saveFamilyRelations(code, sanitized);
+    }
     CloudSyncService.triggerCloudSave();
     if (typeof window !== "undefined") {
       window.dispatchEvent(new CustomEvent("chronicle_family_tree_updated"));
@@ -4967,6 +4975,10 @@ export class CampaignManager {
     });
     setCached(key, sanitized);
     safeLocalStorageSetItem(key, JSON.stringify(sanitized));
+    if (isSupabaseConfigured()) {
+      const code = this.getActiveCampaignCode() || 'default';
+      SupabaseSyncService.saveWorldLoreArticles(code, sanitized);
+    }
     CloudSyncService.triggerCloudSave();
     if (typeof window !== "undefined") {
       window.dispatchEvent(new CustomEvent("chronicle_world_lore_updated"));

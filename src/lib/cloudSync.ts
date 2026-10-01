@@ -1005,6 +1005,15 @@ export class CloudSyncService {
             if (Array.isArray(supaData.audioLogs) && supaData.audioLogs.length > 0) {
               CampaignManager.saveAudioLogsLocalOnly(supaData.audioLogs);
             }
+            if (Array.isArray(supaData.characterBios) && supaData.characterBios.length > 0) {
+              CampaignManager.saveAllCharacterBiosLocalOnly(supaData.characterBios);
+            }
+            if (Array.isArray(supaData.familyRelations) && supaData.familyRelations.length > 0) {
+              CampaignManager.saveAllFamilyRelationsLocalOnly(supaData.familyRelations);
+            }
+            if (Array.isArray(supaData.worldLoreArticles) && supaData.worldLoreArticles.length > 0) {
+              CampaignManager.saveAllWorldLoreArticlesLocalOnly(supaData.worldLoreArticles);
+            }
             if (Array.isArray(supaData.activePlayers) && supaData.activePlayers.length > 0) {
               this.mergeRemoteAccounts(supaData.activePlayers);
             }

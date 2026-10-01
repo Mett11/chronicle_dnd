@@ -77,10 +77,11 @@ export class SupabaseSyncService {
         console.warn('[Supabase] Warning reading sessions table:', sessionsRes.error.message);
       }
 
-      const campRow = campaignRes.data || {};
+        const campRow = campaignRes.data || {};
       const dossier = campRow.dossier || {};
       const chaptersMeta = dossier.chaptersMeta || {};
       const mapsMeta = dossier.mapsMeta || {};
+      const sessionsMeta = dossier.sessionsMeta || {};
       const mapFolders = Array.isArray(dossier.mapFolders) ? dossier.mapFolders : [];
 
       const chapters: CampaignChapter[] = (chaptersRes.data || []).map((row) => ({
@@ -114,6 +115,26 @@ export class SupabaseSyncService {
           parsedLoreDate = JSON.stringify(row.calendar_date);
         }
 
+        let meta: any = {};
+        const metaTag = Array.isArray(row.tags)
+          ? row.tags.find((t: string) => typeof t === 'string' && t.startsWith('__meta__:'))
+          : null;
+        if (metaTag) {
+          try {
+            meta = JSON.parse(metaTag.slice('__meta__:'.length));
+          } catch {}
+        }
+        if (sessionsMeta && sessionsMeta[row.id]) {
+          meta = { ...sessionsMeta[row.id], ...meta };
+        }
+        const cleanTags = Array.isArray(row.tags)
+          ? row.tags.filter((t: string) => typeof t === 'string' && !t.startsWith('__meta__:'))
+          : [];
+
+        const sessionImages = Array.isArray(meta.images) && meta.images.length > 0
+          ? meta.images
+          : (Array.isArray((row as any).images) ? (row as any).images : []);
+
         return {
           _id: row.id,
           number: Number(row.number) || 1,
@@ -123,19 +144,44 @@ export class SupabaseSyncService {
           loreDate: parsedLoreDate,
           events: Array.isArray(row.plot_events) ? row.plot_events : [],
           recap: recapData,
+          images: sessionImages,
+          coverImage: meta.coverImage || (row as any).cover_image || undefined,
+          entitiesExtracted: meta.entitiesExtracted !== undefined ? Boolean(meta.entitiesExtracted) : Boolean((row as any).entities_extracted),
+          entitiesExtractedAt: meta.entitiesExtractedAt || (row as any).entities_extracted_at || undefined,
+          memorySynced: meta.memorySynced !== undefined ? Boolean(meta.memorySynced) : Boolean((row as any).memory_synced),
+          memorySyncedAt: meta.memorySyncedAt || (row as any).memory_synced_at || undefined,
+          sessionType: meta.sessionType || (row as any).session_type || 'mixed',
+          quotes: Array.isArray(meta.quotes) ? meta.quotes : (Array.isArray((row as any).quotes) ? (row as any).quotes : []),
+          audioLogs: Array.isArray(meta.audioLogs) ? meta.audioLogs : (Array.isArray((row as any).audio_logs) ? (row as any).audio_logs : []),
+          tags: cleanTags,
         };
       });
 
       const entities: Entity[] = (entitiesRes.data || []).map((row) => {
         const customAttrs = (row.attributes && typeof row.attributes === 'object') ? row.attributes : {};
+        const entityType = row.type || customAttrs.type || customAttrs.category || 'npc';
+        const entityImages = Array.isArray(customAttrs.images) && customAttrs.images.length > 0
+          ? customAttrs.images
+          : (row.image_url ? [row.image_url] : []);
+
         return {
           _id: row.id,
           name: row.name || 'Senza Nome',
-          category: row.type || 'npc',
+          type: entityType,
           description: row.description || '',
-          imageUrl: row.image_url || '',
-          status: row.status || 'active',
+          imageUrl: row.image_url || entityImages[0] || '',
+          images: entityImages,
+          status: row.status || 'alive',
+          aliases: Array.isArray(customAttrs.aliases) ? customAttrs.aliases : [],
+          progressNote: customAttrs.progressNote || '',
+          aiConfig: customAttrs.aiConfig || undefined,
+          body: customAttrs.body || [],
+          location: customAttrs.location || undefined,
+          mapId: customAttrs.mapId || undefined,
+          pinId: customAttrs.pinId || undefined,
           ...customAttrs,
+          type: entityType,
+          images: entityImages,
         };
       });
 
@@ -202,7 +248,10 @@ export class SupabaseSyncService {
         calendarSystem: campRow.calendar_system || {},
         aiConfig: campRow.ai_config || {},
         activePlayers: Array.isArray(campRow.active_players) ? campRow.active_players : [],
-        dossier: campRow.dossier || {},
+        dossier,
+        characterBios: Array.isArray(dossier.characterBios) ? dossier.characterBios : [],
+        familyRelations: Array.isArray(dossier.familyRelations) ? dossier.familyRelations : [],
+        worldLoreArticles: Array.isArray(dossier.worldLoreArticles) ? dossier.worldLoreArticles : [],
         mapFolders,
         chapters,
         sessions,
@@ -226,6 +275,7 @@ export class SupabaseSyncService {
 
     try {
       const code = campaignCode.trim();
+      const existingDossier = data.dossier || {};
       const payload = {
         id: code,
         code,
@@ -237,7 +287,12 @@ export class SupabaseSyncService {
         calendar_system: data.calendarSystem || {},
         ai_config: data.aiConfig || {},
         active_players: data.activePlayers || [],
-        dossier: data.dossier || {},
+        dossier: {
+          ...existingDossier,
+          characterBios: data.characterBios || existingDossier.characterBios || [],
+          familyRelations: data.familyRelations || existingDossier.familyRelations || [],
+          worldLoreArticles: data.worldLoreArticles || existingDossier.worldLoreArticles || [],
+        },
         updated_at: new Date().toISOString(),
       };
 
@@ -254,13 +309,31 @@ export class SupabaseSyncService {
   }
 
   /**
-   * Save or update a single session (~15ms)
+   * Save or update a single session with complete metadata and image persistence
    */
   static async saveSession(campaignCode: string, session: Session): Promise<boolean> {
     if (!isSupabaseConfigured() || !campaignCode || !session) return false;
 
     try {
       const code = campaignCode.trim();
+      const meta = {
+        images: Array.isArray(session.images) ? session.images : [],
+        coverImage: session.coverImage || '',
+        entitiesExtracted: Boolean(session.entitiesExtracted),
+        entitiesExtractedAt: session.entitiesExtractedAt || null,
+        memorySynced: Boolean(session.memorySynced),
+        memorySyncedAt: session.memorySyncedAt || null,
+        sessionType: session.sessionType || 'mixed',
+        quotes: Array.isArray(session.quotes) ? session.quotes : [],
+        audioLogs: Array.isArray(session.audioLogs) ? session.audioLogs : [],
+        gazetteConfig: session.gazetteConfig || null,
+      };
+
+      const existingTags = Array.isArray(session.tags)
+        ? session.tags.filter((t) => typeof t === 'string' && !t.startsWith('__meta__:'))
+        : [];
+      const tagsWithMeta = [...existingTags, '__meta__:' + JSON.stringify(meta)];
+
       const payload = {
         id: session._id || `sess_${Date.now()}`,
         campaign_code: code,
@@ -273,12 +346,16 @@ export class SupabaseSyncService {
         calendar_date: session.loreDate || {},
         audio_url: '',
         plot_events: session.events || [],
-        tags: [],
+        tags: tagsWithMeta,
         updated_at: new Date().toISOString(),
       };
 
       const { error } = await supabase.from('sessions').upsert(payload, { onConflict: 'id' });
       if (error) console.error('[Supabase] Error saving session:', error);
+
+      // Redundant dual-layer storage in dossier.sessionsMeta
+      this.saveSessionMeta(code, session._id, meta).catch(() => {});
+
       return !error;
     } catch (err) {
       console.error('[Supabase] Failed to save session:', err);
@@ -343,23 +420,40 @@ export class SupabaseSyncService {
   }
 
   /**
-   * Save or update a single entity (~15ms)
+   * Save or update a single entity with accurate type, images, and progression attributes
    */
   static async saveEntity(campaignCode: string, entity: Entity): Promise<boolean> {
     if (!isSupabaseConfigured() || !campaignCode || !entity) return false;
 
     try {
       const code = campaignCode.trim();
-      const { _id, name, category, description, imageUrl, status, ...restAttributes } = entity as any;
+      const entityType = entity.type || (entity as any).category || 'npc';
+      const entityImages = Array.isArray(entity.images)
+        ? entity.images
+        : ((entity as any).imageUrl ? [(entity as any).imageUrl] : []);
+      const primaryImageUrl = entityImages[0] || (entity as any).imageUrl || '';
+
+      const { _id, name, type, category, description, imageUrl, status, ...restAttributes } = entity as any;
+      const attributes = {
+        ...restAttributes,
+        images: entityImages,
+        progressNote: entity.progressNote || '',
+        aliases: entity.aliases || [],
+        aiConfig: entity.aiConfig || undefined,
+        location: entity.location || undefined,
+        mapId: entity.mapId || undefined,
+        pinId: entity.pinId || undefined,
+      };
+
       const payload = {
         id: _id || `ent_${Date.now()}`,
         campaign_code: code,
         name: name || 'Senza Nome',
-        type: category || 'npc',
+        type: entityType,
         description: description || '',
-        image_url: imageUrl || '',
-        status: status || 'active',
-        attributes: restAttributes || {},
+        image_url: primaryImageUrl,
+        status: status || 'alive',
+        attributes,
         updated_at: new Date().toISOString(),
       };
 
@@ -498,6 +592,88 @@ export class SupabaseSyncService {
       return !error;
     } catch (err) {
       console.error('[Supabase] Failed to save active players:', err);
+      return false;
+    }
+  }
+
+  /**
+   * Persists session metadata (images, coverImage, entitiesExtracted, memorySynced) to dossier
+   */
+  static async saveSessionMeta(campaignCode: string, sessionId: string, meta: any): Promise<boolean> {
+    if (!isSupabaseConfigured() || !campaignCode || !sessionId) return false;
+    try {
+      const code = campaignCode.trim();
+      const { data: camp } = await supabase.from('campaigns').select('dossier').eq('code', code).maybeSingle();
+      const dossier = camp?.dossier || {};
+      const sessionsMeta = dossier.sessionsMeta || {};
+      sessionsMeta[sessionId] = { ...(sessionsMeta[sessionId] || {}), ...meta };
+      await supabase.from('campaigns').update({
+        dossier: { ...dossier, sessionsMeta },
+        updated_at: new Date().toISOString(),
+      }).eq('code', code);
+      return true;
+    } catch (err) {
+      console.error('[Supabase] Failed to save session meta:', err);
+      return false;
+    }
+  }
+
+  /**
+   * Persists character bios into campaign dossier
+   */
+  static async saveCharacterBios(campaignCode: string, bios: any[]): Promise<boolean> {
+    if (!isSupabaseConfigured() || !campaignCode) return false;
+    try {
+      const code = campaignCode.trim();
+      const { data: camp } = await supabase.from('campaigns').select('dossier').eq('code', code).maybeSingle();
+      const dossier = camp?.dossier || {};
+      await supabase.from('campaigns').update({
+        dossier: { ...dossier, characterBios: bios || [] },
+        updated_at: new Date().toISOString(),
+      }).eq('code', code);
+      return true;
+    } catch (err) {
+      console.error('[Supabase] Failed to save character bios:', err);
+      return false;
+    }
+  }
+
+  /**
+   * Persists family relations into campaign dossier
+   */
+  static async saveFamilyRelations(campaignCode: string, relations: any[]): Promise<boolean> {
+    if (!isSupabaseConfigured() || !campaignCode) return false;
+    try {
+      const code = campaignCode.trim();
+      const { data: camp } = await supabase.from('campaigns').select('dossier').eq('code', code).maybeSingle();
+      const dossier = camp?.dossier || {};
+      await supabase.from('campaigns').update({
+        dossier: { ...dossier, familyRelations: relations || [] },
+        updated_at: new Date().toISOString(),
+      }).eq('code', code);
+      return true;
+    } catch (err) {
+      console.error('[Supabase] Failed to save family relations:', err);
+      return false;
+    }
+  }
+
+  /**
+   * Persists world lore articles into campaign dossier
+   */
+  static async saveWorldLoreArticles(campaignCode: string, articles: any[]): Promise<boolean> {
+    if (!isSupabaseConfigured() || !campaignCode) return false;
+    try {
+      const code = campaignCode.trim();
+      const { data: camp } = await supabase.from('campaigns').select('dossier').eq('code', code).maybeSingle();
+      const dossier = camp?.dossier || {};
+      await supabase.from('campaigns').update({
+        dossier: { ...dossier, worldLoreArticles: articles || [] },
+        updated_at: new Date().toISOString(),
+      }).eq('code', code);
+      return true;
+    } catch (err) {
+      console.error('[Supabase] Failed to save world lore articles:', err);
       return false;
     }
   }
