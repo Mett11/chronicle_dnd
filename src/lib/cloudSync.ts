@@ -473,7 +473,7 @@ export class CloudSyncService {
    * Directly syncs accounts array to Firestore global document
    */
   static async syncAccountsToCloud(accounts: UserAccount[]) {
-    if (checkIsQuotaExhausted()) return;
+    if (isSupabaseConfigured() || checkIsQuotaExhausted()) return;
     try {
       const docRef = doc(db, 'dnd_global', 'accounts');
       const deletedIds = CampaignManager.getDeletedAccountIds();
@@ -510,7 +510,7 @@ export class CloudSyncService {
    * Directly syncs global campaigns array to Firestore global document
    */
   static async syncCampaignsToCloud(campaigns: CampaignMeta[]) {
-    if (checkIsQuotaExhausted()) return;
+    if (isSupabaseConfigured() || checkIsQuotaExhausted()) return;
     try {
       const docRef = doc(db, 'dnd_global', 'campaigns');
       const payload = sanitizeFirestorePayload({
@@ -535,7 +535,7 @@ export class CloudSyncService {
     updatedCampaigns: CampaignMeta[],
     updatedAccounts: UserAccount[]
   ) {
-    if (checkIsQuotaExhausted()) return;
+    if (isSupabaseConfigured() || checkIsQuotaExhausted()) return;
     try {
       const campDocRef = doc(db, 'dnd_campaigns', campaignCode);
       await deleteDoc(campDocRef);
@@ -560,7 +560,7 @@ export class CloudSyncService {
    * Immediate synchronous/async fetch for user accounts from Firestore
    */
   static async fetchGlobalAccountsNow() {
-    if (checkIsQuotaExhausted()) return;
+    if (isSupabaseConfigured() || checkIsQuotaExhausted()) return;
     try {
       const docRef = doc(db, 'dnd_global', 'accounts');
       const snap = await getDoc(docRef);
@@ -2404,6 +2404,10 @@ export class CloudSyncService {
         });
       }
 
+      if (isSupabaseConfigured()) {
+        return { success: true, url: shareUrl, shareToken: slug, slug };
+      }
+
       // 1. Write main presentation document with timeout (compositeDocId and slug)
       await withTimeout(setDoc(doc(db, 'public_presentations', compositeDocId), finalMainPayload), 5000);
       if (slug && slug !== compositeDocId) {
@@ -2448,7 +2452,7 @@ export class CloudSyncService {
    * Fetches Oracle AI chat history for a specific campaign & user from Cloud Firestore
    */
   static async fetchOracleChatFromCloud(campaignCode: string, userId: string): Promise<any[]> {
-    if (!campaignCode || !userId || campaignCode === 'GLOBAL' || checkIsQuotaExhausted()) return [];
+    if (!campaignCode || !userId || campaignCode === 'GLOBAL' || isSupabaseConfigured() || checkIsQuotaExhausted()) return [];
     try {
       const docId = `${campaignCode.trim().toUpperCase()}__oracle_${userId.trim()}`;
       const docRef = doc(db, 'dnd_campaigns', docId);
@@ -2469,7 +2473,7 @@ export class CloudSyncService {
    * Saves Oracle AI chat history for a specific campaign & user to Cloud Firestore
    */
   static async saveOracleChatToCloud(campaignCode: string, userId: string, messages: any[]): Promise<void> {
-    if (!campaignCode || !userId || campaignCode === 'GLOBAL' || checkIsQuotaExhausted()) return;
+    if (!campaignCode || !userId || campaignCode === 'GLOBAL' || isSupabaseConfigured() || checkIsQuotaExhausted()) return;
     try {
       const docId = `${campaignCode.trim().toUpperCase()}__oracle_${userId.trim()}`;
       const docRef = doc(db, 'dnd_campaigns', docId);

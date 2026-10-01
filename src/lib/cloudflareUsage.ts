@@ -6,6 +6,7 @@
 
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from './firebase';
+import { isSupabaseConfigured } from './supabase';
 import { CampaignManager } from '../store/campaignStore';
 
 export interface CloudflareUsageLog {
@@ -137,7 +138,7 @@ export class CloudflareUsageTracker {
    * Triggers a cloud pull from Firestore for the active campaign to sync usage logs
    */
   static async pullFromCloud(): Promise<CloudflareUsageLog[]> {
-    if (typeof window === 'undefined' || this.isSyncingWithCloud) return this.getLogs();
+    if (typeof window === 'undefined' || this.isSyncingWithCloud || isSupabaseConfigured()) return this.getLogs();
     
     const activeCode = CampaignManager.getActiveCampaignCode();
     if (!activeCode || activeCode === '__NONE__') return this.getLogs();
@@ -180,7 +181,7 @@ export class CloudflareUsageTracker {
    * Synchronizes the current logs to Cloud Firestore for persistent storage
    */
   static async pushToCloud(logs: CloudflareUsageLog[]): Promise<void> {
-    if (typeof window === 'undefined') return;
+    if (typeof window === 'undefined' || isSupabaseConfigured()) return;
 
     const activeCode = CampaignManager.getActiveCampaignCode();
     if (!activeCode || activeCode === '__NONE__') return;
@@ -425,7 +426,7 @@ export class CloudflareUsageTracker {
       localStorage.removeItem(STORAGE_KEY);
       
       const activeCode = CampaignManager.getActiveCampaignCode();
-      if (activeCode && activeCode !== '__NONE__') {
+      if (!isSupabaseConfigured() && activeCode && activeCode !== '__NONE__') {
         const docRef = doc(db, 'cloudflare_usage', activeCode);
         await setDoc(docRef, { logs: [], _updatedAt: new Date().toISOString() });
       }

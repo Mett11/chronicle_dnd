@@ -27,6 +27,8 @@ import { CampaignMeta, CampaignProfile } from '../types';
 import { ConfirmModal } from './ConfirmModal';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
+import { isSupabaseConfigured } from '../lib/supabase';
+import { SupabaseSyncService } from '../lib/supabaseSyncService';
 
 const PG_COLOR_PRESETS = [
   { name: 'Indaco Arcano', hex: '#6366f1' },
@@ -194,21 +196,37 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
       const allCamp = CampaignManager.getCampaigns();
       let existing = allCamp.find((c) => c.code === cleanCode);
 
-      // Check remote Cloud Firestore if not found locally
+      // Check remote Cloud if not found locally
       if (!existing) {
-        try {
-          const docRef = doc(db, 'dnd_campaigns', cleanCode);
-          const snap = await getDoc(docRef);
-          if (snap.exists()) {
-            const data = snap.data();
-            const campName = data.campaignMeta?.name || `Campagna ${cleanCode}`;
-            existing = CampaignManager.createCampaign(cleanCode, campName);
+        if (isSupabaseConfigured()) {
+          try {
+            const supaData = await SupabaseSyncService.fetchCampaignData(cleanCode);
+            if (
+              supaData &&
+              ((supaData.sessions && supaData.sessions.length > 0) ||
+                (supaData.notes && supaData.notes.length > 0) ||
+                (supaData.entities && supaData.entities.length > 0))
+            ) {
+              existing = CampaignManager.createCampaign(cleanCode, `Campagna ${cleanCode}`);
+            }
+          } catch (supaErr) {
+            console.warn('Errore verifica supabase campagna:', supaErr);
           }
-        } catch (err: any) {
-          if (err?.code === 'resource-exhausted') {
-            existing = CampaignManager.createCampaign(cleanCode, `Campagna ${cleanCode}`);
-          } else {
-            console.warn('Errore verifica cloud campagna:', err);
+        } else {
+          try {
+            const docRef = doc(db, 'dnd_campaigns', cleanCode);
+            const snap = await getDoc(docRef);
+            if (snap.exists()) {
+              const data = snap.data();
+              const campName = data.campaignMeta?.name || `Campagna ${cleanCode}`;
+              existing = CampaignManager.createCampaign(cleanCode, campName);
+            }
+          } catch (err: any) {
+            if (err?.code === 'resource-exhausted') {
+              existing = CampaignManager.createCampaign(cleanCode, `Campagna ${cleanCode}`);
+            } else {
+              console.warn('Errore verifica cloud campagna:', err);
+            }
           }
         }
       }

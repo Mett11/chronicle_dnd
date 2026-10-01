@@ -1,5 +1,6 @@
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from './firebase';
+import { isSupabaseConfigured } from './supabase';
 
 /**
  * Transforms a campaign name into a clean, URL-safe slug.
@@ -101,6 +102,10 @@ export async function resolveCampaignPresentationSlug(
   const cleanCode = (campaignCode || '').trim().toUpperCase();
   const rawBaseSlug = slugifyCampaignTitle(campaignTitle || cleanCode);
   const baseSlug = rawBaseSlug.length > 0 ? rawBaseSlug : 'campagna';
+
+  if (isSupabaseConfigured()) {
+    return baseSlug;
+  }
 
   try {
     // 1. Check if the base slug document exists in Firestore public_presentations

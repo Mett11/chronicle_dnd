@@ -8,6 +8,8 @@ import { Film, Sparkles, Compass, AlertCircle, RefreshCw } from 'lucide-react';
 import { Session, CampaignChapter } from '../types';
 import { extractTextFromContent, safeString } from '../lib/sanitize';
 import { generateCampaignShareToken, slugifyCampaignTitle } from '../lib/shareToken';
+import { isSupabaseConfigured } from '../lib/supabase';
+import { SupabaseSyncService } from '../lib/supabaseSyncService';
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs = 4000): Promise<T> {
   return Promise.race([
@@ -124,6 +126,31 @@ export function PublicPresentationView() {
           setSessions(localSessions);
           setChapters(localChapters || []);
           setCampaignTitle(localMeta?.name || 'Cronaca di Campagna');
+          setLoading(false);
+        }
+        return;
+      }
+
+      // Fetch from Supabase if configured
+      if (isSupabaseConfigured()) {
+        try {
+          const upperCode = originalFromReversed || rawTarget.toUpperCase();
+          const targetCode = upperCode || activeCode || rawTarget;
+          const supaData = await SupabaseSyncService.fetchCampaignData(targetCode);
+          if (supaData && supaData.sessions && supaData.sessions.length > 0) {
+            if (isMounted) {
+              setSessions(supaData.sessions);
+              setChapters(supaData.chapters || []);
+              setCampaignTitle(localMeta?.name || `Campagna ${targetCode}`);
+              setLoading(false);
+            }
+            return;
+          }
+        } catch (supaErr) {
+          console.warn('[PublicPresentationView] Supabase fetch error:', supaErr);
+        }
+        if (isMounted) {
+          setError('Nessuna presentazione trovata per questa campagna.');
           setLoading(false);
         }
         return;

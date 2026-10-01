@@ -190,7 +190,7 @@ export class ApiKeyManager {
     }
 
     // 2. Fetch authoritative keys from Firestore if campaign code is valid
-    if (campCode && campCode !== 'CAMPAIGN') {
+    if (!isSupabaseConfigured() && campCode && campCode !== 'CAMPAIGN') {
       try {
         const campaignKeysRef = doc(db, 'campaigns', campCode, 'config', 'ai_keys');
         const snap = await getDoc(campaignKeysRef);
@@ -263,8 +263,9 @@ export class ApiKeyManager {
     }
 
     // 2. Fetch authoritative secrets from Firestore (vital on cache clear)
-    try {
-      const secretRef = doc(db, 'users', uid, 'private', 'secrets');
+    if (!isSupabaseConfigured()) {
+      try {
+        const secretRef = doc(db, 'users', uid, 'private', 'secrets');
       const snap = await getDoc(secretRef);
       if (snap.exists()) {
         const data = snap.data();
@@ -291,6 +292,7 @@ export class ApiKeyManager {
     } catch (err) {
       console.warn('[ApiKeyManager] Firestore personal keys preload error:', err);
     }
+  }
 
     return { ...cachedPersonalKeys };
   }
@@ -716,20 +718,22 @@ export class ApiKeyManager {
     }
 
     // Sync to Firestore under users/{uid}/private/secrets (encrypted at rest)
-    try {
-      const secretRef = doc(db, 'users', uid, 'private', 'secrets');
-      await setDoc(
-        secretRef,
-        {
-          ...encryptedPayload,
-          isEncrypted: true,
-          encryptionAlgo: 'AES-GCM-256-PBKDF2',
-          updatedAt: new Date().toISOString(),
-        },
-        { merge: true }
-      );
-    } catch (err) {
-      console.warn('[ApiKeyManager] Firestore personal secrets save error:', err);
+    if (!isSupabaseConfigured()) {
+      try {
+        const secretRef = doc(db, 'users', uid, 'private', 'secrets');
+        await setDoc(
+          secretRef,
+          {
+            ...encryptedPayload,
+            isEncrypted: true,
+            encryptionAlgo: 'AES-GCM-256-PBKDF2',
+            updatedAt: new Date().toISOString(),
+          },
+          { merge: true }
+        );
+      } catch (err) {
+        console.warn('[ApiKeyManager] Firestore personal secrets save error:', err);
+      }
     }
 
     return updated;
@@ -795,7 +799,7 @@ export class ApiKeyManager {
       }
     }
 
-    if (cleanCode && cleanCode !== 'CAMPAIGN') {
+    if (!isSupabaseConfigured() && cleanCode && cleanCode !== 'CAMPAIGN') {
       try {
         const campaignKeysRef = doc(db, 'campaigns', cleanCode, 'config', 'ai_keys');
         await setDoc(

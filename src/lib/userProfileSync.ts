@@ -1,17 +1,22 @@
 import { doc, setDoc, getDoc } from 'firebase/firestore';
 import { db, auth } from './firebase';
+import { isSupabaseConfigured } from './supabase';
 import { UserAccount } from '../types';
 
 /**
  * Service to synchronize user account profile data to /users/{userId} in Firestore.
- * This establishes the user's joinedCampaigns and dmCampaigns in the cloud,
- * enabling granular Attribute-Based Access Control (RBAC) in firestore.rules.
+ * When Supabase is configured, Firebase is used strictly for Auth (Google Sign-In),
+ * and Firestore profile sync is bypassed.
  */
 export class UserProfileSyncService {
   /**
    * Synchronizes the user account to /users/{uid} in Firestore
    */
   static async syncUserProfile(account: UserAccount, explicitUid?: string): Promise<boolean> {
+    if (isSupabaseConfigured()) {
+      return true;
+    }
+
     const uid = explicitUid || auth.currentUser?.uid;
     if (!uid) {
       return false;
@@ -51,6 +56,10 @@ export class UserProfileSyncService {
    * Fetches user profile data from /users/{uid} in Firestore
    */
   static async getUserProfile(uid?: string): Promise<any | null> {
+    if (isSupabaseConfigured()) {
+      return null;
+    }
+
     const targetUid = uid || auth.currentUser?.uid;
     if (!targetUid) return null;
 

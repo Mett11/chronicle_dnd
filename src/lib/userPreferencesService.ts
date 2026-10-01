@@ -172,7 +172,7 @@ export class UserPreferencesService {
     }
 
     // 4. Sync to Firestore in real time
-    if (norm && norm !== 'guest') {
+    if (!isSupabaseConfigured() && norm && norm !== 'guest') {
       try {
         const prefRef = doc(db, 'user_preferences', norm);
         const payload = sanitizeFirestorePayload(merged);
@@ -263,7 +263,7 @@ export class UserPreferencesService {
    */
   static async fetchPreferencesFromFirestore(userId: string): Promise<UserPreferences | null> {
     const norm = normalizeUserId(userId);
-    if (!norm || norm === 'guest') return null;
+    if (isSupabaseConfigured() || !norm || norm === 'guest') return null;
     try {
       const ref = doc(db, 'user_preferences', norm);
       const snap = await getDoc(ref);
