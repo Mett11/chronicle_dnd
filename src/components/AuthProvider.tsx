@@ -120,7 +120,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (firebaseUser) {
         // Authenticated Firebase session exists
         const userEmail = (firebaseUser.email || '').trim().toLowerCase();
-        const accounts = CampaignManager.getAccounts();
+        let accounts = CampaignManager.getAccounts();
+        if (accounts.length === 0) {
+          await CloudSyncService.fetchGlobalAccountsNow();
+          accounts = CampaignManager.getAccounts();
+        }
         let matched = accounts.find(
           (a) =>
             a.id === `usr_${firebaseUser.uid}` ||

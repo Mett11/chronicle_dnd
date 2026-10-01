@@ -560,7 +560,7 @@ export class CloudSyncService {
    * Immediate synchronous/async fetch for user accounts from Firestore
    */
   static async fetchGlobalAccountsNow() {
-    if (isSupabaseConfigured() || checkIsQuotaExhausted()) return;
+    if (checkIsQuotaExhausted()) return;
     try {
       const docRef = doc(db, 'dnd_global', 'accounts');
       const snap = await getDoc(docRef);
@@ -571,6 +571,14 @@ export class CloudSyncService {
         }
         if (Array.isArray(data?.accounts)) {
           this.mergeRemoteAccounts(data.accounts, data.deletedAccountIds || []);
+          // Also sync activePlayers to Supabase campaign row if Supabase is active
+          const activeCode = CampaignManager.getActiveCampaignCode();
+          if (isSupabaseConfigured() && activeCode && activeCode !== '__NONE__') {
+            SupabaseSyncService.saveCampaign(activeCode, {
+              activePlayers: data.accounts,
+              dmId: CampaignManager.getCurrentAccount()?.id,
+            }).catch(() => {});
+          }
         }
       }
     } catch (e) {
@@ -965,6 +973,9 @@ export class CloudSyncService {
             }
             if (Array.isArray(supaData.audioLogs) && supaData.audioLogs.length > 0) {
               CampaignManager.saveAudioLogsLocalOnly(supaData.audioLogs);
+            }
+            if (Array.isArray(supaData.activePlayers) && supaData.activePlayers.length > 0) {
+              this.mergeRemoteAccounts(supaData.activePlayers);
             }
 
             this.isCampaignHydrated = true;
