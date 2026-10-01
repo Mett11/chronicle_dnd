@@ -1,9 +1,9 @@
-import { ImageOptimizerModal } from './ImageOptimizer';
 import React, { useState, useRef } from 'react';
-import { Image as ImageIcon, Upload, Trash2, X, Maximize2, Link as LinkIcon, Loader2 } from 'lucide-react';
+import { Image as ImageIcon, Upload, Trash2, X, Maximize2, Link as LinkIcon, Loader2, ChevronLeft, ChevronRight, Move } from 'lucide-react';
 import { Portal } from './Portal';
 import { FirebaseStorageService } from '../lib/firebaseStorageService';
 import { CampaignManager } from '../store/campaignStore';
+import { ImageOptimizerModal } from './ImageOptimizer';
 
 interface ImageGalleryUploaderProps {
   images: string[];
@@ -71,6 +71,31 @@ export function ImageGalleryUploader({
     onChange(images.filter((_, idx) => idx !== indexToRemove));
   };
 
+  const handleMoveImage = (index: number, direction: 'left' | 'right', e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    const targetIndex = direction === 'left' ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= images.length) return;
+    const newImages = [...images];
+    const temp = newImages[index];
+    newImages[index] = newImages[targetIndex];
+    newImages[targetIndex] = temp;
+    onChange(newImages);
+    if (lightboxIndex === index) {
+      setLightboxIndex(targetIndex);
+    }
+  };
+
+  const handleReorderImage = (fromIdx: number, toIdx: number) => {
+    if (fromIdx < 0 || fromIdx >= images.length || toIdx < 0 || toIdx >= images.length || fromIdx === toIdx) return;
+    const copy = [...images];
+    const [moved] = copy.splice(fromIdx, 1);
+    copy.splice(toIdx, 0, moved);
+    onChange(copy);
+    if (lightboxIndex === fromIdx) {
+      setLightboxIndex(toIdx);
+    }
+  };
+
   return (
     <div className="space-y-2.5">
       {label && (
@@ -123,7 +148,21 @@ export function ImageGalleryUploader({
       <div className="flex flex-wrap gap-2.5 items-center">
         {images.map((imgSrc, idx) => (
           <div
-            key={idx}
+            key={`${imgSrc.slice(-20)}_${idx}`}
+            draggable={!readOnly && images.length > 1}
+            onDragStart={(e) => {
+              e.dataTransfer.setData('text/plain', idx.toString());
+            }}
+            onDragOver={(e) => {
+              e.preventDefault();
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              const sourceIdx = parseInt(e.dataTransfer.getData('text/plain'));
+              if (!isNaN(sourceIdx) && sourceIdx !== idx) {
+                handleReorderImage(sourceIdx, idx);
+              }
+            }}
             onClick={() => setLightboxIndex(idx)}
             className="group relative w-20 h-20 sm:w-24 sm:h-24 rounded-xl overflow-hidden bg-surface-2 border border-surface-3 hover:border-primary cursor-pointer transition-all shadow-md shrink-0"
           >
@@ -139,21 +178,56 @@ export function ImageGalleryUploader({
                 (e.target as HTMLElement).style.display = 'none';
               }}
             />
+
+            {/* Position badge */}
+            <span className="absolute top-1 left-1 px-1.5 py-0.5 rounded bg-surface-0/80 text-[9px] font-mono font-bold text-content-2 border border-surface-3/50 backdrop-blur-xs shadow-xs">
+              #{idx + 1}
+            </span>
+
             {/* Overlay Hover */}
-            <div className="absolute inset-0 bg-surface-0/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1.5 backdrop-blur-xs">
-              <span className="p-1 rounded bg-surface-1 text-content-1 shadow">
-                <Maximize2 size={13} />
-              </span>
-              {!readOnly && (
-                <button
-                  type="button"
-                  onClick={(e) => handleRemoveImage(idx, e)}
-                  className="p-1 rounded bg-red-500/80 text-white hover:bg-red-600 transition-colors cursor-pointer"
-                  title="Rimuovi immagine"
-                >
-                  <Trash2 size={13} />
-                </button>
-              )}
+            <div className="absolute inset-0 bg-surface-0/75 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-between p-1.5 backdrop-blur-xs">
+              {/* Top controls: Reorder arrows */}
+              {!readOnly && images.length > 1 ? (
+                <div className="flex items-center justify-between w-full">
+                  {idx > 0 ? (
+                    <button
+                      type="button"
+                      onClick={(e) => handleMoveImage(idx, 'left', e)}
+                      className="p-1 rounded bg-surface-1 hover:bg-primary hover:text-surface-0 text-content-1 transition-colors shadow-xs cursor-pointer"
+                      title="Sposta prima (a sinistra)"
+                    >
+                      <ChevronLeft size={13} />
+                    </button>
+                  ) : <div />}
+                  {idx < images.length - 1 ? (
+                    <button
+                      type="button"
+                      onClick={(e) => handleMoveImage(idx, 'right', e)}
+                      className="p-1 rounded bg-surface-1 hover:bg-primary hover:text-surface-0 text-content-1 transition-colors shadow-xs cursor-pointer"
+                      title="Sposta dopo (a destra)"
+                    >
+                      <ChevronRight size={13} />
+                    </button>
+                  ) : <div />}
+                </div>
+              ) : <div />}
+
+              {/* Bottom controls: Zoom and Delete */}
+              <div className="flex items-center justify-center gap-1.5">
+                <span className="p-1 rounded bg-surface-1 text-content-1 shadow-xs">
+                  <Maximize2 size={12} />
+                </span>
+                {!readOnly && (
+                  <button
+                    type="button"
+                    onClick={(e) => handleRemoveImage(idx, e)}
+                    className="p-1 rounded bg-red-500/80 text-white hover:bg-red-600 transition-colors cursor-pointer"
+                    title="Rimuovi immagine"
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         ))}
@@ -252,10 +326,36 @@ export function ImageGalleryUploader({
               onClick={(e) => e.stopPropagation()}
             >
               {/* Lightbox Header */}
-              <div className="flex items-center justify-between px-4 py-3 bg-surface-2 border-b border-surface-3">
-                <span className="text-xs font-mono font-bold text-primary">
-                  Immagine {lightboxIndex + 1} di {images.length}
-                </span>
+              <div className="flex items-center justify-between px-4 py-3 bg-surface-2 border-b border-surface-3 gap-2">
+                <div className="flex items-center gap-3">
+                  <span className="text-xs font-mono font-bold text-primary">
+                    Immagine {lightboxIndex + 1} di {images.length}
+                  </span>
+                  {!readOnly && images.length > 1 && (
+                    <div className="flex items-center gap-1 bg-surface-1 border border-surface-3 rounded-lg p-0.5 text-xs font-mono">
+                      <button
+                        type="button"
+                        disabled={lightboxIndex === 0}
+                        onClick={() => handleMoveImage(lightboxIndex, 'left')}
+                        className="px-2 py-1 rounded hover:bg-primary hover:text-surface-0 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-inherit text-content-1 flex items-center gap-1 cursor-pointer transition-colors"
+                        title="Sposta immagine a sinistra"
+                      >
+                        <ChevronLeft size={13} />
+                        <span className="hidden sm:inline">Prima</span>
+                      </button>
+                      <button
+                        type="button"
+                        disabled={lightboxIndex === images.length - 1}
+                        onClick={() => handleMoveImage(lightboxIndex, 'right')}
+                        className="px-2 py-1 rounded hover:bg-primary hover:text-surface-0 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-inherit text-content-1 flex items-center gap-1 cursor-pointer transition-colors"
+                        title="Sposta immagine a destra"
+                      >
+                        <span className="hidden sm:inline">Dopo</span>
+                        <ChevronRight size={13} />
+                      </button>
+                    </div>
+                  )}
+                </div>
                 <button
                   type="button"
                   onClick={() => setLightboxIndex(null)}

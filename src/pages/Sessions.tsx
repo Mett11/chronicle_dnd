@@ -87,6 +87,7 @@ export function Sessions() {
   const [chapters, setChapters] = useState<CampaignChapter[]>(() => CampaignManager.getChapters());
   const [selectedChapterFilter, setSelectedChapterFilter] = useState<string>('all');
   const [sessionSearchQuery, setSessionSearchQuery] = useState('');
+  const [sessionSortOrder, setSessionSortOrder] = useState<'desc' | 'asc'>('desc');
   const [inspectingEntity, setInspectingEntity] = useState<Entity | null>(null);
   const [selectedSession, setSelectedSession] = useState<Session | null>(() => {
     const all = CampaignManager.getSessions();
@@ -306,7 +307,7 @@ export function Sessions() {
   }, [selectedSession]);
 
   const filteredSessions = useMemo(() => {
-    return sessions.filter((s) => {
+    const list = sessions.filter((s) => {
       // Chapter filter
       if (selectedChapterFilter !== 'all') {
         if (selectedChapterFilter === 'unassigned') {
@@ -327,7 +328,13 @@ export function Sessions() {
 
       return true;
     });
-  }, [sessions, selectedChapterFilter, sessionSearchQuery]);
+
+    return [...list].sort((a, b) => {
+      return sessionSortOrder === 'desc'
+        ? b.number - a.number
+        : a.number - b.number;
+    });
+  }, [sessions, selectedChapterFilter, sessionSearchQuery, sessionSortOrder]);
 
   const totalPages = Math.max(1, Math.ceil(filteredSessions.length / pageSize));
   const currentSessions = useMemo(() => {
@@ -732,6 +739,17 @@ export function Sessions() {
                         })}
                         <option value="unassigned">Non Assegnati ({sessions.filter((s) => !s.chapterName && !s.chapterId).length})</option>
                       </select>
+
+                      {/* Sort Order Toggle Button */}
+                      <button
+                        type="button"
+                        onClick={() => setSessionSortOrder((prev) => (prev === 'desc' ? 'asc' : 'desc'))}
+                        className="bg-surface-2/60 hover:bg-surface-2 border border-surface-3 text-content-1 rounded-lg px-2.5 py-2 text-xs outline-none cursor-pointer flex items-center gap-1.5 font-mono transition-colors shrink-0"
+                        title={sessionSortOrder === 'desc' ? 'Ordina: Dal numero di sessione più alto al più basso' : 'Ordina: Dal numero di sessione più basso al più alto'}
+                      >
+                        <SlidersHorizontal size={12} className="text-primary" />
+                        <span>{sessionSortOrder === 'desc' ? 'Sess. # Decrescente (N → 1)' : 'Sess. # Crescente (1 → N)'}</span>
+                      </button>
                     </div>
                   </div>
 

@@ -1316,18 +1316,6 @@ export function Entities() {
                       <option value="recent">Recenti</option>
                     </select>
                   </div>
-
-                  {player?.isDm && (
-                    <button
-                      type="button"
-                      onClick={() => setShowResetModal(true)}
-                      className="px-2.5 py-1.5 rounded-[2px] bg-red-950/40 hover:bg-red-900/60 border border-red-800/40 text-red-300 hover:text-red-200 text-xs font-mono transition-colors flex items-center gap-1.5 cursor-pointer shrink-0"
-                      title="Azzera tutte le entità del compendio e le relazioni"
-                    >
-                      <Trash2 size={12} />
-                      <span className="hidden sm:inline">Azzera Codex</span>
-                    </button>
-                  )}
                 </div>
               </div>
 
