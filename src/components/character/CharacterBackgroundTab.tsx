@@ -29,6 +29,11 @@ import {
   Globe,
   ExternalLink,
   Tag,
+  Target,
+  Users,
+  Award,
+  Scroll,
+  Check,
 } from 'lucide-react';
 import {
   CharacterBio,
@@ -42,6 +47,7 @@ import {
   WorldLoreArticle,
   CharacterKnownLoreItem,
   LoreBiteLevel,
+  Entity,
 } from '../../types';
 import { CampaignManager } from '../../store/campaignStore';
 import { LoreDatePicker } from '../LoreDatePicker';
@@ -52,6 +58,12 @@ interface CharacterBackgroundTabProps {
   player: Player;
   onBioUpdated?: (bio: CharacterBio) => void;
   isOtherPlayerView?: boolean;
+  activeSectionMode?: 'all' | 'bio' | 'mind' | 'party';
+  quests?: Entity[];
+  onOpenCreateQuest?: () => void;
+  onEditQuest?: (quest: Entity) => void;
+  onToggleQuestStatus?: (quest: Entity, newStatus: Entity['status']) => void;
+  onRequestDeleteQuest?: (questId: string) => void;
 }
 
 const ATTITUDE_LABELS: Record<RelationAttitude, string> = {
@@ -81,6 +93,10 @@ const BELIEF_STATUS_LABELS: Record<EvolvingBelief['status'], { label: string; cl
     label: '🔍 Sospetto / Ipotesi',
     cls: 'bg-purple-500/10 text-purple-300 border-purple-500/25',
   },
+  pact: {
+    label: '📜 Patto / Giuramento',
+    cls: 'bg-indigo-500/10 text-indigo-300 border-indigo-500/25',
+  },
 };
 
 const MEMORY_CATEGORY_LABELS: Record<TimelineMemoryEntry['category'], { label: string; cls: string }> = {
@@ -93,9 +109,24 @@ const MEMORY_CATEGORY_LABELS: Record<TimelineMemoryEntry['category'], { label: s
   event: { label: 'Avvenimento Chiave', cls: 'bg-amber-500/10 text-amber-300 border-amber-500/20' },
 };
 
-export function CharacterBackgroundTab({ player, onBioUpdated, isOtherPlayerView = false }: CharacterBackgroundTabProps) {
+export function CharacterBackgroundTab({
+  player,
+  onBioUpdated,
+  isOtherPlayerView = false,
+  activeSectionMode = 'all',
+  quests = [],
+  onOpenCreateQuest,
+  onEditQuest,
+  onToggleQuestStatus,
+  onRequestDeleteQuest,
+}: CharacterBackgroundTabProps) {
   const [calendar, setCalendar] = useState<CampaignCalendar>(() => CampaignManager.getCalendar());
   const [allPlayers, setAllPlayers] = useState<Player[]>(() => CampaignManager.getPlayers());
+
+  const [beliefFilter, setBeliefFilter] = useState<'all' | EvolvingBelief['status']>('all');
+  const [mindFilter, setMindFilter] = useState<'all' | 'beliefs' | 'memories' | 'open_quests' | 'completed_quests'>('all');
+  const [isBackstoryExpanded, setIsBackstoryExpanded] = useState(false);
+  const [expandedRelationPlayerId, setExpandedRelationPlayerId] = useState<string | null>(null);
 
   const [bio, setBio] = useState<CharacterBio>(() => {
     return (
@@ -359,6 +390,10 @@ export function CharacterBackgroundTab({ player, onBioUpdated, isOtherPlayerView
   // Teammates in party excluding this player
   const partyCompanions = allPlayers.filter((p) => p._id !== player._id);
 
+  const showBioSections = activeSectionMode === 'all' || activeSectionMode === 'bio';
+  const showMindSections = activeSectionMode === 'all' || activeSectionMode === 'mind';
+  const showPartySections = activeSectionMode === 'all' || activeSectionMode === 'party';
+
   return (
     <div className="space-y-6 font-body">
       {/* Top Header & Edit Action Bar */}
@@ -369,7 +404,12 @@ export function CharacterBackgroundTab({ player, onBioUpdated, isOtherPlayerView
           </div>
           <div>
             <h2 className="font-heading text-sm font-bold text-content-1 flex items-center gap-2">
-              <span>Biografia, Lore &amp; Memoria Storica</span>
+              <span>
+                {activeSectionMode === 'bio' && 'Anagrafica & Background'}
+                {activeSectionMode === 'mind' && 'Mente, Credenze & Memorie'}
+                {activeSectionMode === 'party' && 'Legami & Relazioni col Party'}
+                {activeSectionMode === 'all' && 'Biografia, Lore & Memoria Storica'}
+              </span>
               {saveSuccessNotice && (
                 <span className="text-xs font-mono text-emerald-400 flex items-center gap-1 font-semibold animate-fadeIn">
                   <CheckCircle2 size={13} /> Salvato!
@@ -377,7 +417,10 @@ export function CharacterBackgroundTab({ player, onBioUpdated, isOtherPlayerView
               )}
             </h2>
             <p className="text-xs text-content-3">
-              Tratti, memorie di Lore, teorie di campagna ed evoluzione dei rapporti col gruppo.
+              {activeSectionMode === 'bio' && 'Identità, storia personale, tratti psicologici, segreti e aspetto visivo.'}
+              {activeSectionMode === 'mind' && 'Cronologia dei ricordi, teorie in evoluzione e bagaglio di conoscenze.'}
+              {activeSectionMode === 'party' && 'Griglia dei compagni d\'avventura, livello di fiducia e note riservate.'}
+              {activeSectionMode === 'all' && 'Tratti, memorie di Lore, teorie di campagna ed evoluzione dei rapporti col gruppo.'}
             </p>
           </div>
         </div>
@@ -407,150 +450,156 @@ export function CharacterBackgroundTab({ player, onBioUpdated, isOtherPlayerView
                 onClick={handleStartEdit}
                 className="px-3.5 py-1.5 bg-surface-2 hover:bg-surface-3 text-content-1 border border-surface-3 rounded-xl text-xs font-medium transition-colors flex items-center gap-1.5 shadow-xs cursor-pointer"
               >
-                <Edit3 size={14} className="text-primary" /> Modifica Background &amp; Memorie
+                <Edit3 size={14} className="text-primary" /> Modifica Sezione
               </button>
             )}
           </div>
         )}
       </div>
 
-      {/* 1. Identity & Origins Summary Grid */}
-      <div className="bg-surface-1 border border-surface-2 rounded-2xl p-5 space-y-4 shadow-sm">
-        <div className="flex items-center justify-between gap-2 border-b border-surface-2 pb-3">
-          <h3 className="font-heading text-sm font-bold text-content-1 flex items-center gap-2">
-            <User size={16} className="text-primary" />
-            <span>Identità, Origini &amp; Retaggio</span>
-          </h3>
-          {renderPrivacyToggle('identity', 'Identità')}
-        </div>
-
-        {(!isOtherPlayerView || currentPrivacy.identity !== false) && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 text-xs">
-            {/* Titolo / Epiteto */}
-            <div className="space-y-1">
-              <label className="text-[11px] font-semibold text-content-3 uppercase tracking-wider block">
-                Titolo / Epiteto
-              </label>
-              {isEditing ? (
-                <input
-                  type="text"
-                  value={draft.characterTitle || ''}
-                  onChange={(e) => setDraft({ ...draft, characterTitle: e.target.value })}
-                  placeholder="es. Il Flagello del Nord, L'Iniziato..."
-                  className="w-full bg-surface-2/60 border border-surface-3 focus:border-primary rounded-xl px-3 py-1.5 text-xs text-content-1 outline-none"
-                />
-              ) : (
-                <p className="font-semibold text-content-1 bg-surface-2/30 px-3 py-1.5 rounded-xl border border-surface-3 truncate">
-                  {bio.characterTitle || <span className="text-content-3 italic">Nessun titolo</span>}
-                </p>
-              )}
-            </div>
-
-            {/* Razza & Retaggio */}
-            <div className="space-y-1">
-              <label className="text-[11px] font-semibold text-content-3 uppercase tracking-wider block">
-                Razza &amp; Retaggio
-              </label>
-              {isEditing ? (
-                <input
-                  type="text"
-                  value={draft.characterRace || ''}
-                  onChange={(e) => setDraft({ ...draft, characterRace: e.target.value })}
-                  placeholder="es. Elfo dei Boschi, Nano delle Colline..."
-                  className="w-full bg-surface-2/60 border border-surface-3 focus:border-primary rounded-xl px-3 py-1.5 text-xs text-content-1 outline-none"
-                />
-              ) : (
-                <p className="font-semibold text-content-1 bg-surface-2/30 px-3 py-1.5 rounded-xl border border-surface-3 truncate">
-                  {bio.characterRace || <span className="text-content-3 italic">Non specificata</span>}
-                </p>
-              )}
-            </div>
-
-            {/* Classe & Sottoclasse */}
-            <div className="space-y-1">
-              <label className="text-[11px] font-semibold text-content-3 uppercase tracking-wider block">
-                Classe &amp; Specializzazione
-              </label>
-              {isEditing ? (
-                <input
-                  type="text"
-                  value={draft.characterClass || ''}
-                  onChange={(e) => setDraft({ ...draft, characterClass: e.target.value })}
-                  placeholder="es. Mago (Evocazione), Chierico..."
-                  className="w-full bg-surface-2/60 border border-surface-3 focus:border-primary rounded-xl px-3 py-1.5 text-xs text-content-1 outline-none"
-                />
-              ) : (
-                <p className="font-semibold text-content-1 bg-surface-2/30 px-3 py-1.5 rounded-xl border border-surface-3 truncate">
-                  {bio.characterClass || <span className="text-content-3 italic">Non specificata</span>}
-                </p>
-              )}
-            </div>
-
-            {/* Allineamento */}
-            <div className="space-y-1">
-              <label className="text-[11px] font-semibold text-content-3 uppercase tracking-wider block">
-                Allineamento Morale
-              </label>
-              {isEditing ? (
-                <input
-                  type="text"
-                  value={draft.characterAlignment || ''}
-                  onChange={(e) => setDraft({ ...draft, characterAlignment: e.target.value })}
-                  placeholder="es. Caotico Buono, Legale Neutrale..."
-                  className="w-full bg-surface-2/60 border border-surface-3 focus:border-primary rounded-xl px-3 py-1.5 text-xs text-content-1 outline-none"
-                />
-              ) : (
-                <p className="font-semibold text-content-1 bg-surface-2/30 px-3 py-1.5 rounded-xl border border-surface-3 truncate">
-                  {bio.characterAlignment || <span className="text-content-3 italic">Neutrale</span>}
-                </p>
-              )}
-            </div>
-
-            {/* Divinità / Patrono */}
-            <div className="space-y-1">
-              <label className="text-[11px] font-semibold text-content-3 uppercase tracking-wider block">
-                Divinità o Patrono
-              </label>
-              {isEditing ? (
-                <input
-                  type="text"
-                  value={draft.deityOrPatron || ''}
-                  onChange={(e) => setDraft({ ...draft, deityOrPatron: e.target.value })}
-                  placeholder="es. Mystra, Kelemvor, Grande Antico..."
-                  className="w-full bg-surface-2/60 border border-surface-3 focus:border-primary rounded-xl px-3 py-1.5 text-xs text-content-1 outline-none"
-                />
-              ) : (
-                <p className="font-semibold text-content-1 bg-surface-2/30 px-3 py-1.5 rounded-xl border border-surface-3 truncate">
-                  {bio.deityOrPatron || <span className="text-content-3 italic">Nessun culto primario</span>}
-                </p>
-              )}
-            </div>
-
-            {/* Luogo di Origine */}
-            <div className="space-y-1">
-              <label className="text-[11px] font-semibold text-content-3 uppercase tracking-wider block flex items-center gap-1">
-                <MapPin size={11} className="text-emerald-400" /> Luogo di Origine
-              </label>
-              {isEditing ? (
-                <input
-                  type="text"
-                  value={draft.hometown || ''}
-                  onChange={(e) => setDraft({ ...draft, hometown: e.target.value })}
-                  placeholder="es. Waterdeep, Baldur's Gate, Bosco di Smeraldo..."
-                  className="w-full bg-surface-2/60 border border-surface-3 focus:border-primary rounded-xl px-3 py-1.5 text-xs text-content-1 outline-none"
-                />
-              ) : (
-                <p className="font-semibold text-content-1 bg-surface-2/30 px-3 py-1.5 rounded-xl border border-surface-3 truncate">
-                  {bio.hometown || <span className="text-content-3 italic">Sconosciuto</span>}
-                </p>
-              )}
-            </div>
+      {/* ======================================================== */}
+      {/* 1. IDENTITY & ORIGINS SUMMARY GRID (BIO MODE)             */}
+      {/* ======================================================== */}
+      {showBioSections && (
+        <div className="bg-surface-1 border border-surface-2 rounded-2xl p-5 space-y-4 shadow-sm">
+          <div className="flex items-center justify-between gap-2 border-b border-surface-2 pb-3">
+            <h3 className="font-heading text-sm font-bold text-content-1 flex items-center gap-2">
+              <User size={16} className="text-primary" />
+              <span>Identità, Origini &amp; Retaggio</span>
+            </h3>
+            {renderPrivacyToggle('identity', 'Identità')}
           </div>
-        )}
-      </div>
 
-      {/* 2. Biografia & Backstory Markdown */}
-      {(!isOtherPlayerView || currentPrivacy.backstory !== false) && (
+          {(!isOtherPlayerView || currentPrivacy.identity !== false) && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 text-xs">
+              {/* Titolo / Epiteto */}
+              <div className="space-y-1">
+                <label className="text-[11px] font-semibold text-content-3 uppercase tracking-wider block">
+                  Titolo / Epiteto
+                </label>
+                {isEditing ? (
+                  <input
+                    type="text"
+                    value={draft.characterTitle || ''}
+                    onChange={(e) => setDraft({ ...draft, characterTitle: e.target.value })}
+                    placeholder="es. Il Flagello del Nord, L'Iniziato..."
+                    className="w-full bg-surface-2/60 border border-surface-3 focus:border-primary rounded-xl px-3 py-1.5 text-xs text-content-1 outline-none"
+                  />
+                ) : (
+                  <p className="font-semibold text-content-1 bg-surface-2/30 px-3 py-1.5 rounded-xl border border-surface-3 truncate">
+                    {bio.characterTitle || <span className="text-content-3 italic">Nessun titolo</span>}
+                  </p>
+                )}
+              </div>
+
+              {/* Razza & Retaggio */}
+              <div className="space-y-1">
+                <label className="text-[11px] font-semibold text-content-3 uppercase tracking-wider block">
+                  Razza &amp; Retaggio
+                </label>
+                {isEditing ? (
+                  <input
+                    type="text"
+                    value={draft.characterRace || ''}
+                    onChange={(e) => setDraft({ ...draft, characterRace: e.target.value })}
+                    placeholder="es. Elfo dei Boschi, Nano delle Colline..."
+                    className="w-full bg-surface-2/60 border border-surface-3 focus:border-primary rounded-xl px-3 py-1.5 text-xs text-content-1 outline-none"
+                  />
+                ) : (
+                  <p className="font-semibold text-content-1 bg-surface-2/30 px-3 py-1.5 rounded-xl border border-surface-3 truncate">
+                    {bio.characterRace || <span className="text-content-3 italic">Non specificata</span>}
+                  </p>
+                )}
+              </div>
+
+              {/* Classe & Sottoclasse */}
+              <div className="space-y-1">
+                <label className="text-[11px] font-semibold text-content-3 uppercase tracking-wider block">
+                  Classe &amp; Specializzazione
+                </label>
+                {isEditing ? (
+                  <input
+                    type="text"
+                    value={draft.characterClass || ''}
+                    onChange={(e) => setDraft({ ...draft, characterClass: e.target.value })}
+                    placeholder="es. Mago (Evocazione), Chierico..."
+                    className="w-full bg-surface-2/60 border border-surface-3 focus:border-primary rounded-xl px-3 py-1.5 text-xs text-content-1 outline-none"
+                  />
+                ) : (
+                  <p className="font-semibold text-content-1 bg-surface-2/30 px-3 py-1.5 rounded-xl border border-surface-3 truncate">
+                    {bio.characterClass || <span className="text-content-3 italic">Non specificata</span>}
+                  </p>
+                )}
+              </div>
+
+              {/* Allineamento */}
+              <div className="space-y-1">
+                <label className="text-[11px] font-semibold text-content-3 uppercase tracking-wider block">
+                  Allineamento Morale
+                </label>
+                {isEditing ? (
+                  <input
+                    type="text"
+                    value={draft.characterAlignment || ''}
+                    onChange={(e) => setDraft({ ...draft, characterAlignment: e.target.value })}
+                    placeholder="es. Caotico Buono, Legale Neutrale..."
+                    className="w-full bg-surface-2/60 border border-surface-3 focus:border-primary rounded-xl px-3 py-1.5 text-xs text-content-1 outline-none"
+                  />
+                ) : (
+                  <p className="font-semibold text-content-1 bg-surface-2/30 px-3 py-1.5 rounded-xl border border-surface-3 truncate">
+                    {bio.characterAlignment || <span className="text-content-3 italic">Neutrale</span>}
+                  </p>
+                )}
+              </div>
+
+              {/* Divinità / Patrono */}
+              <div className="space-y-1">
+                <label className="text-[11px] font-semibold text-content-3 uppercase tracking-wider block">
+                  Divinità o Patrono
+                </label>
+                {isEditing ? (
+                  <input
+                    type="text"
+                    value={draft.deityOrPatron || ''}
+                    onChange={(e) => setDraft({ ...draft, deityOrPatron: e.target.value })}
+                    placeholder="es. Mystra, Kelemvor, Grande Antico..."
+                    className="w-full bg-surface-2/60 border border-surface-3 focus:border-primary rounded-xl px-3 py-1.5 text-xs text-content-1 outline-none"
+                  />
+                ) : (
+                  <p className="font-semibold text-content-1 bg-surface-2/30 px-3 py-1.5 rounded-xl border border-surface-3 truncate">
+                    {bio.deityOrPatron || <span className="text-content-3 italic">Nessun culto primario</span>}
+                  </p>
+                )}
+              </div>
+
+              {/* Luogo di Origine */}
+              <div className="space-y-1">
+                <label className="text-[11px] font-semibold text-content-3 uppercase tracking-wider block flex items-center gap-1">
+                  <MapPin size={11} className="text-emerald-400" /> Luogo di Origine
+                </label>
+                {isEditing ? (
+                  <input
+                    type="text"
+                    value={draft.hometown || ''}
+                    onChange={(e) => setDraft({ ...draft, hometown: e.target.value })}
+                    placeholder="es. Waterdeep, Baldur's Gate, Bosco di Smeraldo..."
+                    className="w-full bg-surface-2/60 border border-surface-3 focus:border-primary rounded-xl px-3 py-1.5 text-xs text-content-1 outline-none"
+                  />
+                ) : (
+                  <p className="font-semibold text-content-1 bg-surface-2/30 px-3 py-1.5 rounded-xl border border-surface-3 truncate">
+                    {bio.hometown || <span className="text-content-3 italic">Sconosciuto</span>}
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ======================================================== */}
+      {/* 2. BIOGRAFIA & BACKSTORY MARKDOWN (BIO MODE)             */}
+      {/* ======================================================== */}
+      {showBioSections && (!isOtherPlayerView || currentPrivacy.backstory !== false) && (
         <div className="bg-surface-1 border border-surface-2 rounded-2xl p-5 space-y-4 shadow-sm">
           <div className="flex items-center justify-between gap-2 border-b border-surface-2 pb-3">
             <h3 className="font-heading text-sm font-bold text-content-1 flex items-center gap-2">
@@ -571,8 +620,29 @@ export function CharacterBackgroundTab({ player, onBioUpdated, isOtherPlayerView
               />
             </div>
           ) : bio.backstoryMarkdown ? (
-            <div className="prose prose-invert prose-sm max-w-none text-content-2 leading-relaxed bg-surface-2/30 p-4 rounded-xl border border-surface-3">
-              <MarkdownRenderer content={bio.backstoryMarkdown} />
+            <div className="space-y-2">
+              <div
+                className={`prose prose-invert prose-sm max-w-none text-content-2 leading-relaxed bg-surface-2/30 p-4 rounded-xl border border-surface-3 transition-all ${
+                  !isBackstoryExpanded && bio.backstoryMarkdown.length > 500
+                    ? 'max-h-48 overflow-hidden relative'
+                    : ''
+                }`}
+              >
+                <MarkdownRenderer content={bio.backstoryMarkdown} />
+                {!isBackstoryExpanded && bio.backstoryMarkdown.length > 500 && (
+                  <div className="absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-surface-1 via-surface-1/80 to-transparent pointer-events-none" />
+                )}
+              </div>
+              {bio.backstoryMarkdown.length > 500 && (
+                <button
+                  type="button"
+                  onClick={() => setIsBackstoryExpanded(!isBackstoryExpanded)}
+                  className="text-xs text-primary hover:underline font-semibold flex items-center gap-1 mx-auto cursor-pointer pt-1"
+                >
+                  <ChevronDown size={14} className={isBackstoryExpanded ? 'rotate-180 transition-transform' : ''} />
+                  <span>{isBackstoryExpanded ? 'Comprimi Storia' : 'Espandi Storia Completa'}</span>
+                </button>
+              )}
             </div>
           ) : (
             <div className="p-8 text-center text-xs text-content-3 bg-surface-2/20 rounded-xl border border-surface-3">
@@ -583,7 +653,8 @@ export function CharacterBackgroundTab({ player, onBioUpdated, isOtherPlayerView
       )}
 
       {/* 3. Cronologia Memorie di Lore & Svolte Personali */}
-      <div className="bg-surface-1 border border-surface-2 rounded-2xl p-5 space-y-4 shadow-sm">
+      {showMindSections && (
+        <div className="bg-surface-1 border border-surface-2 rounded-2xl p-5 space-y-4 shadow-sm">
         <div className="flex items-center justify-between gap-2 border-b border-surface-2 pb-3">
           <div className="flex items-center gap-2">
             <Layers size={16} className="text-indigo-400" />
@@ -622,13 +693,17 @@ export function CharacterBackgroundTab({ player, onBioUpdated, isOtherPlayerView
           </div>
         ) : (
           <div className="space-y-3">
-            {(isEditing ? draft.timelineMemories || [] : bio.timelineMemories || []).length === 0 ? (
-              <div className="p-6 text-center text-xs text-content-3 bg-surface-2/20 rounded-xl border border-surface-3">
-                Nessuna memoria o svolta registrata. Verranno generate automaticamente durante la sincronizzazione delle sessioni o puoi aggiungerne manualmente.
-              </div>
-            ) : (
-            (isEditing ? draft.timelineMemories || [] : bio.timelineMemories || []).map((mem, idx) => {
-              const catInfo = MEMORY_CATEGORY_LABELS[mem.category] || MEMORY_CATEGORY_LABELS.event;
+            {(() => {
+              const memList = isEditing ? draft.timelineMemories || [] : bio.timelineMemories || [];
+              if (memList.length === 0) {
+                return (
+                  <div className="p-6 text-center text-xs text-content-3 bg-surface-2/20 rounded-xl border border-surface-3">
+                    Nessuna memoria o svolta registrata. Verranno generate automaticamente durante la sincronizzazione delle sessioni o puoi aggiungerne manualmente.
+                  </div>
+                );
+              }
+              return memList.map((mem, idx) => {
+                const catInfo = MEMORY_CATEGORY_LABELS[mem.category] || MEMORY_CATEGORY_LABELS.event;
               return (
                 <div
                   key={mem.id || idx}
@@ -725,183 +800,376 @@ export function CharacterBackgroundTab({ player, onBioUpdated, isOtherPlayerView
                   )}
                 </div>
               );
-            })
-          )}
+            });
+          })()}
         </div>
         )}
       </div>
+      )}
 
-      {/* 4. Credenze, Teorie & Verità di Campagna */}
-      <div className="bg-surface-1 border border-surface-2 rounded-2xl p-5 space-y-4 shadow-sm">
-        <div className="flex items-center justify-between gap-2 border-b border-surface-2 pb-3">
-          <div className="flex items-center gap-2">
-            <Lightbulb size={16} className="text-amber-400" />
-            <h3 className="font-heading text-sm font-bold text-content-1">
-              Credenze, Teorie &amp; Verità di Campagna
-            </h3>
-            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-300 border border-amber-500/20">
-              {(isEditing ? draft.evolvingBeliefs : bio.evolvingBeliefs)?.length || 0}
-            </span>
-          </div>
-
-          <div className="flex items-center gap-2">
-            {renderPrivacyToggle('evolvingBeliefs', 'Teorie e Credenze')}
-            {isEditing && (
-              <button
-                type="button"
-                onClick={handleAddBelief}
-                className="px-2.5 py-1 bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
-              >
-                <Plus size={13} /> Nuova Teoria
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* Beliefs list */}
-        {isOtherPlayerView && currentPrivacy.evolvingBeliefs === false ? (
-          <div className="bg-surface-2/30 border border-surface-3 rounded-xl p-6 text-center space-y-2">
-            <div className="w-10 h-10 rounded-full bg-surface-2 border border-surface-3 flex items-center justify-center mx-auto text-content-3">
-              <Lock size={18} />
+      {/* 4. Credenze, Teorie, Patti & Obiettivi di Campagna */}
+      {showMindSections && (
+        <div className="bg-surface-1 border border-surface-2 rounded-2xl p-5 space-y-4 shadow-sm">
+          <div className="flex items-center justify-between gap-2 border-b border-surface-2 pb-3">
+            <div className="flex items-center gap-2">
+              <Lightbulb size={16} className="text-amber-400" />
+              <h3 className="font-heading text-sm font-bold text-content-1">
+                Mente: Teorie, Patti, Rivelazioni &amp; Obiettivi
+              </h3>
             </div>
-            <p className="text-xs font-semibold text-content-2">Teorie e Credenze Riservate</p>
-            <p className="text-[11px] text-content-3 max-w-sm mx-auto leading-relaxed">
-              {player.characterName || 'Il personaggio'} ha scelto di non condividere le proprie teorie con il gruppo.
-            </p>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {(isEditing ? draft.evolvingBeliefs || [] : bio.evolvingBeliefs || []).length === 0 ? (
-              <div className="p-6 text-center text-xs text-content-3 bg-surface-2/20 rounded-xl border border-surface-3">
-                Nessuna teoria o credenza registrata per questo personaggio.
-              </div>
-            ) : (
-            (isEditing ? draft.evolvingBeliefs || [] : bio.evolvingBeliefs || []).map((bel, idx) => {
-              const statusInfo = BELIEF_STATUS_LABELS[bel.status] || BELIEF_STATUS_LABELS.active_theory;
-              return (
-                <div
-                  key={bel.id || idx}
-                  className="p-3.5 rounded-xl bg-surface-2/40 border border-surface-3 space-y-2 hover:border-surface-3/80 transition-all text-xs"
+
+            <div className="flex items-center gap-2">
+              {renderPrivacyToggle('evolvingBeliefs', 'Teorie e Credenze')}
+              {isEditing && (
+                <button
+                  type="button"
+                  onClick={handleAddBelief}
+                  className="px-2.5 py-1 bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
                 >
-                  <div className="flex items-center justify-between gap-2 flex-wrap">
-                    <div className="flex items-center gap-2">
-                      {isEditing ? (
-                        <select
-                          value={bel.status}
-                          onChange={(e) => {
-                            const val = e.target.value as EvolvingBelief['status'];
-                            setDraft((prev) => ({
-                              ...prev,
-                              evolvingBeliefs: (prev.evolvingBeliefs || []).map((b, i) =>
-                                i === idx ? { ...b, status: val } : b
-                              ),
-                            }));
-                          }}
-                          className="bg-surface-1 border border-surface-3 rounded px-2 py-0.5 text-xs text-amber-300 font-mono"
-                        >
-                          {Object.entries(BELIEF_STATUS_LABELS).map(([k, v]) => (
-                            <option key={k} value={k}>
-                              {v.label}
-                            </option>
-                          ))}
-                        </select>
-                      ) : (
-                        <span className={`text-[10px] font-mono px-2 py-0.5 rounded border font-bold ${statusInfo.cls}`}>
-                          {statusInfo.label}
-                        </span>
-                      )}
+                  <Plus size={13} /> Nuova Teoria / Patto
+                </button>
+              )}
+            </div>
+          </div>
 
-                      <span className="font-bold text-content-1">Soggetto: {bel.subject}</span>
-                    </div>
+          {/* Filter Bar for Mind Content */}
+          {(!isOtherPlayerView || currentPrivacy.evolvingBeliefs !== false) && (
+            <div className="flex items-center gap-1.5 overflow-x-auto custom-scrollbar pb-1">
+              {(() => {
+                const rawList = isEditing ? draft.evolvingBeliefs || [] : bio.evolvingBeliefs || [];
+                const pattiCount = rawList.filter(
+                  (b) => b.status === 'pact' || (b.subject && /patto|giuramento|accordo|contratto/i.test(b.subject))
+                ).length;
+                const rivelazioniCount = rawList.filter(
+                  (b) => b.status !== 'pact' && !(b.subject && /patto|giuramento|accordo|contratto/i.test(b.subject))
+                ).length;
+                const openQuestsList = (quests || []).filter(
+                  (q) => q.status !== 'completed' && q.status !== 'resolved' && q.status !== 'archived'
+                );
+                const completedQuestsList = (quests || []).filter(
+                  (q) => q.status === 'completed' || q.status === 'resolved'
+                );
 
-                    <div className="flex items-center gap-2">
-                      {bel.revealedLoreDate && (
-                        <span className="text-[10px] font-mono text-content-3">
-                          Rivelato: {bel.revealedLoreDate}
-                        </span>
+                const filterButtons = [
+                  { id: 'all', label: `Tutti (${rawList.length + openQuestsList.length + completedQuestsList.length})` },
+                  { id: 'patti', label: `📜 Patti & Giuramenti (${pattiCount})` },
+                  { id: 'rivelazioni', label: `💡 Rivelazioni & Teorie (${rivelazioniCount})` },
+                  { id: 'open_goals', label: `🎯 Obiettivi Aperti (${openQuestsList.length})` },
+                  { id: 'completed_goals', label: `🏆 Obiettivi Raggiunti (${completedQuestsList.length})` },
+                ];
+
+                return filterButtons.map((f) => (
+                  <button
+                    key={f.id}
+                    type="button"
+                    onClick={() => setBeliefFilter(f.id as any)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all shrink-0 cursor-pointer flex items-center gap-1 ${
+                      beliefFilter === f.id
+                        ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-xs'
+                        : 'bg-surface-2 text-content-3 hover:text-content-1 border border-surface-3'
+                    }`}
+                  >
+                    {f.label}
+                  </button>
+                ));
+              })()}
+            </div>
+          )}
+
+          {/* Mind Content Display based on filter */}
+          {isOtherPlayerView && currentPrivacy.evolvingBeliefs === false ? (
+            <div className="bg-surface-2/30 border border-surface-3 rounded-xl p-6 text-center space-y-2">
+              <div className="w-10 h-10 rounded-full bg-surface-2 border border-surface-3 flex items-center justify-center mx-auto text-content-3">
+                <Lock size={18} />
+              </div>
+              <p className="text-xs font-semibold text-content-2">Teorie e Credenze Riservate</p>
+              <p className="text-[11px] text-content-3 max-w-sm mx-auto leading-relaxed">
+                {player.characterName || 'Il personaggio'} ha scelto di non condividere le proprie teorie con il gruppo.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {(() => {
+                const rawList = isEditing ? draft.evolvingBeliefs || [] : bio.evolvingBeliefs || [];
+                const pattiCount = rawList.filter(
+                  (b) => b.status === 'pact' || (b.subject && /patto|giuramento|accordo|contratto/i.test(b.subject))
+                ).length;
+                const rivelazioniCount = rawList.filter(
+                  (b) => b.status !== 'pact' && !(b.subject && /patto|giuramento|accordo|contratto/i.test(b.subject))
+                ).length;
+
+                const openQuestsList = (quests || []).filter(
+                  (q) => String(q.status) !== 'completed' && String(q.status) !== 'resolved' && String(q.status) !== 'archived'
+                );
+                const completedQuestsList = (quests || []).filter(
+                  (q) => String(q.status) === 'completed' || String(q.status) === 'resolved'
+                );
+
+                const isPactItem = (b: EvolvingBelief) =>
+                  b.status === 'pact' || (b.subject && /patto|giuramento|accordo|contratto/i.test(b.subject));
+
+                let displayBeliefs = rawList;
+                if ((beliefFilter as string) === 'patti') {
+                  displayBeliefs = rawList.filter(isPactItem);
+                } else if ((beliefFilter as string) === 'rivelazioni') {
+                  displayBeliefs = rawList.filter((b) => !isPactItem(b));
+                } else if ((beliefFilter as string) === 'open_goals' || (beliefFilter as string) === 'completed_goals') {
+                  displayBeliefs = [];
+                }
+
+                const showQuestsSection =
+                  beliefFilter === 'all' || (beliefFilter as string) === 'open_goals' || (beliefFilter as string) === 'completed_goals';
+
+                return (
+                  <div className="space-y-4">
+                    {/* Render Beliefs / Patti / Rivelazioni if applicable */}
+                    {displayBeliefs.length > 0 && (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {displayBeliefs.map((bel, idx) => {
+                          const statusInfo = BELIEF_STATUS_LABELS[bel.status] || BELIEF_STATUS_LABELS.active_theory;
+                          return (
+                            <div
+                              key={bel.id || idx}
+                              className="p-3.5 rounded-xl bg-surface-2/40 border border-surface-3 space-y-2 hover:border-surface-3/80 transition-all text-xs"
+                            >
+                              <div className="flex items-center justify-between gap-2 flex-wrap">
+                                <div className="flex items-center gap-2">
+                                  {isEditing ? (
+                                    <select
+                                      value={bel.status}
+                                      onChange={(e) => {
+                                        const val = e.target.value as EvolvingBelief['status'];
+                                        setDraft((prev) => ({
+                                          ...prev,
+                                          evolvingBeliefs: (prev.evolvingBeliefs || []).map((b, i) =>
+                                            i === idx ? { ...b, status: val } : b
+                                          ),
+                                        }));
+                                      }}
+                                      className="bg-surface-1 border border-surface-3 rounded px-2 py-0.5 text-xs text-amber-300 font-mono outline-none"
+                                    >
+                                      {Object.entries(BELIEF_STATUS_LABELS).map(([k, v]) => (
+                                        <option key={k} value={k}>
+                                          {v.label}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  ) : (
+                                    <span className={`text-[10px] font-mono px-2 py-0.5 rounded border font-bold ${statusInfo.cls}`}>
+                                      {statusInfo.label}
+                                    </span>
+                                  )}
+                                  <span className="font-bold text-content-1">{bel.subject}</span>
+                                </div>
+
+                                <div className="flex items-center gap-2">
+                                  {bel.revealedLoreDate && (
+                                    <span className="text-[10px] font-mono text-content-3">
+                                      {bel.revealedLoreDate}
+                                    </span>
+                                  )}
+                                  {isEditing && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleRemoveBelief(bel.id)}
+                                      className="text-rose-400 hover:text-rose-300 p-1 rounded hover:bg-rose-500/10 transition-colors"
+                                    >
+                                      <Trash2 size={13} />
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+
+                              {isEditing ? (
+                                <div className="space-y-2 pt-1">
+                                  <input
+                                    type="text"
+                                    value={bel.subject}
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      setDraft((prev) => ({
+                                        ...prev,
+                                        evolvingBeliefs: (prev.evolvingBeliefs || []).map((b, i) =>
+                                          i === idx ? { ...b, subject: val } : b
+                                        ),
+                                      }));
+                                    }}
+                                    placeholder="Nome soggetto / fazione / patto..."
+                                    className="w-full bg-surface-1 border border-surface-3 focus:border-primary rounded-lg px-2.5 py-1 text-xs text-content-1 font-bold outline-none"
+                                  />
+                                  <input
+                                    type="text"
+                                    value={bel.previousBelief || ''}
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      setDraft((prev) => ({
+                                        ...prev,
+                                        evolvingBeliefs: (prev.evolvingBeliefs || []).map((b, i) =>
+                                          i === idx ? { ...b, previousBelief: val } : b
+                                        ),
+                                      }));
+                                    }}
+                                    placeholder="Condizione passata..."
+                                    className="w-full bg-surface-1 border border-surface-3 focus:border-primary rounded-lg px-2.5 py-1 text-xs text-content-3 outline-none"
+                                  />
+                                  <textarea
+                                    rows={2}
+                                    value={bel.currentTruth}
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      setDraft((prev) => ({
+                                        ...prev,
+                                        evolvingBeliefs: (prev.evolvingBeliefs || []).map((b, i) =>
+                                          i === idx ? { ...b, currentTruth: val } : b
+                                        ),
+                                      }));
+                                    }}
+                                    placeholder="Dettagli del patto o verità attuale..."
+                                    className="w-full bg-surface-1 border border-surface-3 focus:border-primary rounded-lg px-2.5 py-1 text-xs text-content-1 outline-none font-mono"
+                                  />
+                                </div>
+                              ) : (
+                                <div className="space-y-1">
+                                  {bel.previousBelief && (
+                                    <p className="text-[11px] text-content-3 font-mono line-through opacity-70">
+                                      Passato: &ldquo;{bel.previousBelief}&rdquo;
+                                    </p>
+                                  )}
+                                  <p className="text-[11px] text-content-1 font-mono bg-surface-1 p-2.5 rounded-lg border border-surface-3">
+                                    👉 {bel.currentTruth}
+                                  </p>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* Render Quests / Objectives Section */}
+                    {showQuestsSection && (
+                      <div className="space-y-3 pt-2">
+                        {(beliefFilter === 'all' || (beliefFilter as string) === 'open_goals') && (
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between">
+                              <h4 className="font-heading text-xs font-bold text-cyan-400 flex items-center gap-1.5 uppercase tracking-wide">
+                                <Target size={14} /> Obiettivi Aperti ({openQuestsList.length})
+                              </h4>
+                              {!isOtherPlayerView && onOpenCreateQuest && (
+                                <button
+                                  type="button"
+                                  onClick={onOpenCreateQuest}
+                                  className="px-2.5 py-1 rounded-lg bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 text-[11px] font-semibold flex items-center gap-1 hover:bg-cyan-500/25 transition-colors cursor-pointer"
+                                >
+                                  <Plus size={12} /> Nuovo Obiettivo
+                                </button>
+                              )}
+                            </div>
+
+                            {openQuestsList.length === 0 ? (
+                              <div className="p-4 text-center text-xs text-content-3 bg-surface-2/20 rounded-xl border border-surface-3 font-mono">
+                                Nessun obiettivo aperto per questo personaggio.
+                              </div>
+                            ) : (
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                {openQuestsList.map((q) => (
+                                  <div
+                                    key={q._id}
+                                    className="p-3.5 rounded-xl bg-surface-2/40 border border-cyan-500/30 space-y-2 hover:border-cyan-500/60 transition-all text-xs"
+                                  >
+                                    <div className="flex items-start justify-between gap-2">
+                                      <div>
+                                        <span className="px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-300 border border-cyan-500/20 text-[10px] font-mono font-bold">
+                                          🎯 In Corso
+                                        </span>
+                                        <h5 className="font-bold text-content-1 text-sm mt-1">{q.name}</h5>
+                                      </div>
+                                      {!isOtherPlayerView && onEditQuest && (
+                                        <button
+                                          type="button"
+                                          onClick={() => onEditQuest(q)}
+                                          className="p-1 text-content-3 hover:text-cyan-300 transition-colors"
+                                          title="Modifica obiettivo"
+                                        >
+                                          <Edit3 size={13} />
+                                        </button>
+                                      )}
+                                    </div>
+                                    {(q as any).description && (
+                                      <p className="text-content-2 text-xs leading-relaxed line-clamp-3">
+                                        {(q as any).description}
+                                      </p>
+                                    )}
+                                    {q.progressNote && (
+                                      <div className="bg-surface-1 p-2 rounded-lg border border-surface-3 text-[11px] text-content-2 font-mono">
+                                        <span className="text-cyan-400 font-bold">Avanzamento:</span> {q.progressNote}
+                                      </div>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {(beliefFilter === 'all' || (beliefFilter as string) === 'completed_goals') && (
+                          <div className="space-y-2 pt-2">
+                            <h4 className="font-heading text-xs font-bold text-emerald-400 flex items-center gap-1.5 uppercase tracking-wide">
+                              <Award size={14} /> Obiettivi Raggiunti ({completedQuestsList.length})
+                            </h4>
+
+                            {completedQuestsList.length === 0 ? (
+                              <div className="p-4 text-center text-xs text-content-3 bg-surface-2/20 rounded-xl border border-surface-3 font-mono">
+                                Nessun obiettivo completato registrato.
+                              </div>
+                            ) : (
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                {completedQuestsList.map((q) => (
+                                  <div
+                                    key={q._id}
+                                    className="p-3.5 rounded-xl bg-surface-2/40 border border-emerald-500/30 space-y-2 text-xs"
+                                  >
+                                    <div className="flex items-start justify-between gap-2">
+                                      <div>
+                                        <span className="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 text-[10px] font-mono font-bold">
+                                          🏆 Raggiunto
+                                        </span>
+                                        <h5 className="font-bold text-content-1 text-sm mt-1">{q.name}</h5>
+                                      </div>
+                                    </div>
+                                    {(q as any).description && (
+                                      <p className="text-content-2 text-xs leading-relaxed line-clamp-2">
+                                        {(q as any).description}
+                                      </p>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Empty State when no items match current filter */}
+                    {displayBeliefs.length === 0 &&
+                      (((beliefFilter as string) === 'patti' && pattiCount === 0) ||
+                        ((beliefFilter as string) === 'rivelazioni' && rivelazioniCount === 0)) && (
+                        <div className="p-6 text-center text-xs text-content-3 bg-surface-2/20 rounded-xl border border-surface-3 font-mono">
+                          Nessun elemento trovato per il filtro selezionato.
+                        </div>
                       )}
-                      {isEditing && (
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveBelief(bel.id)}
-                          className="text-rose-400 hover:text-rose-300 p-1 rounded hover:bg-rose-500/10 transition-colors"
-                        >
-                          <Trash2 size={13} />
-                        </button>
-                      )}
-                    </div>
                   </div>
-
-                  {isEditing ? (
-                    <div className="space-y-2 pt-1">
-                      <input
-                        type="text"
-                        value={bel.subject}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          setDraft((prev) => ({
-                            ...prev,
-                            evolvingBeliefs: (prev.evolvingBeliefs || []).map((b, i) =>
-                              i === idx ? { ...b, subject: val } : b
-                            ),
-                          }));
-                        }}
-                        placeholder="Nome soggetto / fazione / mistero..."
-                        className="w-full bg-surface-1 border border-surface-3 focus:border-primary rounded-lg px-2.5 py-1 text-xs text-content-1 font-bold outline-none"
-                      />
-                      <input
-                        type="text"
-                        value={bel.previousBelief || ''}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          setDraft((prev) => ({
-                            ...prev,
-                            evolvingBeliefs: (prev.evolvingBeliefs || []).map((b, i) =>
-                              i === idx ? { ...b, previousBelief: val } : b
-                            ),
-                          }));
-                        }}
-                        placeholder="Cosa credeva in passato..."
-                        className="w-full bg-surface-1 border border-surface-3 focus:border-primary rounded-lg px-2.5 py-1 text-xs text-content-3 outline-none"
-                      />
-                      <textarea
-                        rows={2}
-                        value={bel.currentTruth}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          setDraft((prev) => ({
-                            ...prev,
-                            evolvingBeliefs: (prev.evolvingBeliefs || []).map((b, i) =>
-                              i === idx ? { ...b, currentTruth: val } : b
-                            ),
-                          }));
-                        }}
-                        placeholder="Cosa ha scoperto / dedotto ora..."
-                        className="w-full bg-surface-1 border border-surface-3 focus:border-primary rounded-lg px-2.5 py-1 text-xs text-content-1 outline-none font-mono"
-                      />
-                    </div>
-                  ) : (
-                    <div className="space-y-1">
-                      {bel.previousBelief && (
-                        <p className="text-[11px] text-content-3 font-mono line-through opacity-70">
-                          Credenza passata: &ldquo;{bel.previousBelief}&rdquo;
-                        </p>
-                      )}
-                      <p className="text-[11px] text-content-1 font-mono bg-surface-1 p-2.5 rounded-lg border border-surface-3">
-                        👉 Verità attuale: &ldquo;{bel.currentTruth}&rdquo;
-                      </p>
-                    </div>
-                  )}
-                </div>
-              );
-            })
+                );
+              })()}
+            </div>
           )}
         </div>
-        )}
-      </div>
+      )}
 
       {/* 5. Relazioni Inter-Party & Fiducia nel Gruppo (PG ↔ PG) */}
-      <div className="bg-surface-1 border border-surface-2 rounded-2xl p-5 space-y-4 shadow-sm">
+      {showPartySections && (
+        <div className="bg-surface-1 border border-surface-2 rounded-2xl p-5 space-y-4 shadow-sm">
         <div className="flex items-center justify-between gap-2 border-b border-surface-2 pb-3">
           <div className="flex items-center gap-2">
             <HeartHandshake size={16} className="text-pink-400" />
@@ -1054,9 +1322,10 @@ export function CharacterBackgroundTab({ player, onBioUpdated, isOtherPlayerView
           </div>
         )}
       </div>
+      )}
 
       {/* 6. Conoscenze del Mondo & Nozioni Apprese (World Lore) */}
-      {(!isOtherPlayerView || currentPrivacy.worldLore !== false) && (
+      {showMindSections && (!isOtherPlayerView || currentPrivacy.worldLore !== false) && (
         <div className="bg-surface-1 border border-surface-2 rounded-2xl p-5 space-y-4 shadow-sm">
           <div className="flex items-center justify-between gap-2 border-b border-surface-2 pb-3">
             <div className="flex items-center gap-2">

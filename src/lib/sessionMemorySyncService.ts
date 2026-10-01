@@ -572,13 +572,19 @@ export class SessionMemorySyncService {
     >();
 
     const excludedIds = new Set(session.excludedPlayerIds || []);
+    const excludedNames = new Set(
+      players
+        .filter((p) => excludedIds.has(p._id))
+        .map((p) => (p.characterName || '').trim().toLowerCase())
+        .filter(Boolean)
+    );
 
     players.forEach((p) => {
       if (excludedIds.has(p._id)) return; // Excluded from this session
       const isDmSelf = !!p.isDm;
       const treatAsPlayer = shouldIncludeDmAsPlayer && isDmSelf;
       const name = (p.characterName || '').trim();
-      if (name) {
+      if (name && !excludedNames.has(name.toLowerCase())) {
         const bio = CampaignManager.getCharacterBio(p._id);
         knownPartyMap.set(name.toLowerCase(), {
           _id: p._id,
@@ -590,11 +596,15 @@ export class SessionMemorySyncService {
       }
     });
 
-    // Also look at events and orphan tags
+    // Also look at events and orphan tags (ignoring any excluded character names)
     (session.events || []).forEach((ev) => {
       (ev.involvedCharacters || []).forEach((ic) => {
         const clean = (ic || '').trim();
-        if (clean.length > 1 && !knownPartyMap.has(clean.toLowerCase())) {
+        if (
+          clean.length > 1 &&
+          !excludedNames.has(clean.toLowerCase()) &&
+          !knownPartyMap.has(clean.toLowerCase())
+        ) {
           knownPartyMap.set(clean.toLowerCase(), {
             _id: `unregistered_${clean.toLowerCase().replace(/[^a-z0-9]/gi, '_')}`,
             characterName: clean,
@@ -608,7 +618,11 @@ export class SessionMemorySyncService {
 
     (options.orphanTags || []).forEach((tag) => {
       const clean = (tag || '').trim();
-      if (clean.length > 1 && !knownPartyMap.has(clean.toLowerCase())) {
+      if (
+        clean.length > 1 &&
+        !excludedNames.has(clean.toLowerCase()) &&
+        !knownPartyMap.has(clean.toLowerCase())
+      ) {
         knownPartyMap.set(clean.toLowerCase(), {
           _id: `unregistered_${clean.toLowerCase().replace(/[^a-z0-9]/gi, '_')}`,
           characterName: clean,
@@ -689,10 +703,18 @@ export class SessionMemorySyncService {
       throw new Error("Nessuna risposta valida dall'analisi AI della memoria di sessione.");
     }
 
-    // Process player proposals
+    // Process player proposals (strictly filtering out any excluded players)
     const playerProposals: PlayerMemoryProposal[] = (
       Array.isArray(rawResult.playerProposals) ? rawResult.playerProposals : []
-    ).map((pp: any, idx: number) => {
+    )
+      .filter((pp: any) => {
+        const charName = (pp.characterName || '').trim().toLowerCase();
+        const pId = pp.playerId;
+        if (pId && excludedIds.has(pId)) return false;
+        if (charName && excludedNames.has(charName)) return false;
+        return true;
+      })
+      .map((pp: any, idx: number) => {
       const charName = pp.characterName || `Avventuriero ${idx + 1}`;
       const matchedParty = combinedPartyList.find(
         (p) => p.characterName.toLowerCase() === charName.toLowerCase()

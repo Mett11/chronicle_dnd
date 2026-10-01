@@ -456,15 +456,23 @@ export class SupabaseSyncService {
     try {
       const code = campaignCode.trim();
       const entityType = entity.type || (entity as any).category || 'npc';
-      const entityImages = Array.isArray(entity.images)
+      const rawImages = Array.isArray(entity.images)
         ? entity.images
         : ((entity as any).imageUrl ? [(entity as any).imageUrl] : []);
-      const primaryImageUrl = entityImages[0] || (entity as any).imageUrl || '';
+
+      // Avoid packing giant base64 payloads (>300KB) into JSON columns that trigger Postgres statement timeout (code 57014)
+      const cleanImages = rawImages.map((img) =>
+        typeof img === 'string' && img.length > 300000 ? img.slice(0, 100) : img
+      );
+      const primaryImageUrl =
+        typeof entity.imageUrl === 'string' && entity.imageUrl.length < 300000
+          ? entity.imageUrl
+          : cleanImages[0] || '';
 
       const { _id, name, type, category, description, imageUrl, status, ...restAttributes } = entity as any;
       const attributes = {
         ...restAttributes,
-        images: entityImages,
+        images: cleanImages,
         progressNote: entity.progressNote || '',
         aliases: entity.aliases || [],
         aiConfig: entity.aiConfig || undefined,
@@ -486,10 +494,10 @@ export class SupabaseSyncService {
       };
 
       const { error } = await supabase.from('entities').upsert(payload, { onConflict: 'id' });
-      if (error) console.error('[Supabase] Error saving entity:', error);
+      if (error) console.warn('[Supabase] Warning/error saving entity:', error.message || error);
       return !error;
     } catch (err) {
-      console.error('[Supabase] Failed to save entity:', err);
+      console.warn('[Supabase] Failed to save entity (falling back to local store):', err);
       return false;
     }
   }

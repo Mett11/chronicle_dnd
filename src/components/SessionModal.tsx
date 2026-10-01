@@ -19,8 +19,9 @@ import {
   Image as ImageIcon,
   Search,
   Plus,
+  Users,
 } from 'lucide-react';
-import { Session, SessionEvent, CampaignChapter, WorldMap, Entity } from '../types';
+import { Session, SessionEvent, CampaignChapter, WorldMap, Entity, Player } from '../types';
 import { MentionInput, MentionTextarea } from './MentionInput';
 import { LoreDatePicker } from './LoreDatePicker';
 import { LoreDateInput } from './LoreDateInput';

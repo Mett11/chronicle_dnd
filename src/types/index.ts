@@ -376,7 +376,8 @@ export type BeliefStatus =
   | 'active_theory'    // Teoria o sospetto attualmente ritenuto valido
   | 'proven_fact'      // Fatto accertato e verificato nella lore
   | 'shattered_belief' // Vecchia credenza o inganno smentito dalla realtà
-  | 'suspicion';       // Forte sospetto in attesa di conferma
+  | 'suspicion'        // Forte sospetto in attesa di conferma
+  | 'pact';            // Patto, giuramento o accordo vincolante
 
 export interface EvolvingBelief {
   id: string;

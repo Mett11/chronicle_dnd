@@ -68,7 +68,7 @@ const PRESET_COLORS = [
   { name: 'Ardesia Ombra', hex: '#64748b' },
 ];
 
-type ProfileTab = 'biography' | 'family_tree' | 'notes' | 'quests' | 'dm_questions' | 'memories';
+type ProfileTab = 'biography' | 'mind' | 'family_tree' | 'notes' | 'quests' | 'dm_questions' | 'memories';
 type SearchCategoryFilter = 'all' | 'notes' | 'quests' | 'dm_questions' | 'memories';
 
 interface UnifiedSearchResult {
@@ -108,6 +108,10 @@ export function CharacterProfile() {
   }, [targetPlayer, player]);
 
   const [activeTab, setActiveTab] = useState<ProfileTab>(defaultTab);
+  const [notesHubSubTab, setNotesHubSubTab] = useState<'notes' | 'dm_questions'>(
+    defaultTab === 'dm_questions' ? 'dm_questions' : 'notes'
+  );
+  const [questsHubSubTab, setQuestsHubSubTab] = useState<'quests' | 'memories'>('quests');
   const [currentTheme] = useState<ClassTheme>(getStoredTheme);
   const [viewMode, setViewMode] = useState<'edit' | 'read'>('edit');
 
@@ -1196,9 +1200,9 @@ export function CharacterProfile() {
         </div>
       )}
 
-      {/* 6 Core Dossier Section Navigation Tiles Grid */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
-        {/* 1. Background & Bio */}
+      {/* 5 Core Dossier Hub Navigation Tiles Grid */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+        {/* Hub 1: Anagrafica & Background */}
         <button
           type="button"
           id="tab-bio-btn"
@@ -1206,27 +1210,55 @@ export function CharacterProfile() {
             setActiveTab('biography');
             if (isSearchActive) clearSearch();
           }}
-          className={`p-3 rounded-xl border text-left transition-all relative flex flex-col justify-between cursor-pointer group ${
+          className={`p-3.5 rounded-xl border text-left transition-all relative flex flex-col justify-between cursor-pointer group ${
             activeTab === 'biography' && !isSearchActive
               ? 'border-amber-500/60 bg-amber-500/10 shadow-xs ring-1 ring-amber-500/30'
               : 'border-surface-2 bg-surface-1 hover:bg-surface-2/70 hover:border-surface-3'
           }`}
         >
           <div className="flex items-start justify-between gap-1 mb-2">
-            <div className="w-7 h-7 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 group-hover:scale-105 transition-transform">
-              <FileText size={15} />
+            <div className="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 group-hover:scale-105 transition-transform">
+              <FileText size={16} />
             </div>
-            <span className="text-[10px] font-mono uppercase tracking-wider text-content-3">
-              Bio
+            <span className="text-[10px] font-mono uppercase tracking-wider text-amber-400 font-semibold">
+              Hub 1
             </span>
           </div>
           <div>
-            <div className="text-xs font-semibold text-content-1 truncate">Background</div>
-            <div className="text-[11px] text-content-3 truncate">Storia &amp; Tratti</div>
+            <div className="text-xs font-bold text-content-1 truncate">Anagrafica &amp; Bio</div>
+            <div className="text-[11px] text-content-3 truncate">Identità, Storia &amp; Segreti</div>
           </div>
         </button>
 
-        {/* 2. Family Tree & Relations */}
+        {/* Hub 2: Mente & Memorie */}
+        <button
+          type="button"
+          id="tab-mind-btn"
+          onClick={() => {
+            setActiveTab('mind');
+            if (isSearchActive) clearSearch();
+          }}
+          className={`p-3.5 rounded-xl border text-left transition-all relative flex flex-col justify-between cursor-pointer group ${
+            activeTab === 'mind' && !isSearchActive
+              ? 'border-amber-500/60 bg-amber-500/10 shadow-xs ring-1 ring-amber-500/30'
+              : 'border-surface-2 bg-surface-1 hover:bg-surface-2/70 hover:border-surface-3'
+          }`}
+        >
+          <div className="flex items-start justify-between gap-1 mb-2">
+            <div className="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 group-hover:scale-105 transition-transform">
+              <Brain size={16} />
+            </div>
+            <span className="px-1.5 py-0.5 text-[10px] font-mono rounded bg-surface-2 border border-surface-3 text-content-2">
+              {(characterBio?.evolvingBeliefs?.length || 0) + quests.length}
+            </span>
+          </div>
+          <div>
+            <div className="text-xs font-bold text-content-1 truncate">Mente &amp; Memorie</div>
+            <div className="text-[11px] text-content-3 truncate">Patti, Teorie &amp; Obiettivi</div>
+          </div>
+        </button>
+
+        {/* Hub 3: Sociale & Relazioni */}
         <button
           type="button"
           id="tab-family-btn"
@@ -1234,27 +1266,27 @@ export function CharacterProfile() {
             setActiveTab('family_tree');
             if (isSearchActive) clearSearch();
           }}
-          className={`p-3 rounded-xl border text-left transition-all relative flex flex-col justify-between cursor-pointer group ${
+          className={`p-3.5 rounded-xl border text-left transition-all relative flex flex-col justify-between cursor-pointer group ${
             activeTab === 'family_tree' && !isSearchActive
               ? 'border-emerald-500/60 bg-emerald-500/10 shadow-xs ring-1 ring-emerald-500/30'
               : 'border-surface-2 bg-surface-1 hover:bg-surface-2/70 hover:border-surface-3'
           }`}
         >
           <div className="flex items-start justify-between gap-1 mb-2">
-            <div className="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 group-hover:scale-105 transition-transform">
-              <GitBranch size={15} />
+            <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 group-hover:scale-105 transition-transform">
+              <Users size={16} />
             </div>
             <span className="px-1.5 py-0.5 text-[10px] font-mono rounded bg-surface-2 border border-surface-3 text-content-2">
               {familyRelationsCount}
             </span>
           </div>
           <div>
-            <div className="text-xs font-semibold text-content-1 truncate">Albero &amp; Relazioni</div>
-            <div className="text-[11px] text-content-3 truncate">Legami &amp; Parentela</div>
+            <div className="text-xs font-bold text-content-1 truncate">Sociale &amp; Relazioni</div>
+            <div className="text-[11px] text-content-3 truncate">Party &amp; Albero Famiglia</div>
           </div>
         </button>
 
-        {/* 3. Personal Notes */}
+        {/* Hub 4: Taccuino & DM */}
         <button
           type="button"
           id="tab-notes-btn"
@@ -1262,90 +1294,30 @@ export function CharacterProfile() {
             setActiveTab('notes');
             if (isSearchActive) clearSearch();
           }}
-          className={`p-3 rounded-xl border text-left transition-all relative flex flex-col justify-between cursor-pointer group ${
-            activeTab === 'notes' && !isSearchActive
+          className={`p-3.5 rounded-xl border text-left transition-all relative flex flex-col justify-between cursor-pointer group ${
+            (activeTab === 'notes' || activeTab === 'dm_questions') && !isSearchActive
               ? 'border-primary/60 bg-primary/10 shadow-xs ring-1 ring-primary/30'
               : 'border-surface-2 bg-surface-1 hover:bg-surface-2/70 hover:border-surface-3'
           }`}
         >
           <div className="flex items-start justify-between gap-1 mb-2">
-            <div className="w-7 h-7 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center text-primary group-hover:scale-105 transition-transform">
-              <BookOpen size={15} />
-            </div>
-            <span className="px-1.5 py-0.5 text-[10px] font-mono rounded bg-surface-2 border border-surface-3 text-content-2">
-              {notes.length}
-            </span>
-          </div>
-          <div>
-            <div className="text-xs font-semibold text-content-1 truncate">Taccuino</div>
-            <div className="text-[11px] text-content-3 truncate">Note &amp; Segreti</div>
-          </div>
-        </button>
-
-        {/* 4. Quests & Goals */}
-        <button
-          type="button"
-          id="tab-quests-btn"
-          onClick={() => {
-            setActiveTab('quests');
-            if (isSearchActive) clearSearch();
-          }}
-          className={`p-3 rounded-xl border text-left transition-all relative flex flex-col justify-between cursor-pointer group ${
-            activeTab === 'quests' && !isSearchActive
-              ? 'border-cyan-500/60 bg-cyan-500/10 shadow-xs ring-1 ring-cyan-500/30'
-              : 'border-surface-2 bg-surface-1 hover:bg-surface-2/70 hover:border-surface-3'
-          }`}
-        >
-          <div className="flex items-start justify-between gap-1 mb-2">
-            <div className="w-7 h-7 rounded-lg bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400 group-hover:scale-105 transition-transform">
-              <Target size={15} />
-            </div>
-            <span className="px-1.5 py-0.5 text-[10px] font-mono rounded bg-surface-2 border border-surface-3 text-content-2">
-              {quests.length}
-            </span>
-          </div>
-          <div>
-            <div className="text-xs font-semibold text-content-1 truncate">Obiettivi &amp; Quest</div>
-            <div className="text-[11px] text-content-3 truncate">
-              {activeQuests.length} in corso
-            </div>
-          </div>
-        </button>
-
-        {/* 5. DM Questions */}
-        <button
-          type="button"
-          id="tab-dm-questions-btn"
-          onClick={() => {
-            setActiveTab('dm_questions');
-            if (isSearchActive) clearSearch();
-          }}
-          className={`p-3 rounded-xl border text-left transition-all relative flex flex-col justify-between cursor-pointer group ${
-            activeTab === 'dm_questions' && !isSearchActive
-              ? 'border-amber-500/60 bg-amber-500/10 shadow-xs ring-1 ring-amber-500/30'
-              : 'border-surface-2 bg-surface-1 hover:bg-surface-2/70 hover:border-surface-3'
-          }`}
-        >
-          <div className="flex items-start justify-between gap-1 mb-2">
-            <div className="w-7 h-7 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 group-hover:scale-105 transition-transform">
-              <HelpCircle size={15} />
+            <div className="w-8 h-8 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center text-primary group-hover:scale-105 transition-transform">
+              <BookOpen size={16} />
             </div>
             <span className="px-1.5 py-0.5 text-[10px] font-mono rounded bg-surface-2 border border-surface-3 text-content-2 flex items-center gap-1">
-              {dmQuestions.length}
+              {notes.length + dmQuestions.length}
               {pendingQuestions.length > 0 && (
                 <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
               )}
             </span>
           </div>
           <div>
-            <div className="text-xs font-semibold text-content-1 truncate">Chiarimenti DM</div>
-            <div className="text-[11px] text-content-3 truncate">
-              {pendingQuestions.length > 0 ? `${pendingQuestions.length} in attesa` : 'Filo diretto'}
-            </div>
+            <div className="text-xs font-bold text-content-1 truncate">Taccuino &amp; DM</div>
+            <div className="text-[11px] text-content-3 truncate">Note, OCR &amp; Chiarimenti</div>
           </div>
         </button>
 
-        {/* 6. Scrapbook & Memories */}
+        {/* Hub 5: Galleria Visiva & Scrapbook */}
         <button
           type="button"
           id="tab-memories-btn"
@@ -1353,23 +1325,23 @@ export function CharacterProfile() {
             setActiveTab('memories');
             if (isSearchActive) clearSearch();
           }}
-          className={`p-3 rounded-xl border text-left transition-all relative flex flex-col justify-between cursor-pointer group ${
-            activeTab === 'memories' && !isSearchActive
+          className={`p-3.5 rounded-xl border text-left transition-all relative flex flex-col justify-between cursor-pointer group ${
+            (activeTab === 'memories' || activeTab === 'quests') && !isSearchActive
               ? 'border-purple-500/60 bg-purple-500/10 shadow-xs ring-1 ring-purple-500/30'
               : 'border-surface-2 bg-surface-1 hover:bg-surface-2/70 hover:border-surface-3'
           }`}
         >
           <div className="flex items-start justify-between gap-1 mb-2">
-            <div className="w-7 h-7 rounded-lg bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400 group-hover:scale-105 transition-transform">
-              <ImageIcon size={15} />
+            <div className="w-8 h-8 rounded-lg bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400 group-hover:scale-105 transition-transform">
+              <ImageIcon size={16} />
             </div>
             <span className="px-1.5 py-0.5 text-[10px] font-mono rounded bg-surface-2 border border-surface-3 text-content-2">
               {scrapbook.length}
             </span>
           </div>
           <div>
-            <div className="text-xs font-semibold text-content-1 truncate">Memorie Visive</div>
-            <div className="text-[11px] text-content-3 truncate">Scrapbook &amp; Ritratti</div>
+            <div className="text-xs font-bold text-content-1 truncate">Galleria Visiva</div>
+            <div className="text-[11px] text-content-3 truncate">Memoria Visiva &amp; Scrapbook</div>
           </div>
         </button>
       </div>
@@ -1634,7 +1606,7 @@ export function CharacterProfile() {
       ) : (
         /* STANDARD TAB CONTENT */
         <AnimatePresence mode="wait">
-          {/* TAB: BACKGROUND & LORE */}
+          {/* HUB 1: ANAGRAFICA & BACKGROUND */}
           {activeTab === 'biography' && (
             <motion.div
               key={`tab_biography_${targetPlayer._id}`}
@@ -1645,20 +1617,61 @@ export function CharacterProfile() {
               <CharacterBackgroundTab
                 key={targetPlayer._id}
                 player={targetPlayer}
+                activeSectionMode="bio"
                 isOtherPlayerView={effectiveIsOtherPlayerView}
                 onBioUpdated={(updated) => setCharacterBio(updated)}
               />
             </motion.div>
           )}
 
-          {/* TAB: FAMILY TREE & RELATIONSHIPS */}
+          {/* HUB 2: MENTE & MEMORIE */}
+          {activeTab === 'mind' && (
+            <motion.div
+              key={`tab_mind_${targetPlayer._id}`}
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+            >
+              <CharacterBackgroundTab
+                key={targetPlayer._id}
+                player={targetPlayer}
+                activeSectionMode="mind"
+                isOtherPlayerView={effectiveIsOtherPlayerView}
+                onBioUpdated={(updated) => setCharacterBio(updated)}
+                quests={quests}
+                onOpenCreateQuest={() => {
+                  setEditingQuest(null);
+                  setIsQuestModalOpen(true);
+                }}
+                onEditQuest={(quest) => {
+                  setEditingQuest(quest);
+                  setIsQuestModalOpen(true);
+                }}
+                onToggleQuestStatus={(quest, newStatus) =>
+                  handleToggleQuestStatus(quest, newStatus)
+                }
+                onRequestDeleteQuest={(questId) => setQuestToDelete(questId)}
+              />
+            </motion.div>
+          )}
+
+          {/* HUB 3: SOCIALE & RELAZIONI (PARTY & FAMIGLIA) */}
           {activeTab === 'family_tree' && (
             <motion.div
               key={`tab_family_tree_${targetPlayer._id}`}
               initial={{ opacity: 0, y: 6 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -6 }}
+              className="space-y-6"
             >
+              <CharacterBackgroundTab
+                key={`party_rel_${targetPlayer._id}`}
+                player={targetPlayer}
+                activeSectionMode="party"
+                isOtherPlayerView={effectiveIsOtherPlayerView}
+                onBioUpdated={(updated) => setCharacterBio(updated)}
+              />
+
               <CharacterFamilyTreeTab
                 key={targetPlayer._id}
                 player={targetPlayer}
@@ -1680,267 +1693,132 @@ export function CharacterProfile() {
             </motion.div>
           )}
 
-          {/* TAB 1: NOTES */}
-          {activeTab === 'notes' && (
+          {/* HUB 4: TACCUINO & DM */}
+          {(activeTab === 'notes' || activeTab === 'dm_questions') && (
             <motion.div
-              key={`tab_notes_${targetPlayer._id}`}
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -6 }}
-            >
-              <CharacterNotesTab
-                key={targetPlayer._id}
-                notes={notes}
-                isOtherPlayerView={effectiveIsOtherPlayerView}
-                privacySettings={characterBio?.privacySettings}
-                onTogglePrivacy={handleTogglePrivacy}
-                onOpenCreateNote={() => {
-                  setIsAskDm(false);
-                  setIsNoteModalOpen(true);
-                }}
-                onSelectNote={(note) => setSelectedNote(note)}
-                characterName={targetPlayer.characterName}
-              />
-            </motion.div>
-          )}
-
-          {/* TAB 2: QUESTS */}
-          {activeTab === 'quests' && (
-            <motion.div
-              key={`tab_quests_${targetPlayer._id}`}
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -6 }}
-            >
-              <CharacterQuestsTab
-                key={targetPlayer._id}
-                quests={quests}
-                isOtherPlayerView={effectiveIsOtherPlayerView}
-                privacySettings={characterBio?.privacySettings}
-                onTogglePrivacy={handleTogglePrivacy}
-                onOpenCreateQuest={() => {
-                  setEditingQuest(null);
-                  setIsQuestModalOpen(true);
-                }}
-                onEditQuest={(quest) => {
-                  setEditingQuest(quest);
-                  setIsQuestModalOpen(true);
-                }}
-                onToggleQuestStatus={(quest, newStatus) =>
-                  handleToggleQuestStatus(quest, newStatus)
-                }
-                onRequestDeleteQuest={(questId) => setQuestToDelete(questId)}
-                characterName={targetPlayer.characterName}
-              />
-            </motion.div>
-          )}
-
-          {/* TAB 3: DM QUESTIONS */}
-          {activeTab === 'dm_questions' && (
-            <motion.div
-              key={`tab_dm_questions_${targetPlayer._id}`}
+              key={`tab_notes_dm_${targetPlayer._id}`}
               initial={{ opacity: 0, y: 6 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -6 }}
               className="space-y-4"
             >
-              {!isOwnProfile && !player?.isDm ? (
-                <div className="bg-surface-1 border border-surface-2 rounded-xl p-10 text-center space-y-3">
-                  <div className="w-12 h-12 rounded-full bg-surface-2 border border-surface-3 flex items-center justify-center mx-auto text-amber-400">
-                    <Lock size={22} />
-                  </div>
-                  <h3 className="font-heading text-sm font-semibold text-content-1">
-                    Comunicazioni con il Dungeon Master Riservate
-                  </h3>
-                  <p className="text-xs text-content-3 max-w-md mx-auto leading-relaxed">
-                    Le conversazioni private e i chiarimenti di regole tra {targetPlayer.characterName} e il Master sono strettamente confidenziali.
-                  </p>
-                </div>
-              ) : filteredDmQuestions.length === 0 ? (
-                <div className="bg-surface-1 border border-surface-2 rounded-xl p-10 text-center space-y-3">
-                  <HelpCircle size={32} className="mx-auto text-amber-400/60" />
-                  <h3 className="font-heading text-sm font-semibold text-content-1">
-                    Nessuna domanda inviata al Dungeon Master
-                  </h3>
-                  <p className="text-xs text-content-3 max-w-md mx-auto">
-                    {isOwnProfile
-                      ? 'Hai dubbi sulla lore, desideri un chiarimento sulle tue capacità o vuoi chiedere un\'azione privata al Master?'
-                      : `${targetPlayer.characterName} non ha ancora inviato domande o richieste private al Dungeon Master.`}
-                  </p>
-                  {isOwnProfile && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsAskDm(true);
-                        setIsNoteModalOpen(true);
-                      }}
-                      className="px-3.5 py-1.5 bg-amber-500 text-surface-0 rounded-lg text-xs font-medium inline-flex items-center gap-1.5 mt-1 shadow-xs cursor-pointer hover:bg-amber-600"
-                    >
-                      <HelpCircle size={13} /> Fai una domanda al DM
-                    </button>
+              {/* Hub 4 Sub-Navigation Bar */}
+              <div className="flex items-center gap-2 border-b border-surface-2 pb-3">
+                <button
+                  type="button"
+                  onClick={() => setNotesHubSubTab('notes')}
+                  className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-2 ${
+                    notesHubSubTab === 'notes'
+                      ? 'bg-primary/20 text-primary border border-primary/30 shadow-xs'
+                      : 'bg-surface-1 text-content-3 hover:text-content-1 border border-surface-2'
+                  }`}
+                >
+                  <BookOpen size={14} />
+                  <span>Note &amp; Appunti Personali ({notes.length})</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setNotesHubSubTab('dm_questions')}
+                  className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-2 ${
+                    notesHubSubTab === 'dm_questions'
+                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30 shadow-xs'
+                      : 'bg-surface-1 text-content-3 hover:text-content-1 border border-surface-2'
+                  }`}
+                >
+                  <HelpCircle size={14} className="text-amber-400" />
+                  <span>Filo Diretto col DM ({filteredDmQuestions.length})</span>
+                  {pendingQuestions.length > 0 && (
+                    <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
                   )}
-                </div>
+                </button>
+              </div>
+
+              {notesHubSubTab === 'notes' ? (
+                <CharacterNotesTab
+                  key={targetPlayer._id}
+                  notes={notes}
+                  isOtherPlayerView={effectiveIsOtherPlayerView}
+                  privacySettings={characterBio?.privacySettings}
+                  onTogglePrivacy={handleTogglePrivacy}
+                  onOpenCreateNote={() => {
+                    setIsAskDm(false);
+                    setIsNoteModalOpen(true);
+                  }}
+                  onSelectNote={(note) => setSelectedNote(note)}
+                  characterName={targetPlayer.characterName}
+                />
               ) : (
-                <div className="space-y-3.5">
-                  {filteredDmQuestions.map((q) => (
-                    <div
-                      key={q._id}
-                      className="bg-surface-1 border border-surface-2 rounded-xl p-5 space-y-3.5 transition-all shadow-xs"
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-2">
-                            <span className="px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-400 border border-amber-500/20 text-[10px] font-semibold uppercase">
-                              Chiarimento Riservato
-                            </span>
-                            <h3 className="font-heading font-semibold text-sm text-content-1">
-                              {q.title}
-                            </h3>
-                          </div>
-                          <p className="text-[11px] text-content-3">
-                            Inviata da {targetPlayer.characterName} il {new Date(q._createdAt).toLocaleDateString('it-IT')}
-                          </p>
-                        </div>
-
-                        {q.dmResponse?.text ? (
-                          <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs font-medium rounded-md flex items-center gap-1">
-                            <CheckCircle2 size={12} /> Risposta Ricevuta
-                          </span>
-                        ) : (
-                          <span className="px-2 py-0.5 bg-amber-500/10 text-amber-400 border border-amber-500/20 text-xs font-medium rounded-md flex items-center gap-1 animate-pulse">
-                            <Clock size={12} /> In Attesa del Master
-                          </span>
-                        )}
+                <div className="space-y-4 pt-1">
+                  {!isOwnProfile && !player?.isDm ? (
+                    <div className="bg-surface-1 border border-surface-2 rounded-xl p-10 text-center space-y-3">
+                      <div className="w-12 h-12 rounded-full bg-surface-2 border border-surface-3 flex items-center justify-center mx-auto text-amber-400">
+                        <Lock size={22} />
                       </div>
-
-                      <div className="bg-surface-2/60 border border-surface-3 rounded-lg p-3.5 text-xs text-content-2 space-y-1.5">
-                        <div className="font-medium text-content-1 flex items-center gap-1.5 text-primary text-[11px]">
-                          <Lock size={11} /> {isOwnProfile ? 'La tua domanda:' : `Domanda di ${targetPlayer.characterName}:`}
-                        </div>
-                        <p className="whitespace-pre-wrap leading-relaxed">{q.content}</p>
-                      </div>
-
-                      {/* DM Response block */}
-                      {q.dmResponse?.text ? (
-                        <div className="bg-primary/10 border border-primary/25 rounded-lg p-3.5 text-xs space-y-1.5">
-                          <div className="font-heading font-semibold text-primary flex items-center justify-between text-xs">
-                            <span className="flex items-center gap-1.5">
-                              <Crown size={13} /> Risposta del DM ({q.dmResponse.answeredBy})
-                            </span>
-                            <span className="text-[10px] font-mono text-content-3">
-                              {new Date(q.dmResponse.answeredAt).toLocaleDateString('it-IT')}
-                            </span>
-                          </div>
-                          <p className="text-content-1 whitespace-pre-wrap leading-relaxed">
-                            {q.dmResponse.text}
-                          </p>
-                        </div>
-                      ) : player?.isDm ? (
-                        /* DM Input Response Area */
-                        <div className="bg-surface-2 border border-surface-3 rounded-lg p-3.5 space-y-2.5">
-                          <label className="block text-xs font-medium text-amber-400 flex items-center gap-1.5">
-                            <Crown size={13} /> Rispondi come Dungeon Master a {targetPlayer.characterName}:
-                          </label>
-                          <textarea
-                            rows={3}
-                            placeholder="Inserisci qui la tua risposta per il giocatore..."
-                            value={selectedNote?._id === q._id ? dmReplyText : ''}
-                            onFocus={() => setSelectedNote(q)}
-                            onChange={(e) => setDmReplyText(e.target.value)}
-                            className="w-full bg-surface-1 border border-surface-3 focus:border-amber-400 rounded-lg p-2.5 text-xs text-content-1 outline-none transition-colors"
-                          />
-                          <div className="flex justify-end">
-                            <button
-                              type="button"
-                              onClick={() => handleSendDmReply(q)}
-                              className="px-3.5 py-1.5 bg-amber-500 text-surface-0 hover:bg-amber-600 rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow-xs cursor-pointer"
-                            >
-                              <Send size={12} /> Invia Risposta Riservata
-                            </button>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="text-xs text-content-3 italic flex items-center gap-1.5">
-                          <Sparkles size={12} className="text-amber-400" /> Il DM risponderà al più presto a questo chiarimento.
-                        </div>
-                      )}
-
-                      {/* Clarification Management Actions Footer */}
-                      <div className="pt-2 border-t border-surface-2 flex items-center justify-between gap-2 flex-wrap text-xs">
-                        {player?.isDm ? (
-                          <div className="flex items-center gap-2 flex-wrap">
-                            {q.dmResponse?.text && (
-                              <>
-                                <button
-                                  type="button"
-                                  onClick={() => handleToggleDmClarificationResolved(q._id)}
-                                  className={`px-2.5 py-1 rounded-lg text-xs font-mono font-medium border transition-colors flex items-center gap-1 cursor-pointer ${
-                                    q.dmResponse.isResolved
-                                      ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-                                      : 'bg-surface-2 text-content-2 border-surface-3 hover:text-content-1'
-                                  }`}
-                                >
-                                  <CheckCircle2 size={12} />
-                                  <span>{q.dmResponse.isResolved ? 'Risolto' : 'Segna Risolto'}</span>
-                                </button>
-
-                                <button
-                                  type="button"
-                                  onClick={() => handleDeleteDmReply(q._id)}
-                                  className="px-2.5 py-1 rounded-lg text-xs font-mono text-error hover:bg-error/10 border border-transparent hover:border-error/30 transition-colors flex items-center gap-1 cursor-pointer"
-                                  title="Elimina la risposta del Master"
-                                >
-                                  <Trash2 size={12} />
-                                  <span>Elimina Risposta</span>
-                                </button>
-                              </>
-                            )}
-
-                            <button
-                              type="button"
-                              onClick={() => handleRemoveClarification(q._id)}
-                              className="px-2.5 py-1 rounded-lg text-xs font-mono bg-surface-2 hover:bg-surface-3 text-content-2 hover:text-content-1 border border-surface-3 transition-colors flex items-center gap-1 cursor-pointer"
-                              title="Rimuovi questo chiarimento dalla visuale del Master"
-                            >
-                              <EyeOff size={12} />
-                              <span>Rimuovi dal Master</span>
-                            </button>
-                          </div>
-                        ) : (
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <button
-                              type="button"
-                              onClick={() => handleRemoveClarification(q._id)}
-                              className="px-2.5 py-1 rounded-lg text-xs font-mono bg-surface-2 hover:bg-surface-3 text-content-2 hover:text-content-1 border border-surface-3 transition-colors flex items-center gap-1 cursor-pointer"
-                              title="Rimuovi questo chiarimento dal tuo profilo"
-                            >
-                              <EyeOff size={12} />
-                              <span>Rimuovi dal mio profilo</span>
-                            </button>
-
-                            {!q.dmResponse?.text && (
-                              <button
-                                type="button"
-                                onClick={() => handleDeleteClarificationRequest(q._id)}
-                                className="px-2.5 py-1 rounded-lg text-xs font-mono text-error hover:bg-error/10 border border-transparent hover:border-error/30 transition-colors flex items-center gap-1 cursor-pointer"
-                                title="Annulla la richiesta di chiarimento"
-                              >
-                                <Trash2 size={12} />
-                                <span>Annulla Richiesta</span>
-                              </button>
-                            )}
-                          </div>
-                        )}
-                      </div>
+                      <h3 className="font-heading text-sm font-semibold text-content-1">
+                        Comunicazioni con il Dungeon Master Riservate
+                      </h3>
+                      <p className="text-xs text-content-3 max-w-md mx-auto leading-relaxed">
+                        Le conversazioni private e i chiarimenti di regole tra {targetPlayer.characterName} e il Master sono strettamente confidenziali.
+                      </p>
                     </div>
-                  ))}
+                  ) : filteredDmQuestions.length === 0 ? (
+                    <div className="bg-surface-1 border border-surface-2 rounded-xl p-10 text-center space-y-3">
+                      <HelpCircle size={32} className="mx-auto text-amber-400/60" />
+                      <h3 className="font-heading text-sm font-semibold text-content-1">
+                        Nessuna domanda inviata al Dungeon Master
+                      </h3>
+                      <p className="text-xs text-content-3 max-w-md mx-auto">
+                        {isOwnProfile
+                          ? 'Hai dubbi sulla lore, desideri un chiarimento sulle tue capacità o vuoi chiedere un\'azione privata al Master?'
+                          : `${targetPlayer.characterName} non ha ancora inviato domande o richieste private al Dungeon Master.`}
+                      </p>
+                      {isOwnProfile && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsAskDm(true);
+                            setIsNoteModalOpen(true);
+                          }}
+                          className="px-3.5 py-1.5 bg-amber-500 text-surface-0 rounded-lg text-xs font-medium inline-flex items-center gap-1.5 mt-1 shadow-xs cursor-pointer hover:bg-amber-600"
+                        >
+                          <HelpCircle size={13} /> Fai una domanda al DM
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="space-y-3.5">
+                      {filteredDmQuestions.map((q) => (
+                        <div
+                          key={q._id}
+                          className="bg-surface-1 border border-surface-2 rounded-xl p-5 space-y-3.5 transition-all shadow-xs"
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2">
+                                <span className="px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-400 border border-amber-500/20 text-[10px] font-semibold uppercase">
+                                  Chiarimento Riservato
+                                </span>
+                                <h3 className="font-heading font-semibold text-sm text-content-1">
+                                  {q.title}
+                                </h3>
+                              </div>
+                            </div>
+                          </div>
+                          <p className="text-xs text-content-2 leading-relaxed whitespace-pre-wrap">
+                            {q.content}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </motion.div>
           )}
 
-          {/* TAB 4: MEMORIES & SCRAPBOOK */}
-          {activeTab === 'memories' && (
+          {/* HUB 5: GALLERIA VISIVA & SCRAPBOOK */}
+          {(activeTab === 'memories' || activeTab === 'quests') && (
             <motion.div
               key={`tab_memories_${targetPlayer._id}`}
               initial={{ opacity: 0, y: 6 }}
@@ -1954,7 +1832,7 @@ export function CharacterProfile() {
                 privacySettings={characterBio?.privacySettings}
                 onTogglePrivacy={handleTogglePrivacy}
                 onOpenCreateMemory={() => setIsMemoryModalOpen(true)}
-                onSelectMemory={(item) => setSelectedMemory(item)}
+                onSelectMemory={(mem) => setSelectedMemory(mem)}
                 characterName={targetPlayer.characterName}
               />
             </motion.div>

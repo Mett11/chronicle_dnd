@@ -78,6 +78,10 @@ const BELIEF_STATUS_LABELS: Record<EvolvingBelief['status'], { label: string; cl
     label: '🔍 Sospetto / Ipotesi',
     cls: 'bg-purple-500/10 text-purple-300 border-purple-500/25',
   },
+  pact: {
+    label: '📜 Patto / Giuramento',
+    cls: 'bg-indigo-500/10 text-indigo-300 border-indigo-500/25',
+  },
 };
 
 const MEMORY_CATEGORY_LABELS: Record<TimelineMemoryEntry['category'], { label: string; cls: string }> = {
