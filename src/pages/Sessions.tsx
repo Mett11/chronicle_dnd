@@ -2448,6 +2448,7 @@ export function Sessions() {
       {/* AI Entity Extractor Modal */}
       {selectedSession && (
         <EntityExtractionModal
+          key={selectedSession._id}
           isOpen={isExtractModalOpen}
           onClose={() => setIsExtractModalOpen(false)}
           rawText={

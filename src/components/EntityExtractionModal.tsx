@@ -75,6 +75,67 @@ export function EntityExtractionModal({
   const [hasScanned, setHasScanned] = useState(false);
   const [modelUsed, setModelUsed] = useState<string | null>(null);
 
+  const abortControllerRef = React.useRef<AbortController | null>(null);
+  const currentRequestIdRef = React.useRef<number>(0);
+  const timeoutIdRef = React.useRef<any>(null);
+  const lastProcessedTextRef = React.useRef<string>('');
+
+  const cancelAnalysis = React.useCallback((isClosing = false) => {
+    if (timeoutIdRef.current) {
+      clearTimeout(timeoutIdRef.current);
+      timeoutIdRef.current = null;
+    }
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    currentRequestIdRef.current += 1;
+    setIsLoading(false);
+    if (!isClosing) {
+      setErrorMessage('Analisi annullata dall\'utente.');
+    }
+  }, []);
+
+  const handleCloseModal = React.useCallback(() => {
+    cancelAnalysis(true);
+    onClose();
+  }, [cancelAnalysis, onClose]);
+
+  // Handle ESC key to cancel & close
+  React.useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isOpen) {
+        handleCloseModal();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, handleCloseModal]);
+
+  // Cleanup on unmount
+  React.useEffect(() => {
+    return () => {
+      if (timeoutIdRef.current) clearTimeout(timeoutIdRef.current);
+      if (abortControllerRef.current) abortControllerRef.current.abort();
+    };
+  }, []);
+
+  // When isOpen changes or rawText changes: reset state, NEVER AUTO-START!
+  React.useEffect(() => {
+    if (isOpen) {
+      if (rawText !== lastProcessedTextRef.current) {
+        cancelAnalysis(true);
+        lastProcessedTextRef.current = rawText;
+        setItems([]);
+        setExistingDetected([]);
+        setErrorMessage(null);
+        setHasScanned(false);
+      }
+    } else {
+      cancelAnalysis(true);
+    }
+  }, [isOpen, rawText, cancelAnalysis]);
+
   const [provider, setProvider] = useState<LlmProviderType>(() => {
     const prefs = UserPreferencesService.getLocalPreferences();
     if (prefs.ai?.extractorProvider) return prefs.ai.extractorProvider as LlmProviderType;
@@ -209,7 +270,8 @@ export function EntityExtractionModal({
     };
   };
 
-  const extractWithClientGemini = async (apiKeyToUse: string) => {
+  const extractWithClientGemini = async (apiKeyToUse: string, signal?: AbortSignal) => {
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
     const ai = new GoogleGenAI({ apiKey: apiKeyToUse });
     const existingEntities = CampaignManager.getEntities();
     const existingNames = existingEntities.map((e) => e.name);
@@ -276,6 +338,7 @@ Rispondi ESCLUSIVAMENTE in formato JSON valido conforme al seguente schema:
     let lastError: any = null;
 
     for (const modelName of candidateModels) {
+      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
       try {
         const response = await ai.models.generateContent({
           model: modelName,
@@ -296,6 +359,8 @@ Rispondi ESCLUSIVAMENTE in formato JSON valido conforme al seguente schema:
           },
         });
 
+        if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+
         const responseText = response.text || '';
         if (responseText.trim()) {
           let parsedJson: any = null;
@@ -312,6 +377,7 @@ Rispondi ESCLUSIVAMENTE in formato JSON valido conforme al seguente schema:
           }
         }
       } catch (err: any) {
+        if (signal?.aborted || err?.name === 'AbortError') throw err;
         lastError = err;
         const status = err?.status || err?.statusCode;
         const msg = String(err?.message || err);
@@ -328,16 +394,29 @@ Rispondi ESCLUSIVAMENTE in formato JSON valido conforme al seguente schema:
 
         console.warn(`Model ${modelName} failed (${status || 'err'}), trying next candidate:`, msg);
         if (isTemporaryOverload) {
-          // Pause briefly to let the momentary spike clear before contacting next model
-          await new Promise((r) => setTimeout(r, 1200));
+          // Pause briefly unless aborted
+          await new Promise((resolve, reject) => {
+            if (signal?.aborted) return reject(new DOMException('Aborted', 'AbortError'));
+            const onAbort = () => {
+              clearTimeout(timer);
+              reject(new DOMException('Aborted', 'AbortError'));
+            };
+            signal?.addEventListener('abort', onAbort, { once: true });
+            const timer = setTimeout(() => {
+              signal?.removeEventListener('abort', onAbort);
+              resolve(null);
+            }, 1200);
+          });
         }
       }
     }
 
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
     throw lastError || new Error('Nessun modello Gemini ha risposto correttamente.');
   };
 
-  const extractWithClientOpenRouter = async (apiKeyToUse: string) => {
+  const extractWithClientOpenRouter = async (apiKeyToUse: string, signal?: AbortSignal) => {
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
     const existingEntities = CampaignManager.getEntities();
     const existingNames = existingEntities.map((e) => e.name);
     const players = CampaignManager.getStoredPlayers();
@@ -370,6 +449,7 @@ Rispondi ESCLUSIVAMENTE in formato JSON valido:
 
     const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
+      signal,
       headers: {
         Authorization: `Bearer ${apiKeyToUse}`,
         'Content-Type': 'application/json',
@@ -395,7 +475,8 @@ Rispondi ESCLUSIVAMENTE in formato JSON valido:
     throw new Error(resData?.error?.message || 'Errore nella risposta JSON da OpenRouter.');
   };
 
-  const extractWithClientCloudflare = async (accountId: string, token: string) => {
+  const extractWithClientCloudflare = async (accountId: string, token: string, signal?: AbortSignal) => {
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
     const existingEntities = CampaignManager.getEntities();
     const existingNames = existingEntities.map((e) => e.name);
     const players = CampaignManager.getStoredPlayers();
@@ -413,6 +494,7 @@ PG party: ${playerNames.join(', ')}.`;
 
     const res = await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/v1/chat/completions`, {
       method: 'POST',
+      signal,
       headers: {
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
@@ -444,13 +526,36 @@ PG party: ${playerNames.join(', ')}.`;
       return;
     }
 
+    // Cancel any ongoing task first
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    if (timeoutIdRef.current) {
+      clearTimeout(timeoutIdRef.current);
+    }
+
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+    const thisRequestId = ++currentRequestIdRef.current;
+
     setIsLoading(true);
     setErrorMessage(null);
+
+    // Safety timeout: 45 seconds max
+    timeoutIdRef.current = setTimeout(() => {
+      if (currentRequestIdRef.current === thisRequestId && !abortController.signal.aborted) {
+        abortController.abort();
+        setIsLoading(false);
+        setErrorMessage('L\'analisi ha impiegato troppo tempo (timeout di sicurezza dopo 45s). Puoi riprovare o cambiare modello.');
+      }
+    }, 45000);
 
     const activeCustomKey = forceServer ? '' : customApiKey.trim();
     const keys = await ApiKeyManager.getDecryptedKeys();
     const campKeys = await ApiKeyManager.preloadCampaignKeys();
     const persKeys = await ApiKeyManager.preloadPersonalKeys();
+
+    if (abortController.signal.aborted || thisRequestId !== currentRequestIdRef.current) return;
 
     const isMissingKey = provider === 'openrouter' && !keys.openrouterKey && !campKeys.openrouterKey && !persKeys.openrouterKey;
 
@@ -481,15 +586,15 @@ PG party: ${playerNames.join(', ')}.`;
       const executeDirectClientExtraction = async () => {
         if (provider === 'gemini') {
           const effectiveKey = activeCustomKey || keys.geminiKey || campKeys.geminiKey || persKeys.geminiKey;
-          if (effectiveKey) return await extractWithClientGemini(effectiveKey);
+          if (effectiveKey) return await extractWithClientGemini(effectiveKey, abortController.signal);
         } else if (provider === 'openrouter') {
           const effectiveOrKey = keys.openrouterKey || campKeys.openrouterKey || persKeys.openrouterKey;
-          if (effectiveOrKey) return await extractWithClientOpenRouter(effectiveOrKey);
+          if (effectiveOrKey) return await extractWithClientOpenRouter(effectiveOrKey, abortController.signal);
         } else if (provider === 'cloudflare') {
           const cfId = keys.cloudflareAccountId || campKeys.cloudflareAccountId || persKeys.cloudflareAccountId;
           const cfToken = keys.cloudflareApiToken || campKeys.cloudflareApiToken || persKeys.cloudflareApiToken;
           if (cfId && cfToken) {
-            return await extractWithClientCloudflare(cfId, cfToken);
+            return await extractWithClientCloudflare(cfId, cfToken, abortController.signal);
           }
         }
         throw new Error('Credenziali mancanti per l\'esecuzione diretta client.');
@@ -499,6 +604,7 @@ PG party: ${playerNames.join(', ')}.`;
       try {
         let response = await fetch('/api/ai/extract-entities', {
           method: 'POST',
+          signal: abortController.signal,
           headers: {
             'Content-Type': 'application/json',
             ...(activeCustomKey ? { 'x-custom-api-key': activeCustomKey } : {}),
@@ -522,14 +628,21 @@ PG party: ${playerNames.join(', ')}.`;
             data = await response.json().catch(() => null);
           }
         }
-      } catch (fetchErr) {
+      } catch (fetchErr: any) {
+        if (abortController.signal.aborted || thisRequestId !== currentRequestIdRef.current || fetchErr?.name === 'AbortError') {
+          return;
+        }
         // Silent fail over to direct client extraction below
       }
+
+      if (abortController.signal.aborted || thisRequestId !== currentRequestIdRef.current) return;
 
       // 2. Seamless client fallback if server endpoint returned non-200 or 404 (static host like Cloudflare Pages)
       if (!data) {
         data = await executeDirectClientExtraction();
       }
+
+      if (abortController.signal.aborted || thisRequestId !== currentRequestIdRef.current) return;
 
       if (!data) {
         throw new Error('Nessun dato restituito dall\'analisi.');
@@ -630,10 +743,19 @@ PG party: ${playerNames.join(', ')}.`;
       setHasScanned(true);
       setShowKeyInput(false);
     } catch (err: any) {
+      if (abortController.signal.aborted || thisRequestId !== currentRequestIdRef.current || err?.name === 'AbortError') {
+        return;
+      }
       console.error('Extraction error:', err);
       setErrorMessage(err.message || 'Si è verificato un errore durante l\'analisi del testo.');
     } finally {
-      setIsLoading(false);
+      if (timeoutIdRef.current) {
+        clearTimeout(timeoutIdRef.current);
+        timeoutIdRef.current = null;
+      }
+      if (thisRequestId === currentRequestIdRef.current) {
+        setIsLoading(false);
+      }
     }
   };
 
@@ -669,13 +791,6 @@ PG party: ${playerNames.join(', ')}.`;
     setErrorMessage(null);
     startAnalysis(true);
   };
-
-  // Trigger analysis when modal opens and hasn't scanned yet
-  React.useEffect(() => {
-    if (isOpen && !hasScanned && !isLoading && rawText?.trim()) {
-      startAnalysis();
-    }
-  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -823,8 +938,9 @@ PG party: ${playerNames.join(', ')}.`;
 
               <button
                 type="button"
-                onClick={onClose}
+                onClick={handleCloseModal}
                 className="p-2 rounded-xl text-content-3 hover:text-content-1 hover:bg-surface-2 transition-colors cursor-pointer"
+                title="Chiudi ed annulla"
               >
                 <X size={18} />
               </button>
@@ -834,21 +950,66 @@ PG party: ${playerNames.join(', ')}.`;
           {/* Body Content */}
           <div className="p-4 sm:p-6 overflow-y-auto space-y-5 flex-1 custom-scrollbar">
             {isLoading ? (
-              <div className="py-16 text-center space-y-4">
-                <div className="w-14 h-14 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center mx-auto text-primary animate-pulse">
+              <div className="py-14 text-center space-y-5 animate-fade-in">
+                <div className="w-14 h-14 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center mx-auto text-primary animate-pulse shadow-sm">
                   <Loader2 size={28} className="animate-spin" />
                 </div>
-                <div className="space-y-1">
-                  <h4 className="font-heading font-semibold text-sm text-content-1">
+                <div className="space-y-1.5">
+                  <h4 className="font-heading font-semibold text-sm sm:text-base text-content-1">
                     Analisi della Cronaca in corso...
                   </h4>
-                  <p className="text-xs text-content-3 max-w-md mx-auto">
-                    Gemini sta leggendo il testo della sessione, identificando figure chiave, toponimi e generando le schede contestualizzate.
+                  <p className="text-xs text-content-3 max-w-md mx-auto leading-relaxed">
+                    {provider === 'openrouter' ? 'OpenRouter' : 'Gemini'} sta leggendo il testo della sessione, identificando figure chiave, toponimi e generando le schede contestualizzate.
                   </p>
+                </div>
+                <div className="pt-2 flex justify-center">
+                  <button
+                    type="button"
+                    onClick={() => cancelAnalysis(false)}
+                    className="px-4 py-2 rounded-xl bg-surface-2 hover:bg-rose-500/15 border border-surface-3 hover:border-rose-500/30 text-xs font-semibold text-rose-300 transition-colors inline-flex items-center gap-2 cursor-pointer shadow-xs"
+                  >
+                    <X size={14} />
+                    <span>Annulla Analisi</span>
+                  </button>
                 </div>
               </div>
             ) : errorMessage ? (
               (() => {
+                const isUserCancelled = errorMessage.includes('annullata');
+                if (isUserCancelled) {
+                  return (
+                    <div className="bg-surface-2/60 border border-surface-3 rounded-2xl p-6 text-center space-y-4 max-w-md mx-auto my-8 animate-fade-in">
+                      <div className="w-12 h-12 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-400 flex items-center justify-center mx-auto">
+                        <AlertCircle size={24} />
+                      </div>
+                      <div className="space-y-1">
+                        <h4 className="font-heading font-semibold text-sm text-content-1">
+                          Analisi Annullata
+                        </h4>
+                        <p className="text-xs text-content-3">
+                          L'elaborazione è stata interrotta. Puoi riavviarla in qualsiasi momento cliccando sul tasto sottostante.
+                        </p>
+                      </div>
+                      <div className="pt-2 flex justify-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => startAnalysis()}
+                          className="px-4 py-2 bg-primary hover:bg-primary-hover text-surface-0 font-semibold rounded-xl text-xs flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+                        >
+                          <Sparkles size={14} />
+                          <span>Riavvia Analisi</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleCloseModal}
+                          className="px-4 py-2 bg-surface-2 hover:bg-surface-3 text-content-2 rounded-xl text-xs transition-colors cursor-pointer"
+                        >
+                          Chiudi
+                        </button>
+                      </div>
+                    </div>
+                  );
+                }
                 const formattedErr = parseExtractionError(errorMessage);
                 return (
                   <div className="bg-rose-500/10 border border-rose-500/30 rounded-xl p-5 text-center space-y-4 max-w-xl mx-auto">
@@ -932,6 +1093,58 @@ PG party: ${playerNames.join(', ')}.`;
                   </div>
                 );
               })()
+            ) : !hasScanned ? (
+              <div className="py-8 sm:py-12 max-w-xl mx-auto text-center space-y-6 animate-fade-in">
+                <div className="w-16 h-16 rounded-2xl bg-primary/10 border border-primary/25 flex items-center justify-center mx-auto text-primary shadow-sm">
+                  <Sparkles size={32} />
+                </div>
+
+                <div className="space-y-2">
+                  <h4 className="font-heading font-bold text-lg text-content-1">
+                    Estrazione Automatica Entità dalla Cronaca
+                  </h4>
+                  <p className="text-xs sm:text-sm text-content-3 leading-relaxed">
+                    L'Intelligenza Artificiale analizzerà il testo di questa sessione per estrarre nuovi PNG, mostri, luoghi, oggetti magici, fazioni e quest, generando automaticamente schede e descrizioni coerenti.
+                  </p>
+                </div>
+
+                {/* Text summary preview card */}
+                <div className="bg-surface-2/70 border border-surface-3 rounded-xl p-3.5 text-left space-y-2 text-xs">
+                  <div className="flex items-center justify-between text-content-2 font-medium">
+                    <span className="flex items-center gap-1.5">
+                      <BookOpen size={14} className="text-primary" />
+                      <span>Testo pronto per l'analisi</span>
+                    </span>
+                    <span className="font-mono text-[11px] text-content-3">
+                      {rawText.trim().length} caratteri • ~{rawText.trim().split(/\s+/).filter(Boolean).length} parole
+                    </span>
+                  </div>
+                  <div className="bg-surface-1/80 border border-surface-3/80 rounded-lg p-2.5 max-h-32 overflow-y-auto font-mono text-[11px] text-content-3 leading-relaxed whitespace-pre-wrap select-none custom-scrollbar">
+                    {rawText.trim().slice(0, 600)}
+                    {rawText.trim().length > 600 && '...'}
+                  </div>
+                </div>
+
+                {/* Manual Start Button */}
+                <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => startAnalysis()}
+                    disabled={!rawText?.trim()}
+                    className="w-full sm:w-auto px-6 py-3 bg-primary hover:bg-primary-hover text-surface-0 font-semibold rounded-xl text-sm flex items-center justify-center gap-2 shadow-md transition-all cursor-pointer hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <Sparkles size={16} />
+                    <span>Avvia Analisi & Estrazione</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleCloseModal}
+                    className="w-full sm:w-auto px-4 py-3 bg-surface-2 hover:bg-surface-3 text-content-2 hover:text-content-1 rounded-xl text-xs font-medium transition-colors cursor-pointer"
+                  >
+                    Chiudi
+                  </button>
+                </div>
+              </div>
             ) : items.length === 0 && hasScanned ? (
               <div className="py-10 text-center space-y-3 bg-surface-2/40 border border-surface-3 rounded-2xl p-6">
                 <BookOpen size={32} className="mx-auto text-content-3 opacity-60" />
@@ -1189,40 +1402,77 @@ PG party: ${playerNames.join(', ')}.`;
 
           {/* Footer Actions */}
           <div className="p-4 sm:p-5 border-t border-surface-2 bg-surface-1 flex items-center justify-between gap-3 shrink-0">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 text-xs font-medium text-content-3 hover:text-content-1 rounded-xl transition-colors cursor-pointer"
-            >
-              Annulla
-            </button>
+            {isLoading ? (
+              <>
+                <div className="flex items-center gap-2 text-xs text-content-3">
+                  <Loader2 size={14} className="animate-spin text-primary" />
+                  <span>Elaborazione in corso...</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => cancelAnalysis(false)}
+                  className="px-4 py-2 bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-300 font-semibold rounded-xl text-xs flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+                >
+                  <X size={14} />
+                  <span>Annulla Analisi</span>
+                </button>
+              </>
+            ) : !hasScanned ? (
+              <>
+                <button
+                  type="button"
+                  onClick={handleCloseModal}
+                  className="px-4 py-2 text-xs font-medium text-content-3 hover:text-content-1 rounded-xl transition-colors cursor-pointer"
+                >
+                  Annulla
+                </button>
+                <button
+                  type="button"
+                  onClick={() => startAnalysis()}
+                  disabled={!rawText?.trim()}
+                  className="px-5 py-2 bg-primary hover:bg-primary-hover text-surface-0 font-semibold rounded-xl text-xs flex items-center gap-1.5 shadow-sm transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Sparkles size={14} />
+                  <span>Avvia Estrazione Entità</span>
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={handleCloseModal}
+                  className="px-4 py-2 text-xs font-medium text-content-3 hover:text-content-1 rounded-xl transition-colors cursor-pointer"
+                >
+                  Chiudi
+                </button>
 
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => startAnalysis()}
-                disabled={isLoading}
-                className="px-3.5 py-2 bg-surface-2 hover:bg-surface-3 text-content-2 hover:text-content-1 border border-surface-3 rounded-xl text-xs font-medium transition-colors cursor-pointer disabled:opacity-50"
-              >
-                Rianalizza Testo
-              </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => startAnalysis()}
+                    className="px-3.5 py-2 bg-surface-2 hover:bg-surface-3 text-content-2 hover:text-content-1 border border-surface-3 rounded-xl text-xs font-medium transition-colors cursor-pointer"
+                  >
+                    Rianalizza Testo
+                  </button>
 
-              <button
-                type="button"
-                onClick={handleApply}
-                disabled={isLoading || (selectedCount === 0 && (!autoTagInText || existingDetected.length === 0))}
-                className="px-4 py-2 bg-primary hover:bg-primary-hover text-surface-0 font-semibold rounded-xl text-xs flex items-center gap-1.5 shadow-sm transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <Check size={14} />
-                <span>
-                  {selectedCount > 0
-                    ? `Crea ${selectedCount} Entità & Applica Tag`
-                    : existingDetected.length > 0 && autoTagInText
-                    ? `Applica Tag alle Entità Rilevate (${existingDetected.length})`
-                    : 'Nessuna Entità Selezionata'}
-                </span>
-              </button>
-            </div>
+                  <button
+                    type="button"
+                    onClick={handleApply}
+                    disabled={selectedCount === 0 && (!autoTagInText || existingDetected.length === 0)}
+                    className="px-4 py-2 bg-primary hover:bg-primary-hover text-surface-0 font-semibold rounded-xl text-xs flex items-center gap-1.5 shadow-sm transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <Check size={14} />
+                    <span>
+                      {selectedCount > 0
+                        ? `Crea ${selectedCount} Entità & Applica Tag`
+                        : existingDetected.length > 0 && autoTagInText
+                        ? `Applica Tag alle Entità Rilevate (${existingDetected.length})`
+                        : 'Nessuna Entità Selezionata'}
+                    </span>
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       </div>

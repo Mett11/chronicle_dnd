@@ -549,10 +549,12 @@ Rispondi ESCLUSIVAMENTE in formato JSON valido conforme al seguente schema:
       let retryDelaySeconds = 0;
 
       for (const apiKey of apiKeysToTry) {
+        if (req.destroyed || res.writableEnded) break;
         const isCurrentKeyCustom = apiKey === customKey;
         const ai = new GoogleGenAI({ apiKey });
 
         for (const modelName of candidateModels) {
+          if (req.destroyed || res.writableEnded) break;
           try {
             const response = await ai.models.generateContent({
               model: modelName,

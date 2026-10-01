@@ -1289,6 +1289,7 @@ export function SessionModal({
     {/* AI ENTITY EXTRACTION MODAL */}
     {features.enableAiExtractor && (
       <EntityExtractionModal
+        key={initialSession?._id || 'new_session_modal'}
         isOpen={isExtractModalOpen}
         onClose={() => setIsExtractModalOpen(false)}
         rawText={recapText}
