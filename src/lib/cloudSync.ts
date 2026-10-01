@@ -960,6 +960,27 @@ export class CloudSyncService {
           const supaData = await SupabaseSyncService.fetchCampaignData(activeCode);
           if (supaData) {
             console.log(`[CloudSync] Hydrated from Supabase: ${supaData.sessions?.length || 0} sessions, ${supaData.notes?.length || 0} notes, ${supaData.entities?.length || 0} entities`);
+            if (supaData.title) {
+              const allCamps = CampaignManager.getCampaigns();
+              const idx = allCamps.findIndex((c) => c.code === activeCode);
+              if (idx !== -1) {
+                if (allCamps[idx].name !== supaData.title) {
+                  allCamps[idx].name = supaData.title;
+                  CampaignManager.saveCampaignsLocalOnly(allCamps);
+                }
+              } else {
+                allCamps.push({
+                  code: activeCode,
+                  name: supaData.title,
+                  createdAt: new Date().toISOString(),
+                });
+                CampaignManager.saveCampaignsLocalOnly(allCamps);
+              }
+              CampaignManager.updateCampaignMeta(activeCode, {
+                name: supaData.title,
+                dmId: supaData.dmId || undefined,
+              });
+            }
             if (Array.isArray(supaData.sessions) && supaData.sessions.length > 0) {
               CampaignManager.saveSessionsLocalOnly(supaData.sessions);
             }
@@ -990,6 +1011,7 @@ export class CloudSyncService {
 
             this.isCampaignHydrated = true;
             if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('chronicle_campaign_updated'));
               window.dispatchEvent(new CustomEvent('chronicle_sessions_updated', { detail: { sessions: supaData.sessions } }));
               window.dispatchEvent(new CustomEvent('chronicle_chapters_updated'));
               window.dispatchEvent(new CustomEvent('chronicle_data_updated'));
