@@ -15,9 +15,12 @@ import {
   Sparkle,
   ArrowRight,
   Info,
+  Loader2,
+  Cpu,
 } from 'lucide-react';
 import { CampaignManager } from '../store/campaignStore';
 import { Entity, Player } from '../types';
+import { ApiKeyManager } from '../lib/apiKeyManager';
 
 interface OrphanTagModalProps {
   isOpen: boolean;
@@ -65,6 +68,7 @@ export function OrphanTagModal({
   const [newStatus, setNewStatus] = useState<Entity['status']>('alive');
   const [newNote, setNewNote] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isDraftingAi, setIsDraftingAi] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   const activeCampaignCode = CampaignManager.getActiveCampaignCode() || '';
@@ -80,6 +84,39 @@ export function OrphanTagModal({
     }
     return t.trim();
   }, [tagName]);
+
+  const handleDraftWithAi = async () => {
+    if (!cleanTag) return;
+    setIsDraftingAi(true);
+    try {
+      const keys = await ApiKeyManager.getDecryptedKeys();
+      const res = await fetch('/api/ai/draft-entity-from-mention', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mentionName: cleanTag,
+          geminiApiKey: keys.geminiKey,
+          openrouterApiKey: keys.openrouterKey,
+          cloudflareAccountId: keys.cloudflareAccountId,
+          cloudflareApiToken: keys.cloudflareApiToken,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.entity) {
+          if (data.entity.name) setNewName(data.entity.name);
+          if (data.entity.type) setNewType(data.entity.type);
+          if (data.entity.status) setNewStatus(data.entity.status);
+          if (data.entity.description) setNewNote(data.entity.description);
+          setActiveTab('create');
+        }
+      }
+    } catch (e) {
+      console.warn('AI Draft error:', e);
+    } finally {
+      setIsDraftingAi(false);
+    }
+  };
 
   // Synchronize newName when tag opens
   useEffect(() => {
@@ -461,19 +498,33 @@ export function OrphanTagModal({
             </div>
           ) : (
             <form onSubmit={handleCreateEntity} className="space-y-3.5">
-              <div>
-                <label className="block text-xs font-semibold text-content-2 mb-1">
+              <div className="flex items-center justify-between gap-2">
+                <label className="block text-xs font-semibold text-content-2">
                   Nome Entità nel Codex
                 </label>
-                <input
-                  type="text"
-                  value={newName}
-                  onChange={(e) => setNewName(e.target.value)}
-                  placeholder="Es. Lord Jeremiah, Bosco dei Sussurri..."
-                  className="w-full bg-surface-2 border border-surface-3 rounded-xl px-3 py-2 text-xs text-content-1 focus:outline-none focus:border-primary transition-colors"
-                  required
-                />
+                <button
+                  type="button"
+                  onClick={handleDraftWithAi}
+                  disabled={isDraftingAi}
+                  className="px-2.5 py-1 rounded-lg bg-primary/10 hover:bg-primary/20 text-primary border border-primary/25 text-[11px] font-semibold flex items-center gap-1.5 transition-all cursor-pointer shadow-xs disabled:opacity-50"
+                  title="Fai dedurre tipologia e descrizione del tag all'Intelligenza Artificiale"
+                >
+                  {isDraftingAi ? (
+                    <Loader2 size={12} className="animate-spin" />
+                  ) : (
+                    <Sparkles size={12} />
+                  )}
+                  <span>{isDraftingAi ? 'Compilazione in corso...' : 'Compila con IA'}</span>
+                </button>
               </div>
+              <input
+                type="text"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                placeholder="Es. Lord Jeremiah, Bosco dei Sussurri..."
+                className="w-full bg-surface-2 border border-surface-3 rounded-xl px-3 py-2 text-xs text-content-1 focus:outline-none focus:border-primary transition-colors"
+                required
+              />
 
               <div className="grid grid-cols-2 gap-3">
                 <div>

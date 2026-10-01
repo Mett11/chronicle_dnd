@@ -301,6 +301,41 @@ Linee guida:
         return res.status(400).json({ error: 'Nessun testo fornito per l\'analisi' });
       }
 
+      const normalizeStr = (s: string) => {
+        if (!s) return '';
+        return s
+          .toLowerCase()
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .replace(/[^a-z0-9]/g, '');
+      };
+
+      // Extract all @ mentions from the source text
+      const extractedMentionNames = new Set<string>();
+      const bracketMatch = text.matchAll(/@\[(.*?)\]/g);
+      for (const m of bracketMatch) {
+        if (m[1]?.trim()) extractedMentionNames.add(m[1].trim());
+      }
+      const singleWordMatch = text.matchAll(/(?<![a-zA-Z0-9_[\u00C0-\u017F])@([a-zA-Z0-9_'\u00C0-\u017F-]+)/g);
+      for (const m of singleWordMatch) {
+        const clean = m[1]?.replace(/[.,;:!?]+$/, '').trim();
+        if (clean && clean.length > 1 && !/^\d+$/.test(clean) && !clean.includes('@')) {
+          extractedMentionNames.add(clean);
+        }
+      }
+
+      const existingNormSet = new Set((existingEntityNames || []).map((e: string) => normalizeStr(e)));
+      const playerNormSet = new Set((playerNames || []).map((p: string) => normalizeStr(p)));
+
+      const taggedOrphanMentions = Array.from(extractedMentionNames).filter((m) => {
+        const norm = normalizeStr(m);
+        return norm && !existingNormSet.has(norm) && !playerNormSet.has(norm);
+      });
+
+      const taggedOrphansPrompt = taggedOrphanMentions.length > 0
+        ? `\n\nTAG ESPLICITI @ DELL'AUTORE DA INCLUDERE OBBLIGATORIAMENTE:\nL'autore della cronaca ha contrassegnato con '@' i seguenti elementi chiave: ${taggedOrphanMentions.join(', ')}.\nDEVI OBBLIGATORIAMENTE analizzare ciascuno di questi elementi ed estrarlo in 'newEntities', deducendone la tipologia corretta (npc, monster, place, item, faction, quest), la descrizione e lo status dal contesto!`
+        : '';
+
       // Pre-clean text for AI analysis so existing @ or @[..] tags don't confuse tokenization
       const cleanTextForAnalysis = text
         .replace(/@\[(.*?)\]/g, '$1')
@@ -320,6 +355,7 @@ Il tuo compito è analizzare la cronaca di una sessione di gioco ed estrarre con
 
 ${knownEntitiesPrompt}
 ${knownPlayersPrompt}
+${taggedOrphansPrompt}
 
 REGOLE CRITICHE SUI NOMI E SULL'ESTRAZIONE:
 1. NOMI COMPLETI E MAI TRONCATI: Estrai sempre il NOME COMPLETO E PROPRIO per esteso dell'entità, inclusi toponimi, sigle, titoli e complementi.
@@ -354,15 +390,6 @@ Rispondi ESCLUSIVAMENTE in formato JSON valido conforme al seguente schema:
 }`;
 
       const userPrompt = `Analizza questa cronaca di sessione ed estrai con nomi completi le entità secondo le istruzioni:\n\n${cleanTextForAnalysis.slice(0, 40000)}`;
-
-      const normalizeStr = (s: string) => {
-        if (!s) return '';
-        return s
-          .toLowerCase()
-          .normalize('NFD')
-          .replace(/[\u0300-\u036f]/g, '')
-          .replace(/[^a-z0-9]/g, '');
-      };
 
       const sanitizeAndFilter = (parsed: any, modelUsed: string) => {
         const existingSet = new Set<string>();
@@ -614,6 +641,208 @@ Rispondi ESCLUSIVAMENTE in formato JSON valido conforme al seguente schema:
     } catch (err: any) {
       console.error('Extract Entities API Error:', err);
       return res.status(500).json({ error: err.message || 'Errore durante l\'estrazione entità.' });
+    }
+  });
+
+  // Dedicated endpoint to draft a single entity card from an orphan mention with surrounding context
+  app.post('/api/ai/draft-entity-from-mention', async (req: any, res: any) => {
+    try {
+      const {
+        mentionName,
+        snippets = [],
+        fullText = '',
+        provider = 'gemini',
+        model,
+        geminiApiKey: reqGeminiKey,
+        openrouterApiKey: reqOpenRouterKey,
+        cloudflareAccountId: reqCloudflareAccount,
+        cloudflareApiToken: reqCloudflareToken,
+      } = req.body;
+
+      if (!mentionName || typeof mentionName !== 'string' || !mentionName.trim()) {
+        return res.status(400).json({ error: 'Nessun nome di menzione fornito.' });
+      }
+
+      const systemInstruction = `Sei un assistente per Dungeon Master di D&D e GDR fantasy.
+Ti viene fornito il nome di un'entità menzionata nella cronaca di gioco e alcuni passaggi di contesto.
+Il tuo compito è dedurre la tipologia più appropriata ('npc', 'place', 'monster', 'item', 'faction', 'quest') e scrivere una descrizione sintetica e coerente (2-3 frasi in italiano) basata sul contesto fornito.
+
+Rispondi ESCLUSIVAMENTE in formato JSON valido conforme al seguente schema:
+{
+  "name": "${mentionName.trim()}",
+  "type": "npc" | "place" | "monster" | "item" | "faction" | "quest",
+  "description": "string",
+  "status": "alive" | "dead" | "open" | "completed",
+  "location": "string opzionale",
+  "aliases": ["string opzionale"],
+  "isPartyMember": false
+}`;
+
+      const contextText = snippets.length > 0
+        ? `Contesto rilevato nella cronaca:\n${snippets.join('\n---\n')}`
+        : fullText
+        ? `Testo della sessione:\n${fullText.slice(0, 8000)}`
+        : `Nome menzionato: ${mentionName}`;
+
+      const userPrompt = `Analizza l'entità "${mentionName}" nel seguente contesto e crea la scheda JSON:\n\n${contextText}`;
+
+      // 1. Cloudflare Workers AI
+      if (provider === 'cloudflare') {
+        const cfAccountId = (reqCloudflareAccount || req.headers['x-cloudflare-account'] || process.env.CLOUDFLARE_ACCOUNT_ID || '')?.trim();
+        const cfToken = (reqCloudflareToken || req.headers['x-cloudflare-token'] || process.env.CLOUDFLARE_API_TOKEN || '')?.trim();
+
+        if (!cfAccountId || !cfToken) {
+          return res.status(400).json({ error: 'Credenziali Cloudflare Workers AI non configurate.' });
+        }
+
+        const requestedModel = (model && typeof model === 'string' && model.trim())
+          ? model.trim()
+          : '@cf/meta/llama-3.3-70b-instruct-fp8';
+
+        const cfRes = await fetch(`https://api.cloudflare.com/client/v4/accounts/${cfAccountId}/ai/v1/chat/completions`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${cfToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: requestedModel,
+            messages: [
+              { role: 'system', content: `${systemInstruction}\n\nRispondi SOLO in formato JSON.` },
+              { role: 'user', content: userPrompt },
+            ],
+            temperature: 0.1,
+          }),
+        });
+
+        const cfData = await cfRes.json().catch(() => ({}));
+        let answer = cfData?.choices?.[0]?.message?.content || cfData?.result?.response || '';
+        if (typeof answer === 'object') answer = JSON.stringify(answer);
+        if (answer) {
+          try {
+            const parsed = JSON.parse(answer);
+            return res.json({ entity: parsed, model: requestedModel });
+          } catch {}
+          const m = answer.match(/\{[\s\S]*\}/);
+          if (m) {
+            try {
+              const parsed = JSON.parse(m[0]);
+              return res.json({ entity: parsed, model: requestedModel });
+            } catch {}
+          }
+        }
+      }
+
+      // 2. OpenRouter
+      if (provider === 'openrouter') {
+        const openrouterKey = (
+          reqOpenRouterKey ||
+          req.headers['x-openrouter-key'] ||
+          process.env.OPENROUTER_API_KEY ||
+          process.env.VITE_OPENROUTER_API_KEY ||
+          ''
+        )?.trim();
+
+        if (!openrouterKey) {
+          return res.status(400).json({ error: 'Chiave API OpenRouter non configurata.' });
+        }
+
+        const requestedModel = (model && typeof model === 'string' && model.trim())
+          ? model.trim()
+          : 'openrouter/free';
+
+        const orRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${openrouterKey}`,
+            'Content-Type': 'application/json',
+            'HTTP-Referer': 'https://chronicle-dnd.app',
+            'X-Title': 'Chronicle DND Manager',
+          },
+          body: JSON.stringify({
+            model: requestedModel,
+            messages: [
+              { role: 'system', content: systemInstruction },
+              { role: 'user', content: userPrompt },
+            ],
+            temperature: 0.1,
+            response_format: { type: 'json_object' },
+          }),
+        });
+
+        const orData = await orRes.json().catch(() => ({}));
+        const rawContent = orData.choices?.[0]?.message?.content || '';
+        if (rawContent) {
+          try {
+            const parsed = JSON.parse(rawContent);
+            return res.json({ entity: parsed, model: requestedModel });
+          } catch {}
+          const m = rawContent.match(/\{[\s\S]*\}/);
+          if (m) {
+            try {
+              const parsed = JSON.parse(m[0]);
+              return res.json({ entity: parsed, model: requestedModel });
+            } catch {}
+          }
+        }
+      }
+
+      // 3. Google Gemini
+      const customKey = (reqGeminiKey || req.headers['x-custom-api-key'] || '')?.trim();
+      const serverKey = (process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || '').trim();
+      const apiKeysToTry: string[] = [];
+      if (customKey) apiKeysToTry.push(customKey);
+      if (serverKey && !apiKeysToTry.includes(serverKey)) apiKeysToTry.push(serverKey);
+
+      if (apiKeysToTry.length === 0) {
+        return res.status(500).json({ error: 'Nessuna chiave API Gemini disponibile.' });
+      }
+
+      const candidateModels = [
+        model && typeof model === 'string' && model.trim() ? model.trim() : 'gemini-flash-latest',
+        'gemini-3.8-flash',
+        'gemini-3.7-flash',
+        'gemini-3.1-flash-lite',
+      ];
+
+      for (const currentKey of apiKeysToTry) {
+        const ai = new GoogleGenAI({ apiKey: currentKey });
+        for (const modelName of candidateModels) {
+          try {
+            const response = await ai.models.generateContent({
+              model: modelName,
+              contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
+              config: {
+                systemInstruction,
+                responseMimeType: 'application/json',
+                temperature: 0.1,
+              },
+            });
+
+            const rawText = response.text || '';
+            if (rawText.trim()) {
+              try {
+                const parsed = JSON.parse(rawText);
+                return res.json({ entity: parsed, model: modelName });
+              } catch {}
+              const m = rawText.match(/\{[\s\S]*\}/);
+              if (m) {
+                try {
+                  const parsed = JSON.parse(m[0]);
+                  return res.json({ entity: parsed, model: modelName });
+                } catch {}
+              }
+            }
+          } catch (geminiErr: any) {
+            console.warn(`[Draft Entity] Model ${modelName} failed:`, geminiErr.message?.slice(0, 100));
+          }
+        }
+      }
+
+      return res.status(500).json({ error: 'Impossibile compilare la scheda con l\'IA al momento.' });
+    } catch (err: any) {
+      console.error('Draft Entity API Error:', err);
+      return res.status(500).json({ error: err.message || 'Errore durante la compilazione della scheda.' });
     }
   });
 

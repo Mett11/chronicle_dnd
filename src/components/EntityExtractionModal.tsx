@@ -27,6 +27,12 @@ import { cleanOpenRouterModelId } from '../lib/openrouterUtils';
 import { UserPreferencesService } from '../lib/userPreferencesService';
 import { LlmCatalogModal, LlmProviderType } from './OpenRouterCatalogModal';
 import { Portal } from './Portal';
+import {
+  findOrphanMentions,
+  extractAllMentions,
+  normalizeMentionKey,
+  OrphanMentionInfo,
+} from '../lib/mentionUtils';
 
 export interface ExtractedEntityItem {
   id: string; // temp id for UI selection
@@ -198,6 +204,25 @@ export function EntityExtractionModal({
     return geminiModel;
   }, [provider, openrouterModel, geminiModel]);
 
+  // Deterministically compute all mentions and orphan mentions present in rawText
+  const allMentions = useMemo(() => {
+    return extractAllMentions(rawText);
+  }, [rawText]);
+
+  const orphanMentions = useMemo(() => {
+    const existingEntities = CampaignManager.getEntities();
+    const players = CampaignManager.getStoredPlayers();
+    return findOrphanMentions(rawText, existingEntities, players);
+  }, [rawText]);
+
+  const unhandledOrphans = useMemo(() => {
+    const itemNorms = new Set(items.map((i) => normalizeMentionKey(i.name)));
+    return orphanMentions.filter((o) => !itemNorms.has(o.normalized));
+  }, [orphanMentions, items]);
+
+  const [draftingOrphans, setDraftingOrphans] = useState<Record<string, boolean>>({});
+  const [isDraftingAllOrphans, setIsDraftingAllOrphans] = useState(false);
+
   // Client-side fallback API key (stored in localStorage for static deploys like Cloudflare)
   const [customApiKey, setCustomApiKey] = useState<string>(() => {
     try {
@@ -207,6 +232,166 @@ export function EntityExtractionModal({
     }
   });
   const [showKeyInput, setShowKeyInput] = useState(false);
+
+  // Helper to draft a single entity card from an orphan mention
+  const draftSingleOrphanCore = async (orphan: OrphanMentionInfo, signal?: AbortSignal): Promise<ExtractedEntityItem | null> => {
+    const keys = await ApiKeyManager.getDecryptedKeys();
+    const campKeys = await ApiKeyManager.preloadCampaignKeys();
+    const persKeys = await ApiKeyManager.preloadPersonalKeys();
+
+    const activeCustomKey = customApiKey.trim();
+    const geminiKey = activeCustomKey || keys.geminiKey || campKeys.geminiKey || persKeys.geminiKey;
+    const openrouterKey = keys.openrouterKey || campKeys.openrouterKey || persKeys.openrouterKey;
+    const cfAccountId = keys.cloudflareAccountId || campKeys.cloudflareAccountId || persKeys.cloudflareAccountId;
+    const cfToken = keys.cloudflareApiToken || campKeys.cloudflareApiToken || persKeys.cloudflareApiToken;
+
+    // 1. Try server endpoint first
+    try {
+      const res = await fetch('/api/ai/draft-entity-from-mention', {
+        method: 'POST',
+        signal,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(activeCustomKey ? { 'x-custom-api-key': activeCustomKey } : {}),
+        },
+        body: JSON.stringify({
+          mentionName: orphan.name,
+          snippets: orphan.snippets,
+          fullText: rawText.slice(0, 10000),
+          provider,
+          model: activeModelId,
+          geminiApiKey: geminiKey,
+          openrouterApiKey: openrouterKey,
+          cloudflareAccountId: cfAccountId,
+          cloudflareApiToken: cfToken,
+        }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.entity) {
+          const e = data.entity;
+          const type = (['npc', 'place', 'monster', 'item', 'faction', 'quest'].includes(e.type) ? e.type : 'npc') as Entity['type'];
+          return {
+            id: `orphan_ai_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+            name: e.name || orphan.name,
+            type,
+            description: e.description || '',
+            status: e.status || (type === 'quest' ? 'open' : 'alive'),
+            location: e.location || '',
+            aliases: Array.isArray(e.aliases) ? e.aliases : [],
+            selected: true,
+            isPartyMember: Boolean(e.isPartyMember),
+          };
+        }
+      }
+    } catch {}
+
+    // 2. Direct client fallback with Gemini if available
+    if (geminiKey && provider === 'gemini') {
+      try {
+        const ai = new GoogleGenAI({ apiKey: geminiKey });
+        const resp = await ai.models.generateContent({
+          model: activeModelId || 'gemini-flash-latest',
+          contents: [{
+            role: 'user',
+            parts: [{
+              text: `Analizza l'entità "${orphan.name}" nel seguente contesto:\n${orphan.snippets.join('\n')}\nCrea un JSON con: name, type ('npc'|'place'|'monster'|'item'|'faction'|'quest'), description, status, location.`
+            }]
+          }],
+          config: { responseMimeType: 'application/json', temperature: 0.1 }
+        });
+        const parsed = JSON.parse(resp.text || '{}');
+        const type = (['npc', 'place', 'monster', 'item', 'faction', 'quest'].includes(parsed.type) ? parsed.type : 'npc') as Entity['type'];
+        return {
+          id: `orphan_ai_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          name: parsed.name || orphan.name,
+          type,
+          description: parsed.description || '',
+          status: parsed.status || (type === 'quest' ? 'open' : 'alive'),
+          location: parsed.location || '',
+          aliases: Array.isArray(parsed.aliases) ? parsed.aliases : [],
+          selected: true,
+          isPartyMember: Boolean(parsed.isPartyMember),
+        };
+      } catch {}
+    }
+
+    // 3. Simple quick fallback
+    return {
+      id: `orphan_quick_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      name: orphan.name,
+      type: 'npc',
+      description: orphan.snippets.length > 0 ? orphan.snippets[0].replace(/\.\.\./g, '').trim() : '',
+      status: 'alive',
+      location: '',
+      aliases: [],
+      selected: true,
+      isPartyMember: false,
+    };
+  };
+
+  const handleDraftOrphan = async (orphan: OrphanMentionInfo) => {
+    setDraftingOrphans((prev) => ({ ...prev, [orphan.name]: true }));
+    try {
+      const drafted = await draftSingleOrphanCore(orphan);
+      if (drafted) {
+        setItems((prev) => {
+          const filtered = prev.filter((i) => normalizeMentionKey(i.name) !== orphan.normalized);
+          return [drafted, ...filtered];
+        });
+        setHasScanned(true);
+      }
+    } finally {
+      setDraftingOrphans((prev) => ({ ...prev, [orphan.name]: false }));
+    }
+  };
+
+  const handleDraftAllOrphans = async () => {
+    if (unhandledOrphans.length === 0) return;
+    setIsDraftingAllOrphans(true);
+    try {
+      const newDrafted: ExtractedEntityItem[] = [];
+      for (const orphan of unhandledOrphans) {
+        setDraftingOrphans((prev) => ({ ...prev, [orphan.name]: true }));
+        try {
+          const item = await draftSingleOrphanCore(orphan);
+          if (item) newDrafted.push(item);
+        } finally {
+          setDraftingOrphans((prev) => ({ ...prev, [orphan.name]: false }));
+        }
+      }
+      if (newDrafted.length > 0) {
+        setItems((prev) => {
+          const existingNorms = new Set(newDrafted.map((d) => normalizeMentionKey(d.name)));
+          const filtered = prev.filter((p) => !existingNorms.has(normalizeMentionKey(p.name)));
+          return [...newDrafted, ...filtered];
+        });
+        setHasScanned(true);
+      }
+    } finally {
+      setIsDraftingAllOrphans(false);
+    }
+  };
+
+  const handleQuickAddOrphan = (orphan: OrphanMentionInfo) => {
+    const newItem: ExtractedEntityItem = {
+      id: `orphan_manual_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      name: orphan.name,
+      type: 'npc',
+      description: orphan.snippets.length > 0 ? orphan.snippets[0].replace(/\.\.\./g, '').trim() : '',
+      status: 'alive',
+      location: '',
+      aliases: [],
+      selected: true,
+      isPartyMember: false,
+    };
+    setItems((prev) => {
+      const filtered = prev.filter((i) => normalizeMentionKey(i.name) !== orphan.normalized);
+      return [newItem, ...filtered];
+    });
+    setHasScanned(true);
+  };
 
   // Helper to parse and humanize raw Gemini errors (especially 429 Quota Exceeded and 503 Overload)
   const parseExtractionError = (raw: any): { title: string; message: string; retryDelay?: number; isQuota: boolean } => {
@@ -291,11 +476,16 @@ export function EntityExtractionModal({
       ? `Ecco i Personaggi Giocanti (PG / membri del party avventurieri): ${playerNames.join(', ')}.`
       : '';
 
+    const taggedOrphansPrompt = orphanMentions.length > 0
+      ? `\n\nTAG ESPLICITI @ DELL'AUTORE DA INCLUDERE OBBLIGATORIAMENTE:\nL'autore ha contrassegnato con '@' i seguenti elementi chiave nel testo: ${orphanMentions.map((o) => o.name).join(', ')}.\nDEVI PRIORITARIAMENTE estrarre ciascuno di questi elementi in 'newEntities' deducendone la tipologia corretta (npc, monster, place, item, faction, quest) e la descrizione dal contesto!`
+      : '';
+
     const systemInstruction = `Sei un assistente specializzato per Dungeon Master di D&D e giochi di ruolo fantasy.
 Il tuo compito è analizzare la cronaca di una sessione di gioco ed estrarre con estrema precisione le entità del mondo fantasy: PNG (personaggi non giocanti del DM), Mostri/Nemici, Luoghi/Città/Dungeon/Istituzioni, Fazioni/Ordini/Gilde, Oggetti Magici/Reliquie e Missioni/Quest citati nel testo.
 
 ${knownEntitiesPrompt}
 ${knownPlayersPrompt}
+${taggedOrphansPrompt}
 
 REGOLE CRITICHE SUI NOMI E SULL'ESTRAZIONE:
 1. NOMI COMPLETI E MAI TRONCATI: Estrai sempre il NOME COMPLETO E PROPRIO per esteso dell'entità, inclusi toponimi, sigle, titoli e complementi.
@@ -427,8 +617,13 @@ Rispondi ESCLUSIVAMENTE in formato JSON valido conforme al seguente schema:
       .replace(/@([a-zA-Z0-9_'\u00C0-\u017F-]+)/g, '$1')
       .replace(/@+/g, '');
 
+    const taggedOrphansPrompt = orphanMentions.length > 0
+      ? `Tag @ orfani prioritari da estrarre ed analizzare: ${orphanMentions.map((o) => o.name).join(', ')}.`
+      : '';
+
     const systemInstruction = `Sei un assistente specializzato per Dungeon Master di D&D.
 Analizza la cronaca di sessione ed estrai con estrema precisione SOLO le NUOVE entità (PNG, Mostri, Luoghi, Oggetti, Fazioni, Quest).
+${taggedOrphansPrompt}
 Entità già note: ${existingNames.slice(0, 300).join(', ')}.
 PG del party: ${playerNames.join(', ')}.
 
@@ -949,6 +1144,105 @@ PG party: ${playerNames.join(', ')}.`;
 
           {/* Body Content */}
           <div className="p-4 sm:p-6 overflow-y-auto space-y-5 flex-1 custom-scrollbar">
+            {/* ORPHAN TAGS DETECTION & AI DRAFTING BAR */}
+            {orphanMentions.length > 0 && !isLoading && (
+              <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-4 sm:p-5 space-y-3.5 animate-fade-in shadow-xs">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-amber-500/20 pb-3">
+                  <div className="space-y-0.5">
+                    <h4 className="font-heading font-semibold text-xs sm:text-sm text-amber-300 flex items-center gap-2">
+                      <Tag size={16} className="text-amber-400 shrink-0" />
+                      <span>Tag @ Orfani Rilevati nella Cronaca ({orphanMentions.length})</span>
+                    </h4>
+                    <p className="text-[11px] text-content-3">
+                      Elementi taggati con <code>@</code> che non hanno ancora una scheda nel Compendio. Puoi compilarli singolarmente o tutti insieme con l'IA.
+                    </p>
+                  </div>
+
+                  {unhandledOrphans.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={handleDraftAllOrphans}
+                      disabled={isDraftingAllOrphans}
+                      className="px-3 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 hover:text-white border border-amber-500/40 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer shadow-xs disabled:opacity-50 shrink-0"
+                    >
+                      {isDraftingAllOrphans ? (
+                        <Loader2 size={13} className="animate-spin text-amber-300" />
+                      ) : (
+                        <Sparkles size={13} className="text-amber-300" />
+                      )}
+                      <span>
+                        {isDraftingAllOrphans
+                          ? 'Compilazione in corso...'
+                          : `Compila tutti con IA (${unhandledOrphans.length})`}
+                      </span>
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap gap-2 pt-1">
+                  {orphanMentions.map((orphan) => {
+                    const isDraftingThis = Boolean(draftingOrphans[orphan.name]);
+                    const isAlreadyInItems = items.some(
+                      (i) => normalizeMentionKey(i.name) === orphan.normalized
+                    );
+
+                    return (
+                      <div
+                        key={orphan.name}
+                        className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs transition-all border ${
+                          isAlreadyInItems
+                            ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                            : 'bg-surface-2/80 border-surface-3 hover:border-amber-500/40 text-content-1'
+                        }`}
+                      >
+                        <span className="font-semibold font-mono text-[11px]">
+                          @{orphan.name}
+                        </span>
+
+                        {orphan.occurrences > 1 && (
+                          <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-surface-3 text-content-3 font-mono">
+                            x{orphan.occurrences}
+                          </span>
+                        )}
+
+                        {isAlreadyInItems ? (
+                          <span className="text-[10px] text-emerald-400 font-medium flex items-center gap-1">
+                            <Check size={12} strokeWidth={3} /> In lista
+                          </span>
+                        ) : (
+                          <div className="flex items-center gap-1 pl-1 border-l border-surface-3/80">
+                            <button
+                              type="button"
+                              onClick={() => handleDraftOrphan(orphan)}
+                              disabled={isDraftingThis || isDraftingAllOrphans}
+                              className="px-2 py-0.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/30 text-amber-300 hover:text-amber-100 text-[10px] font-medium flex items-center gap-1 transition-colors cursor-pointer disabled:opacity-50"
+                              title="Compila automaticamente scheda e descrizione con l'IA"
+                            >
+                              {isDraftingThis ? (
+                                <Loader2 size={10} className="animate-spin" />
+                              ) : (
+                                <Sparkles size={10} />
+                              )}
+                              <span>{isDraftingThis ? 'Elaboro...' : 'Compila con IA'}</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => handleQuickAddOrphan(orphan)}
+                              className="px-1.5 py-0.5 rounded-lg bg-surface-3 hover:bg-surface-4 text-content-3 hover:text-content-1 text-[10px] transition-colors cursor-pointer"
+                              title="Aggiungi manualmente alla lista"
+                            >
+                              +
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {isLoading ? (
               <div className="py-14 text-center space-y-5 animate-fade-in">
                 <div className="w-14 h-14 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center mx-auto text-primary animate-pulse shadow-sm">
