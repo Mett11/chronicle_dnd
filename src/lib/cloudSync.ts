@@ -1,4 +1,6 @@
-import { auth } from './firebase';
+import { auth, db } from './firebase';
+import { doc, getDoc, setDoc, deleteDoc } from 'firebase/firestore';
+import { ApiKeyManager } from './apiKeyManager';
 import { CampaignManager } from '../store/campaignStore';
 import { UserProfileSyncService } from './userProfileSync';
 import { SupabaseSyncService } from './supabaseSyncService';
@@ -869,37 +871,157 @@ export class CloudSyncService {
               }
             }
             if (Array.isArray(supaData.sessions)) {
-              try { CampaignManager.saveSessionsLocalOnly(supaData.sessions); } catch (e) { console.warn(e); }
+              try {
+                const localSess = CampaignManager.getSessions();
+                const supaIds = new Set(supaData.sessions.map((s: any) => s._id));
+                const localOnly = localSess.filter((s: any) => s && s._id && !supaIds.has(s._id));
+                const merged = [...supaData.sessions, ...localOnly];
+                CampaignManager.saveSessionsLocalOnly(merged);
+                if (localOnly.length > 0) {
+                  console.log(`[CloudSync] Syncing ${localOnly.length} local-only sessions to Supabase...`);
+                  setTimeout(() => {
+                    localOnly.forEach((s: any) => SupabaseSyncService.saveSession(activeCode, s));
+                  }, 2500);
+                }
+              } catch (e) { console.warn(e); }
             }
             if (Array.isArray(supaData.chapters)) {
-              try { CampaignManager.saveChaptersLocalOnly(supaData.chapters); } catch (e) { console.warn(e); }
+              try {
+                const localChaps = CampaignManager.getChapters();
+                const supaIds = new Set(supaData.chapters.map((c: any) => c.id));
+                const localOnly = localChaps.filter((c: any) => c && c.id && !supaIds.has(c.id));
+                const merged = [...supaData.chapters, ...localOnly];
+                CampaignManager.saveChaptersLocalOnly(merged);
+                if (localOnly.length > 0) {
+                  console.log(`[CloudSync] Syncing ${localOnly.length} local-only chapters to Supabase...`);
+                  setTimeout(() => {
+                    localOnly.forEach((c: any) => SupabaseSyncService.saveChapter(activeCode, c));
+                  }, 2500);
+                }
+              } catch (e) { console.warn(e); }
             }
             if (Array.isArray(supaData.notes)) {
-              try { CampaignManager.saveNotesLocalOnly(supaData.notes); } catch (e) { console.warn(e); }
+              try {
+                const localNotes = CampaignManager.getNotes();
+                const supaIds = new Set(supaData.notes.map((n: any) => n._id));
+                const localOnly = localNotes.filter((n: any) => n && n._id && !supaIds.has(n._id));
+                const merged = [...supaData.notes, ...localOnly];
+                CampaignManager.saveNotesLocalOnly(merged);
+                if (localOnly.length > 0) {
+                  console.log(`[CloudSync] Syncing ${localOnly.length} local-only notes to Supabase...`);
+                  setTimeout(() => {
+                    localOnly.forEach((n: any) => SupabaseSyncService.saveNote(activeCode, n));
+                  }, 2500);
+                }
+              } catch (e) { console.warn(e); }
             }
             if (Array.isArray(supaData.entities)) {
-              try { CampaignManager.saveEntitiesLocalOnly(supaData.entities); } catch (e) { console.warn(e); }
+              try {
+                const localEnts = CampaignManager.getEntities();
+                const supaIds = new Set(supaData.entities.map((e: any) => e._id));
+                const localOnly = localEnts.filter((e: any) => e && e._id && !supaIds.has(e._id));
+                const merged = [...supaData.entities, ...localOnly];
+                CampaignManager.saveEntitiesLocalOnly(merged);
+                if (localOnly.length > 0) {
+                  console.log(`[CloudSync] Syncing ${localOnly.length} local-only entities to Supabase...`);
+                  setTimeout(() => {
+                    localOnly.forEach((e: any) => SupabaseSyncService.saveEntity(activeCode, e));
+                  }, 2500);
+                }
+              } catch (e) { console.warn(e); }
             }
             if (Array.isArray(supaData.maps)) {
-              try { CampaignManager.saveMapsLocalOnly(supaData.maps); } catch (e) { console.warn(e); }
+              try {
+                const localMaps = CampaignManager.getMaps();
+                const supaIds = new Set(supaData.maps.map((m: any) => m.id));
+                const localOnly = localMaps.filter((m: any) => m && m.id && !supaIds.has(m.id));
+                const merged = [...supaData.maps, ...localOnly];
+                CampaignManager.saveMapsLocalOnly(merged);
+                if (localOnly.length > 0) {
+                  console.log(`[CloudSync] Syncing ${localOnly.length} local-only maps to Supabase...`);
+                  setTimeout(() => {
+                    localOnly.forEach((m: any) => SupabaseSyncService.saveMap(activeCode, m));
+                  }, 2500);
+                }
+              } catch (e) { console.warn(e); }
             }
             if (Array.isArray(supaData.mapFolders)) {
               try { CampaignManager.saveMapFoldersLocalOnly(supaData.mapFolders); } catch (e) { console.warn(e); }
             }
             if (Array.isArray(supaData.scrapbookItems)) {
-              try { CampaignManager.saveScrapbookItemsLocalOnly(supaData.scrapbookItems); } catch (e) { console.warn(e); }
+              try {
+                const localItems = CampaignManager.getScrapbookItems();
+                const supaIds = new Set(supaData.scrapbookItems.map((i: any) => i.id));
+                const localOnly = localItems.filter((i: any) => i && i.id && !supaIds.has(i.id));
+                const merged = [...supaData.scrapbookItems, ...localOnly];
+                CampaignManager.saveScrapbookItemsLocalOnly(merged);
+                if (localOnly.length > 0) {
+                  console.log(`[CloudSync] Syncing ${localOnly.length} local-only scrapbook items to Supabase...`);
+                  setTimeout(() => {
+                    localOnly.forEach((i: any) => SupabaseSyncService.saveScrapbookItem(activeCode, i));
+                  }, 2500);
+                }
+              } catch (e) { console.warn(e); }
             }
             if (Array.isArray(supaData.audioLogs)) {
-              try { CampaignManager.saveAudioLogsLocalOnly(supaData.audioLogs); } catch (e) { console.warn(e); }
+              try {
+                const localLogs = CampaignManager.getAudioLogs();
+                const supaIds = new Set(supaData.audioLogs.map((l: any) => l.id));
+                const localOnly = localLogs.filter((l: any) => l && l.id && !supaIds.has(l.id));
+                const merged = [...supaData.audioLogs, ...localOnly];
+                CampaignManager.saveAudioLogsLocalOnly(merged);
+                if (localOnly.length > 0) {
+                  console.log(`[CloudSync] Syncing ${localOnly.length} local-only audio logs to Supabase...`);
+                  setTimeout(() => {
+                    localOnly.forEach((l: any) => SupabaseSyncService.saveAudioLog(activeCode, l));
+                  }, 2500);
+                }
+              } catch (e) { console.warn(e); }
             }
             if (Array.isArray(supaData.characterBios)) {
-              try { CampaignManager.saveAllCharacterBiosLocalOnly(supaData.characterBios); } catch (e) { console.warn(e); }
+              try {
+                const localBios = CampaignManager.getAllCharacterBios();
+                const supaIds = new Set(supaData.characterBios.map((b: any) => b.playerId));
+                const localOnly = localBios.filter((b: any) => b && b.playerId && !supaIds.has(b.playerId));
+                const merged = [...supaData.characterBios, ...localOnly];
+                CampaignManager.saveAllCharacterBiosLocalOnly(merged);
+                if (localOnly.length > 0) {
+                  console.log(`[CloudSync] Syncing ${localOnly.length} local-only biographies to Supabase...`);
+                  setTimeout(() => {
+                    SupabaseSyncService.saveCharacterBios(activeCode, localOnly);
+                  }, 2500);
+                }
+              } catch (e) { console.warn(e); }
             }
             if (Array.isArray(supaData.familyRelations)) {
-              try { CampaignManager.saveAllFamilyRelationsLocalOnly(supaData.familyRelations); } catch (e) { console.warn(e); }
+              try {
+                const localRels = CampaignManager.getAllFamilyRelations();
+                const supaIds = new Set(supaData.familyRelations.map((r: any) => r.id));
+                const localOnly = localRels.filter((r: any) => r && r.id && !supaIds.has(r.id));
+                const merged = [...supaData.familyRelations, ...localOnly];
+                CampaignManager.saveAllFamilyRelationsLocalOnly(merged);
+                if (localOnly.length > 0) {
+                  console.log(`[CloudSync] Syncing ${localOnly.length} local-only relations to Supabase...`);
+                  setTimeout(() => {
+                    SupabaseSyncService.saveFamilyRelations(activeCode, localOnly);
+                  }, 2500);
+                }
+              } catch (e) { console.warn(e); }
             }
             if (Array.isArray(supaData.worldLoreArticles)) {
-              try { CampaignManager.saveAllWorldLoreArticlesLocalOnly(supaData.worldLoreArticles); } catch (e) { console.warn(e); }
+              try {
+                const localArts = CampaignManager.getWorldLoreArticles();
+                const supaIds = new Set(supaData.worldLoreArticles.map((a: any) => a._id));
+                const localOnly = localArts.filter((a: any) => a && a._id && !supaIds.has(a._id));
+                const merged = [...supaData.worldLoreArticles, ...localOnly];
+                CampaignManager.saveAllWorldLoreArticlesLocalOnly(merged);
+                if (localOnly.length > 0) {
+                  console.log(`[CloudSync] Syncing ${localOnly.length} local-only world lore articles to Supabase...`);
+                  setTimeout(() => {
+                    SupabaseSyncService.saveWorldLoreArticles(activeCode, localOnly);
+                  }, 2500);
+                }
+              } catch (e) { console.warn(e); }
             }
             if (Array.isArray(supaData.activePlayers)) {
               try { this.mergeRemoteAccounts(supaData.activePlayers); } catch (e) { console.warn(e); }
@@ -1042,516 +1164,7 @@ export class CloudSyncService {
   }
 
   private static async _legacyUnusedUpload() {
-    try {
-
-      const docRef = doc(db, 'dnd_campaigns', activeCode);
-      const currentAccount = CampaignManager.getCurrentAccount();
-      const meta = CampaignManager.getCampaignMeta();
-      const currentAuthUid = auth.currentUser?.uid;
-      const isDm = Boolean(
-        currentAccount?.isDm ||
-        (activeCode && currentAccount?.dmCampaigns?.includes(activeCode)) ||
-        (currentAccount && meta?.dmId && (meta.dmId === currentAccount.id || meta.dmId === currentAccount.email)) ||
-        (currentAuthUid && meta && ((meta as any).dmUid === currentAuthUid || meta.dmId === currentAuthUid || meta.dmId === `usr_${currentAuthUid}` || meta.dmId === `usr_g_${currentAuthUid}`))
-      );
-
-      const rawSessions = CampaignManager.getSessions().map((s) => ({
-        ...s,
-        attendees: (s.attendees || []).map((a) => {
-          // Strip redundant base64 / avatars from session attendees to save 600KB+ per doc
-          const { avatarUrl, avatar, ...rest } = a as any;
-          return rest;
-        }),
-      }));
-
-      const rawAccounts = CampaignManager.getAccounts().map((acc) => {
-        if (!acc.campaignProfiles) return acc;
-        const cleanedProfiles: Record<string, any> = {};
-        for (const [code, prof] of Object.entries(acc.campaignProfiles)) {
-          if (prof.avatarUrl && prof.avatarUrl === acc.avatarUrl) {
-            const { avatarUrl, ...profRest } = prof;
-            cleanedProfiles[code] = profRest;
-          } else {
-            cleanedProfiles[code] = prof;
-          }
-        }
-        return {
-          ...acc,
-          campaignProfiles: cleanedProfiles,
-        };
-      });
-
-      const deletedNoteIdsSet = new Set(CampaignManager.getDeletedNoteIds());
-      const deletedEntityIdsSet = new Set(CampaignManager.getDeletedEntityIds());
-      const deletedSessionIdsSet = new Set(CampaignManager.getDeletedSessionIds());
-      const deletedScrapbookIdsSet = new Set(CampaignManager.getDeletedScrapbookIds());
-      const deletedWorldLoreIdsSet = new Set(CampaignManager.getDeletedWorldLoreArticleIds());
-
-      const rawEntities = CampaignManager.getEntities().filter((e) => !deletedEntityIdsSet.has(e._id));
-      const rawNotes = CampaignManager.getNotes().filter((n) => !deletedNoteIdsSet.has(n._id));
-      const rawMaps = CampaignManager.getMaps();
-      const rawWorldLoreArticles = CampaignManager.getWorldLoreArticles().filter((a) => !deletedWorldLoreIdsSet.has(a._id));
-
-      // CRITICAL ANTI-DATA-LOSS SHIELD:
-      // Always verify remote Firestore document before uploading to prevent wiping data when client cache is empty or incomplete
-      try {
-        const remoteSnap = await getDoc(docRef);
-        if (remoteSnap.exists()) {
-          const remoteData = remoteSnap.data();
-
-          // Sync any remote tombstones to local manager
-          if (Array.isArray(remoteData?.deletedNoteIds)) {
-            CampaignManager.addMultipleDeletedNoteIds(remoteData.deletedNoteIds);
-            remoteData.deletedNoteIds.forEach((id: string) => deletedNoteIdsSet.add(id));
-          }
-          if (Array.isArray(remoteData?.deletedEntityIds)) {
-            CampaignManager.addMultipleDeletedEntityIds(remoteData.deletedEntityIds);
-            remoteData.deletedEntityIds.forEach((id: string) => deletedEntityIdsSet.add(id));
-          }
-          if (Array.isArray(remoteData?.deletedSessionIds)) {
-            CampaignManager.addMultipleDeletedSessionIds(remoteData.deletedSessionIds);
-            remoteData.deletedSessionIds.forEach((id: string) => deletedSessionIdsSet.add(id));
-          }
-          if (Array.isArray(remoteData?.deletedWorldLoreArticleIds)) {
-            CampaignManager.addMultipleDeletedWorldLoreArticleIds(remoteData.deletedWorldLoreArticleIds);
-            remoteData.deletedWorldLoreArticleIds.forEach((id: string) => deletedWorldLoreIdsSet.add(id));
-          }
-
-          const activeRemoteSessions = (Array.isArray(remoteData?.sessions) ? remoteData.sessions : []).filter((s: any) => !deletedSessionIdsSet.has(s?._id));
-          const activeRemoteEntities = (Array.isArray(remoteData?.entities) ? remoteData.entities : []).filter((e: any) => !deletedEntityIdsSet.has(e?._id));
-          const activeRemoteNotes = (Array.isArray(remoteData?.notes) ? remoteData.notes : []).filter((n: any) => !deletedNoteIdsSet.has(n?._id));
-          const activeRemoteWorldLore = (Array.isArray(remoteData?.worldLoreArticles) ? remoteData.worldLoreArticles : []).filter((a: any) => !deletedWorldLoreIdsSet.has(a?._id));
-          const remoteChapterCount = Array.isArray(remoteData?.chapters) ? remoteData.chapters.length : 0;
-          const remoteMapCount = Array.isArray(remoteData?.maps) ? remoteData.maps.length : 0;
-          const remoteBioCount = Array.isArray(remoteData?.characterBios) ? remoteData.characterBios.length : 0;
-          const remoteRelationsCount = Array.isArray(remoteData?.familyRelations) ? remoteData.familyRelations.length : 0;
-
-          const localSessionIds = new Set(rawSessions.map((s) => s._id));
-          const missingSessions = activeRemoteSessions.some((s: any) => s && s._id && !localSessionIds.has(s._id));
-
-          const localEntityIds = new Set(rawEntities.map((e) => e._id));
-          const missingEntities = activeRemoteEntities.some((e: any) => e && e._id && !localEntityIds.has(e._id));
-
-          const localNoteIds = new Set(rawNotes.map((n) => n._id));
-          const missingNotes = activeRemoteNotes.some((n: any) => n && n._id && !localNoteIds.has(n._id));
-
-          const localLoreIds = new Set(rawWorldLoreArticles.map((a) => a._id));
-          const missingWorldLore = activeRemoteWorldLore.some((a: any) => a && a._id && !localLoreIds.has(a._id));
-
-          const missingChapters = remoteChapterCount > 0 && CampaignManager.getChapters().length === 0;
-          const missingMaps = remoteMapCount > 0 && rawMaps.length === 0;
-          const missingCharacterBios = remoteBioCount > 0 && CampaignManager.getAllCharacterBios().length === 0;
-          const missingFamilyRelations = remoteRelationsCount > 0 && CampaignManager.getAllFamilyRelations().length === 0;
-
-          if (
-            missingSessions ||
-            missingEntities ||
-            missingNotes ||
-            missingChapters ||
-            missingMaps ||
-            missingWorldLore ||
-            missingCharacterBios ||
-            missingFamilyRelations
-          ) {
-            console.warn(`[CloudSync] ANTI-DATA-LOSS SHIELD: Remote has active non-deleted data that local cache is missing (remote sessions: ${activeRemoteSessions.length}, entities: ${activeRemoteEntities.length}, notes: ${activeRemoteNotes.length}, worldLore: ${activeRemoteWorldLore.length}, characterBios: ${remoteBioCount}). Auto-hydrating local state instead.`);
-            await this.applyRemoteData(remoteData, activeCode);
-            this.isCampaignHydrated = true;
-            if (typeof localStorage !== 'undefined') {
-              localStorage.setItem('hasPendingUpload', 'false');
-            }
-            return { success: true };
-          }
-
-          // RBAC & MULTI-USER PRESERVATION SHIELD:
-          // Preserve all remote active non-deleted notes, world lore articles, and session events
-          // that are missing from local state (such as personal notes of other players, DM notes, or new party notes)
-          if (Array.isArray(remoteData?.notes)) {
-            remoteData.notes.forEach((remNote: any) => {
-              if (remNote && remNote._id && !deletedNoteIdsSet.has(remNote._id) && !rawNotes.some((ln) => ln._id === remNote._id)) {
-                rawNotes.push(remNote);
-              }
-            });
-          }
-          if (Array.isArray(remoteData?.worldLoreArticles)) {
-            remoteData.worldLoreArticles.forEach((remArt: any) => {
-              if (remArt && remArt._id && !deletedWorldLoreIdsSet.has(remArt._id) && !rawWorldLoreArticles.some((la) => la._id === remArt._id)) {
-                rawWorldLoreArticles.push(remArt);
-              }
-            });
-          }
-          if (Array.isArray(remoteData?.sessions)) {
-            remoteData.sessions.forEach((remS: any) => {
-              const localS = rawSessions.find((ls) => ls._id === remS._id);
-              if (localS && Array.isArray(remS.events) && !deletedSessionIdsSet.has(remS._id)) {
-                remS.events.forEach((remEvt: any) => {
-                  if (remEvt && remEvt.id && !localS.events?.some((le: any) => le.id === remEvt.id)) {
-                    localS.events = [...(localS.events || []), remEvt];
-                  }
-                });
-              }
-            });
-          }
-        }
-      } catch (checkErr) {
-        console.warn('[CloudSync] Shield check warning:', checkErr);
-      }
-
-      const rawAudioLogs = CampaignManager.getAudioLogs();
-      const rawScrapbookItems = CampaignManager.getScrapbookItems();
-
-      // === 1. EXTRACT ALL HEAVY MEDIA AND ISOLATE DM SECRETS (Phase 3.2) ===
-      const dmSecretEventsMap: Record<string, any[]> = {};
-      const sessionMediaMap: Record<string, { images?: string[]; eventImages?: Record<string, string[]>; audioLogs?: any[]; coverImage?: string }> = {};
-      const strippedSessions = rawSessions.map((s) => {
-        const hasSessionImages = Array.isArray(s.images) && s.images.length > 0;
-        const hasSessionAudio = Array.isArray(s.audioLogs) && s.audioLogs.length > 0;
-        const hasSessionCover = Boolean(s.coverImage && (s.coverImage.startsWith('data:') || s.coverImage.length > 500));
-        const eventImagesMap: Record<string, string[]> = {};
-        let hasAnyEventImages = false;
-
-        // Partition secret events (for DM only) vs public session events
-        const secretEvents = (s.events || []).filter((e: any) => e.impact === 'secret' || e.isSecret);
-        if (secretEvents.length > 0) {
-          dmSecretEventsMap[s._id] = secretEvents;
-        }
-        const publicEvents = (s.events || []).filter((e: any) => e.impact !== 'secret' && !e.isSecret);
-
-        const strippedEvents = publicEvents.map((e: any) => {
-          if (Array.isArray(e.images) && e.images.length > 0) {
-            eventImagesMap[e.id] = e.images;
-            hasAnyEventImages = true;
-            return { ...e, images: [] };
-          }
-          return e;
-        });
-
-        if (hasSessionImages || hasAnyEventImages || hasSessionAudio || hasSessionCover) {
-          sessionMediaMap[s._id] = {
-            images: hasSessionImages ? s.images : [],
-            eventImages: hasAnyEventImages ? eventImagesMap : undefined,
-            audioLogs: hasSessionAudio ? s.audioLogs : undefined,
-            coverImage: hasSessionCover ? s.coverImage : undefined,
-          };
-        }
-
-        return {
-          ...s,
-          images: [],
-          audioLogs: [],
-          coverImage: hasSessionCover ? '' : s.coverImage,
-          events: strippedEvents,
-        };
-      });
-
-      const entityMediaMap: Record<string, { images?: string[]; audioLogs?: any[] }> = {};
-      const strippedEntities = rawEntities.map((ent) => {
-        const hasImages = Array.isArray(ent.images) && ent.images.length > 0;
-        const hasAudio = Array.isArray(ent.audioLogs) && ent.audioLogs.length > 0;
-
-        if (hasImages || hasAudio) {
-          entityMediaMap[ent._id] = {
-            images: hasImages ? ent.images : undefined,
-            audioLogs: hasAudio ? ent.audioLogs : undefined,
-          };
-          return {
-            ...ent,
-            images: [],
-            audioLogs: [],
-          };
-        }
-        return ent;
-      });
-
-      // Separate DM-only notes vs public notes for campaign party
-      const dmNotes = rawNotes.filter((n) => n.dmOnly);
-      const publicNotes = rawNotes.filter((n) => !n.dmOnly);
-
-      const noteMediaMap: Record<string, string[]> = {};
-      const strippedNotes = publicNotes.map((n) => {
-        if (Array.isArray(n.images) && n.images.length > 0) {
-          noteMediaMap[n._id] = n.images;
-          return { ...n, images: [] };
-        }
-        return n;
-      });
-
-      const mapMediaMap: Record<string, string> = {};
-      const strippedMaps = rawMaps.map((m) => {
-        if (m.imageUrl && (m.imageUrl.startsWith('data:') || m.imageUrl.length > 1000)) {
-          mapMediaMap[m.id] = m.imageUrl;
-          return { ...m, imageUrl: '' };
-        }
-        return m;
-      });
-
-      // World Lore articles: store full content & bites in chunks and lightweight index in main doc
-      const dmWorldLoreArticles = rawWorldLoreArticles.filter((a) => a.dmOnly);
-
-      const worldLoreMediaMap: Record<string, string[]> = {};
-      const strippedWorldLore = rawWorldLoreArticles.map((a) => {
-        if (Array.isArray(a.images) && a.images.length > 0) {
-          worldLoreMediaMap[a._id] = a.images;
-        }
-        return {
-          _id: a._id,
-          _createdAt: a._createdAt,
-          _updatedAt: a._updatedAt,
-          title: a.title,
-          subtitle: a.subtitle,
-          category: a.category,
-          summary: a.summary,
-          tags: a.tags,
-          dmOnly: a.dmOnly,
-          authorPlayerId: a.authorPlayerId,
-          authorName: a.authorName,
-          images: [],
-          // Keep lightweight summary in main doc, full markdown & detailed bites in chunks
-          bites: (a.bites || []).map((b: any) => ({
-            id: b.id,
-            title: b.title,
-            level: b.level,
-            category: b.category,
-            customTag: b.customTag,
-            knownBy: b.knownBy,
-          })),
-        };
-      });
-
-      // === 2. PARTITION MEDIA, FULL WORLD LORE, AND HISTORICAL SESSIONS INTO CHUNKS (< 400 KB EACH) ===
-      interface MediaChunkItem {
-        type: 'session' | 'entity' | 'note' | 'map' | 'scrapbook' | 'audio' | 'historical_session' | 'world_lore' | 'world_lore_article';
-        id: string;
-        data: any;
-      }
-
-      const mediaItems: MediaChunkItem[] = [];
-      Object.entries(sessionMediaMap).forEach(([id, data]) => mediaItems.push({ type: 'session', id, data }));
-      Object.entries(entityMediaMap).forEach(([id, data]) => mediaItems.push({ type: 'entity', id, data }));
-      Object.entries(noteMediaMap).forEach(([id, data]) => mediaItems.push({ type: 'note', id, data }));
-      Object.entries(mapMediaMap).forEach(([id, data]) => mediaItems.push({ type: 'map', id, data }));
-      Object.entries(worldLoreMediaMap).forEach(([id, data]) => mediaItems.push({ type: 'world_lore', id, data }));
-      rawScrapbookItems.forEach((item) => mediaItems.push({ type: 'scrapbook', id: item.id, data: item }));
-      rawAudioLogs.forEach((log) => mediaItems.push({ type: 'audio', id: log.id, data: log }));
-      rawWorldLoreArticles.forEach((art) => mediaItems.push({ type: 'world_lore_article', id: art._id, data: art }));
-
-      // Keep ALL text/metadata sessions in main document (base64 images are already stripped into sessionMediaMap chunks)
-      const sortedSessions = [...strippedSessions].sort((a, b) => (Number(a.number) || 0) - (Number(b.number) || 0));
-      const mainSessions: any[] = sortedSessions;
-
-      const MAX_CHUNK_BYTES = 420000; // ~400 KB safety limit per document (Firestore max is 1048576)
-      const chunkPayloads: any[] = [];
-      let currentChunk: {
-        sessionMedia: Record<string, any>;
-        entityMedia: Record<string, any>;
-        noteMedia: Record<string, any>;
-        mapMedia: Record<string, any>;
-        worldLoreMedia: Record<string, any>;
-        worldLoreArticles: any[];
-        scrapbookItems: any[];
-        audioLogs: any[];
-        historicalSessions: any[];
-      } = {
-        sessionMedia: {},
-        entityMedia: {},
-        noteMedia: {},
-        mapMedia: {},
-        worldLoreMedia: {},
-        worldLoreArticles: [],
-        scrapbookItems: [],
-        audioLogs: [],
-        historicalSessions: [],
-      };
-      let currentChunkSize = 0;
-
-      for (const item of mediaItems) {
-        const itemSize = JSON.stringify(item.data).length;
-        if (currentChunkSize + itemSize > MAX_CHUNK_BYTES && currentChunkSize > 0) {
-          chunkPayloads.push(currentChunk);
-          currentChunk = {
-            sessionMedia: {},
-            entityMedia: {},
-            noteMedia: {},
-            mapMedia: {},
-            worldLoreMedia: {},
-            worldLoreArticles: [],
-            scrapbookItems: [],
-            audioLogs: [],
-            historicalSessions: [],
-          };
-          currentChunkSize = 0;
-        }
-
-        if (item.type === 'session') currentChunk.sessionMedia[item.id] = item.data;
-        else if (item.type === 'entity') currentChunk.entityMedia[item.id] = item.data;
-        else if (item.type === 'note') currentChunk.noteMedia[item.id] = item.data;
-        else if (item.type === 'map') currentChunk.mapMedia[item.id] = item.data;
-        else if (item.type === 'world_lore') currentChunk.worldLoreMedia[item.id] = item.data;
-        else if (item.type === 'world_lore_article') currentChunk.worldLoreArticles.push(item.data);
-        else if (item.type === 'scrapbook') currentChunk.scrapbookItems.push(item.data);
-        else if (item.type === 'audio') currentChunk.audioLogs.push(item.data);
-        else if (item.type === 'historical_session') currentChunk.historicalSessions.push(item.data);
-
-        currentChunkSize += itemSize;
-      }
-
-      if (currentChunkSize > 0) {
-        chunkPayloads.push(currentChunk);
-      }
-
-      // === 3. UPLOAD MEDIA CHUNKS TO FIRESTORE (ONLY IF MEDIA ACTUALLY CHANGED) ===
-      const currentMediaHash = JSON.stringify(chunkPayloads);
-      if (force || currentMediaHash !== lastSyncedMediaHash) {
-        try {
-          // Upload chunks sequentially or in small pairs to avoid overwhelming Firestore write stream
-          for (let idx = 0; idx < chunkPayloads.length; idx++) {
-            const chunk = chunkPayloads[idx];
-            const chunkDocRef = doc(db, 'dnd_campaigns', `${activeCode}__chunk_${idx}`);
-            const chunkPayload = sanitizeFirestorePayload({
-              _updatedAt: new Date().toISOString(),
-              campaignCode: activeCode,
-              campaignMeta: {
-                code: activeCode,
-              },
-              chunkIndex: idx,
-              totalChunks: chunkPayloads.length,
-              ...chunk,
-            });
-            await setDoc(chunkDocRef, chunkPayload);
-          }
-
-          lastSyncedMediaHash = currentMediaHash;
-
-          // Clean up any extra stale chunk docs from previous larger uploads (e.g. up to 10 slots)
-          const prevStoredChunkCount = parseInt(localStorage.getItem(`chronicle_${activeCode}_last_chunk_count`) || '0', 10);
-          if (prevStoredChunkCount > chunkPayloads.length) {
-            for (let i = chunkPayloads.length; i < prevStoredChunkCount; i++) {
-              try {
-                await deleteDoc(doc(db, 'dnd_campaigns', `${activeCode}__chunk_${i}`));
-              } catch (delErr) {}
-            }
-          }
-          localStorage.setItem(`chronicle_${activeCode}_last_chunk_count`, String(chunkPayloads.length));
-        } catch (chunkErr) {
-          console.warn('[CloudSync] Warning uploading media chunks:', chunkErr);
-        }
-      }
-
-      // Extract unrevealed player backstories & secrets for DM only (Phase 3.2)
-      const dmSecretBiosMap: Record<string, any> = {};
-      const publicCharacterBios = CampaignManager.getAllCharacterBios().map((bio) => {
-        const isBackstoryShared = bio.privacySettings?.backstory === true;
-        const isSecretsShared = bio.privacySettings?.secrets === true;
-
-        if (!isBackstoryShared || !isSecretsShared) {
-          dmSecretBiosMap[bio.playerId] = {
-            backstoryMarkdown: bio.backstoryMarkdown || '',
-            secrets: bio.secrets || '',
-          };
-        }
-
-        return {
-          ...bio,
-          backstoryMarkdown: isBackstoryShared ? bio.backstoryMarkdown : '',
-          secrets: isSecretsShared ? bio.secrets : '',
-        };
-      });
-
-      // === 3b. UPLOAD DM SECRETS (Phase 3.2: RBAC DM Isolation) ===
-      if (isDm) {
-        try {
-          const dmSecretDocRef = doc(db, 'dnd_campaigns', `${activeCode}__dm_secrets`);
-          const dmSecretPayload = sanitizeFirestorePayload({
-            _updatedAt: new Date().toISOString(),
-            campaignCode: activeCode,
-            dmNotes,
-            dmSecretEvents: dmSecretEventsMap,
-            dmSecretBios: dmSecretBiosMap,
-            dmWorldLoreArticles,
-          });
-          await setDoc(dmSecretDocRef, dmSecretPayload);
-        } catch (dmErr) {
-          console.warn('Failed to upload DM secrets to Firestore:', dmErr);
-        }
-      }
-
-      // === 4. ASSEMBLE & UPLOAD LIGHTWEIGHT MAIN DOCUMENT (PUBLIC DATA ONLY) ===
-      const rawPayload = {
-        _updatedAt: new Date().toISOString(),
-        campaignMeta: {
-          ...(CampaignManager.getCampaignMeta() || { code: activeCode, name: `Campagna ${activeCode}`, createdAt: new Date().toISOString() }),
-          code: activeCode,
-          dmUid: auth.currentUser?.uid || undefined,
-          memberUids: Array.from(new Set([
-            ...((CampaignManager.getCampaignMeta() as any)?.memberUids || []),
-            ...(auth.currentUser?.uid ? [auth.currentUser.uid] : [])
-          ])),
-        },
-        sessions: mainSessions,
-        chapters: CampaignManager.getChapters(),
-        entities: strippedEntities,
-        notes: strippedNotes,
-        calendar: CampaignManager.getCalendar(),
-        maps: strippedMaps,
-        mapFolders: CampaignManager.getMapFolders(),
-        audioLogs: [],
-        scrapbookItems: [],
-        accounts: [],
-        characterBios: publicCharacterBios,
-        familyRelations: CampaignManager.getAllFamilyRelations(),
-        worldLoreArticles: strippedWorldLore,
-        campaignNotifications: CampaignManager.getCampaignNotifications(),
-        deletedNoteIds: CampaignManager.getDeletedNoteIds(),
-        deletedEntityIds: CampaignManager.getDeletedEntityIds(),
-        deletedSessionIds: CampaignManager.getDeletedSessionIds(),
-        deletedScrapbookIds: CampaignManager.getDeletedScrapbookIds(),
-        deletedNotificationIds: CampaignManager.getDeletedNotificationIds(),
-        deletedWorldLoreArticleIds: CampaignManager.getDeletedWorldLoreArticleIds(),
-        _mediaChunkCount: chunkPayloads.length,
-        _hasMediaChunks: chunkPayloads.length > 0,
-      };
-
-      const sanitizedPayload = sanitizeFirestorePayload(rawPayload);
-
-      // Check payload content hash without _updatedAt to prevent redundant network writes
-      const { _updatedAt, ...contentToHash } = sanitizedPayload;
-      const currentHash = JSON.stringify(contentToHash);
-      if (!force && currentHash === lastSyncedPayloadHash) {
-        if (typeof localStorage !== 'undefined') {
-          localStorage.setItem('hasPendingUpload', 'false');
-        }
-        return { success: true };
-      }
-
-      lastSyncedPayloadHash = currentHash;
-      await setDoc(docRef, sanitizedPayload);
-      const nowIso = new Date().toISOString();
-      if (typeof localStorage !== 'undefined') {
-        localStorage.setItem('hasPendingUpload', 'false');
-        localStorage.setItem('chronicle_last_cloud_sync_time', nowIso);
-      }
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('chronicle_cloud_sync_status', { detail: { status: 'synced', time: nowIso } }));
-      }
-      return { success: true };
-    } catch (e: any) {
-      if (e?.code === 'resource-exhausted') {
-        markQuotaExhausted();
-        this.stop();
-        console.warn('Firestore write paused: daily write units quota reached. Data saved safely in local storage.');
-        return { success: false, error: 'Quota giornaliera Firestore raggiunta. I dati sono al sicuro nel browser locale.' };
-      } else {
-        console.warn('Failed to upload data to Firestore:', e);
-        return { success: false, error: e?.message || 'Errore durante il caricamento su Firestore.' };
-      }
-    } finally {
-      isUploadInFlight = false;
-      if (hasQueuedUpload) {
-        hasQueuedUpload = false;
-        setTimeout(() => {
-          this.uploadLocalToCloud();
-        }, 500);
-      }
-    }
+    return;
   }
 
   private static async applyRemoteData(remote: any, campaignCode?: string) {

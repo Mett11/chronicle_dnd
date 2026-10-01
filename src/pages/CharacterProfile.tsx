@@ -157,8 +157,8 @@ export function CharacterProfile() {
     return (
       entities.find(
         (e) =>
-          e.name.toLowerCase().trim() === cleanName ||
-          (e.aliases && e.aliases.some((a) => a.toLowerCase().trim() === cleanName))
+          (e.name || '').toLowerCase().trim() === cleanName ||
+          (e.aliases && Array.isArray(e.aliases) && e.aliases.some((a) => typeof a === 'string' && a.toLowerCase().trim() === cleanName))
       ) || null
     );
   }, [entities, targetPlayer?.characterName]);
@@ -272,14 +272,15 @@ export function CharacterProfile() {
     }
 
     // Scrapbook memories filtering: ensure memories belong STRICTLY to targetPlayer
-    const isDM = Boolean(player.isDm);
+    const isDM = Boolean(player?.isDm);
     const targetCharName = (targetPlayer.characterName || '').trim().toLowerCase();
     const targetPlayerId = targetPlayer._id;
 
     const targetMemories = allScrapbook.filter((s) => {
-      const authorMatch = Boolean(s.authorName && s.authorName.trim().toLowerCase() === targetCharName);
+      const authorMatch = Boolean(s.authorName && typeof s.authorName === 'string' && s.authorName.trim().toLowerCase() === targetCharName);
       const entityMatch = Boolean(s.entityId && (s.entityId === targetPlayerId || (s.entityType === 'character' && s.entityId === targetPlayerId)));
       const tagMatch = Boolean(s.tags && Array.isArray(s.tags) && s.tags.some((t) => {
+        if (typeof t !== 'string') return false;
         const cleanT = t.trim().toLowerCase();
         return cleanT === targetCharName || cleanT === targetPlayerId.toLowerCase();
       }));
@@ -731,7 +732,7 @@ export function CharacterProfile() {
   const handleSyncToCodex = () => {
     if (!targetPlayer) return;
     const currentBio = characterBio || CampaignManager.getCharacterBio(targetPlayer._id);
-    const charName = targetPlayer.characterName.trim();
+    const charName = (targetPlayer.characterName || '').trim();
     const existingEnt = matchedCodexEntity;
 
     // Compose rich progress note description

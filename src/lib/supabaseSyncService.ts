@@ -9,6 +9,38 @@ import {
   AudioLog,
 } from '../types';
 
+/**
+ * Traverses any nested structure and replaces large base64 strings/images (>100KB)
+ * to prevent PostgreSQL write timeout (code 57014) in Supabase.
+ */
+function sanitizeHeavyPayload<T>(obj: T): T {
+  if (obj === null || obj === undefined) return obj;
+
+  if (typeof obj === 'string') {
+    // If it's a giant base64 image string
+    if (obj.length > 100000 && (obj.startsWith('data:') || obj.includes(';base64,'))) {
+      return '[Immagine rimossa per prevenire timeout del database]' as any;
+    }
+    return obj;
+  }
+
+  if (Array.isArray(obj)) {
+    return obj.map(item => sanitizeHeavyPayload(item)) as any;
+  }
+
+  if (typeof obj === 'object') {
+    const res: any = {};
+    for (const key in obj) {
+      if (Object.prototype.hasOwnProperty.call(obj, key)) {
+        res[key] = sanitizeHeavyPayload((obj as any)[key]);
+      }
+    }
+    return res;
+  }
+
+  return obj;
+}
+
 export class SupabaseSyncService {
   /**
    * Fetches all campaign relational data from Supabase in parallel
@@ -76,20 +108,17 @@ export class SupabaseSyncService {
           .from('character_bios')
           .select('*')
           .eq('campaign_code', cleanCode)
-          .then(res => res)
-          .catch(() => ({ data: [] })),
+          .then(res => res, () => ({ data: [] })),
         supabase
           .from('family_relations')
           .select('*')
           .eq('campaign_code', cleanCode)
-          .then(res => res)
-          .catch(() => ({ data: [] })),
+          .then(res => res, () => ({ data: [] })),
         supabase
           .from('world_lore_articles')
           .select('*')
           .eq('campaign_code', cleanCode)
-          .then(res => res)
-          .catch(() => ({ data: [] })),
+          .then(res => res, () => ({ data: [] })),
       ]);
 
       if (campaignRes.error) {
@@ -413,38 +442,39 @@ export class SupabaseSyncService {
 
     try {
       const code = campaignCode.trim();
+      const cleanSession = sanitizeHeavyPayload(session);
       const meta = {
-        images: Array.isArray(session.images) ? session.images : [],
-        coverImage: session.coverImage || '',
-        entitiesExtracted: Boolean(session.entitiesExtracted),
-        entitiesExtractedAt: session.entitiesExtractedAt || null,
-        memorySynced: Boolean(session.memorySynced),
-        memorySyncedAt: session.memorySyncedAt || null,
-        sessionType: session.sessionType || 'mixed',
-        quotes: Array.isArray(session.quotes) ? session.quotes : [],
-        audioLogs: Array.isArray(session.audioLogs) ? session.audioLogs : [],
-        excludedPlayerIds: Array.isArray(session.excludedPlayerIds) ? session.excludedPlayerIds : [],
-        attendees: Array.isArray(session.attendees) ? session.attendees : [],
-        gazetteConfig: session.gazetteConfig || null,
+        images: Array.isArray(cleanSession.images) ? cleanSession.images : [],
+        coverImage: cleanSession.coverImage || '',
+        entitiesExtracted: Boolean(cleanSession.entitiesExtracted),
+        entitiesExtractedAt: cleanSession.entitiesExtractedAt || null,
+        memorySynced: Boolean(cleanSession.memorySynced),
+        memorySyncedAt: cleanSession.memorySyncedAt || null,
+        sessionType: cleanSession.sessionType || 'mixed',
+        quotes: Array.isArray(cleanSession.quotes) ? cleanSession.quotes : [],
+        audioLogs: Array.isArray(cleanSession.audioLogs) ? cleanSession.audioLogs : [],
+        excludedPlayerIds: Array.isArray(cleanSession.excludedPlayerIds) ? cleanSession.excludedPlayerIds : [],
+        attendees: Array.isArray(cleanSession.attendees) ? cleanSession.attendees : [],
+        gazetteConfig: cleanSession.gazetteConfig || null,
       };
 
-      const existingTags = Array.isArray(session.tags)
-        ? session.tags.filter((t) => typeof t === 'string' && !t.startsWith('__meta__:'))
+      const existingTags = Array.isArray((cleanSession as any).tags)
+        ? (cleanSession as any).tags.filter((t: any) => typeof t === 'string' && !t.startsWith('__meta__:'))
         : [];
       const tagsWithMeta = [...existingTags, '__meta__:' + JSON.stringify(meta)];
 
       const payload = {
-        id: session._id || `sess_${Date.now()}`,
+        id: cleanSession._id || `sess_${Date.now()}`,
         campaign_code: code,
-        chapter_id: session.chapterId || null,
-        number: session.number || 1,
-        title: session.title || `Sessione ${session.number}`,
-        summary: typeof session.recap === 'string' ? session.recap : '',
-        recap: session.recap || [],
-        date_str: session.date || '',
-        calendar_date: session.loreDate || {},
+        chapter_id: cleanSession.chapterId || null,
+        number: cleanSession.number || 1,
+        title: cleanSession.title || `Sessione ${cleanSession.number}`,
+        summary: typeof cleanSession.recap === 'string' ? cleanSession.recap : '',
+        recap: cleanSession.recap || [],
+        date_str: cleanSession.date || '',
+        calendar_date: cleanSession.loreDate || {},
         audio_url: '',
-        plot_events: session.events || [],
+        plot_events: cleanSession.events || [],
         tags: tagsWithMeta,
         updated_at: new Date().toISOString(),
       };
@@ -453,7 +483,7 @@ export class SupabaseSyncService {
       if (error) console.error('[Supabase] Error saving session:', error);
 
       // Redundant dual-layer storage in dossier.sessionsMeta
-      this.saveSessionMeta(code, session._id, meta).catch(() => {});
+      this.saveSessionMeta(code, cleanSession._id, meta).catch(() => {});
 
       return !error;
     } catch (err) {
@@ -553,8 +583,8 @@ export class SupabaseSyncService {
         typeof img === 'string' && img.length > 300000 ? img.slice(0, 100) : img
       );
       const primaryImageUrl =
-        typeof entity.imageUrl === 'string' && entity.imageUrl.length < 300000
-          ? entity.imageUrl
+        typeof (entity as any).imageUrl === 'string' && (entity as any).imageUrl.length < 300000
+          ? (entity as any).imageUrl
           : cleanImages[0] || '';
 
       const { _id, name, type, category, description, imageUrl, status, ...restAttributes } = entity as any;
@@ -1179,5 +1209,342 @@ export class SupabaseSyncService {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Bulk upserts all campaign data from LocalStorage to Supabase
+   */
+  static async bulkUpsertCampaignData(campaignCode: string, rawCampaignData: {
+    sessions?: Session[];
+    chapters?: CampaignChapter[];
+    entities?: Entity[];
+    notes?: Note[];
+    maps?: WorldMap[];
+    scrapbookItems?: ScrapbookItem[];
+    audioLogs?: AudioLog[];
+    characterBios?: any[];
+    familyRelations?: any[];
+    worldLoreArticles?: any[];
+  }): Promise<{ success: boolean; errors: string[]; stats: Record<string, number> }> {
+    if (!isSupabaseConfigured() || !campaignCode) {
+      return { success: false, errors: ['Supabase non configurato o codice campagna mancante'], stats: {} };
+    }
+
+    const code = campaignCode.trim().toUpperCase();
+    const stats: Record<string, number> = {};
+    const errors: string[] = [];
+
+    // Sanitize heavy base64 media payloads to prevent PostgreSQL write timeout (code 57014)
+    const data = sanitizeHeavyPayload(rawCampaignData);
+
+    // 1. Sessions
+    if (Array.isArray(data.sessions) && data.sessions.length > 0) {
+      try {
+        const payloads = data.sessions.map((session) => {
+          const meta = {
+            images: Array.isArray(session.images) ? session.images : [],
+            coverImage: session.coverImage || '',
+            entitiesExtracted: Boolean(session.entitiesExtracted),
+            entitiesExtractedAt: session.entitiesExtractedAt || null,
+            memorySynced: Boolean(session.memorySynced),
+            memorySyncedAt: session.memorySyncedAt || null,
+            sessionType: session.sessionType || 'mixed',
+            quotes: Array.isArray(session.quotes) ? session.quotes : [],
+            audioLogs: Array.isArray(session.audioLogs) ? session.audioLogs : [],
+            excludedPlayerIds: Array.isArray(session.excludedPlayerIds) ? session.excludedPlayerIds : [],
+            attendees: Array.isArray(session.attendees) ? session.attendees : [],
+            gazetteConfig: session.gazetteConfig || null,
+          };
+          const existingTags = Array.isArray((session as any).tags)
+            ? (session as any).tags.filter((t: any) => typeof t === 'string' && !t.startsWith('__meta__:'))
+            : [];
+          const tagsWithMeta = [...existingTags, '__meta__:' + JSON.stringify(meta)];
+
+          return {
+            id: session._id || `sess_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+            campaign_code: code,
+            chapter_id: session.chapterId || null,
+            number: session.number || 1,
+            title: session.title || `Sessione ${session.number}`,
+            summary: typeof session.recap === 'string' ? session.recap : '',
+            recap: session.recap || [],
+            date_str: session.date || '',
+            calendar_date: session.loreDate || {},
+            audio_url: '',
+            plot_events: session.events || [],
+            tags: tagsWithMeta,
+            updated_at: new Date().toISOString(),
+          };
+        });
+
+        // Split into chunks of 50 to avoid any HTTP payload size limits
+        const chunkSize = 50;
+        for (let i = 0; i < payloads.length; i += chunkSize) {
+          const chunk = payloads.slice(i, i + chunkSize);
+          const { error } = await supabase.from('sessions').upsert(chunk, { onConflict: 'id' });
+          if (error) throw error;
+        }
+        stats.sessions = payloads.length;
+      } catch (err: any) {
+        console.error('[Supabase Bulk] Error saving sessions:', err);
+        errors.push(`Sessioni: ${err.message || err}`);
+      }
+    }
+
+    // 2. Chapters
+    if (Array.isArray(data.chapters) && data.chapters.length > 0) {
+      try {
+        const payloads = data.chapters.map((chapter) => ({
+          id: chapter.id || `chap_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          campaign_code: code,
+          number: chapter.order || 1,
+          title: chapter.name || '',
+          synopsis: chapter.description || '',
+          status: 'in_progress',
+          order_index: chapter.order || 0,
+          updated_at: new Date().toISOString(),
+        }));
+
+        const { error } = await supabase.from('chapters').upsert(payloads, { onConflict: 'id' });
+        if (error) throw error;
+        stats.chapters = payloads.length;
+      } catch (err: any) {
+        console.error('[Supabase Bulk] Error saving chapters:', err);
+        errors.push(`Capitoli: ${err.message || err}`);
+      }
+    }
+
+    // 3. Entities
+    if (Array.isArray(data.entities) && data.entities.length > 0) {
+      try {
+        const payloads = data.entities.map((entity) => {
+          const entityType = entity.type || (entity as any).category || 'npc';
+          const rawImages = Array.isArray(entity.images)
+            ? entity.images
+            : ((entity as any).imageUrl ? [(entity as any).imageUrl] : []);
+
+          const cleanImages = rawImages.map((img) =>
+            typeof img === 'string' && img.length > 300000 ? img.slice(0, 100) : img
+          );
+          const primaryImageUrl =
+            typeof (entity as any).imageUrl === 'string' && (entity as any).imageUrl.length < 300000
+              ? (entity as any).imageUrl
+              : cleanImages[0] || '';
+
+          const { _id, name, type, category, description, imageUrl, status, ...restAttributes } = entity as any;
+          const attributes = {
+            ...restAttributes,
+            images: cleanImages,
+            progressNote: entity.progressNote || '',
+            aliases: entity.aliases || [],
+            aiConfig: entity.aiConfig || undefined,
+            location: entity.location || undefined,
+            mapId: entity.mapId || undefined,
+            pinId: entity.pinId || undefined,
+          };
+
+          return {
+            id: _id || `ent_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+            campaign_code: code,
+            name: name || 'Senza Nome',
+            type: entityType,
+            description: description || '',
+            image_url: primaryImageUrl,
+            status: status || 'alive',
+            attributes,
+            updated_at: new Date().toISOString(),
+          };
+        });
+
+        const chunkSize = 50;
+        for (let i = 0; i < payloads.length; i += chunkSize) {
+          const chunk = payloads.slice(i, i + chunkSize);
+          const { error } = await supabase.from('entities').upsert(chunk, { onConflict: 'id' });
+          if (error) throw error;
+        }
+        stats.entities = payloads.length;
+      } catch (err: any) {
+        console.error('[Supabase Bulk] Error saving entities:', err);
+        errors.push(`Codex/Entità: ${err.message || err}`);
+      }
+    }
+
+    // 4. Notes
+    if (Array.isArray(data.notes) && data.notes.length > 0) {
+      try {
+        const payloads = data.notes.map((note) => ({
+          id: note._id || `note_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          campaign_code: code,
+          author_id: note.author?._id || 'unknown',
+          author_name: note.author?.characterName || 'Giocatore',
+          title: note.title || '',
+          content: note.content || '',
+          visibility: note.visibility || 'group',
+          ask_dm: Boolean(note.askDm),
+          dm_reply: note.dmResponse?.text || '',
+          updated_at: new Date().toISOString(),
+        }));
+
+        const chunkSize = 50;
+        for (let i = 0; i < payloads.length; i += chunkSize) {
+          const chunk = payloads.slice(i, i + chunkSize);
+          const { error } = await supabase.from('notes').upsert(chunk, { onConflict: 'id' });
+          if (error) throw error;
+        }
+        stats.notes = payloads.length;
+      } catch (err: any) {
+        console.error('[Supabase Bulk] Error saving notes:', err);
+        errors.push(`Note: ${err.message || err}`);
+      }
+    }
+
+    // 5. Maps
+    if (Array.isArray(data.maps) && data.maps.length > 0) {
+      try {
+        const payloads = data.maps.map((map) => ({
+          id: map.id || `map_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          campaign_code: code,
+          title: map.title || 'Mappa',
+          image_url: map.imageUrl || '',
+          pins: map.pins || [],
+          fog_of_war: {},
+          updated_at: new Date().toISOString(),
+        }));
+
+        const { error } = await supabase.from('maps').upsert(payloads, { onConflict: 'id' });
+        if (error) throw error;
+        stats.maps = payloads.length;
+      } catch (err: any) {
+        console.error('[Supabase Bulk] Error saving maps:', err);
+        errors.push(`Mappe: ${err.message || err}`);
+      }
+    }
+
+    // 6. Scrapbook
+    if (Array.isArray(data.scrapbookItems) && data.scrapbookItems.length > 0) {
+      try {
+        const payloads = data.scrapbookItems.map((item) => ({
+          id: item.id || `scr_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          campaign_code: code,
+          title: item.title || '',
+          image_url: item.imageUrl,
+          caption: item.caption || '',
+          created_by: item.authorName || '',
+          created_at: item.createdAt || new Date().toISOString(),
+        }));
+
+        const { error } = await supabase.from('scrapbook').upsert(payloads, { onConflict: 'id' });
+        if (error) throw error;
+        stats.scrapbook = payloads.length;
+      } catch (err: any) {
+        console.error('[Supabase Bulk] Error saving scrapbook:', err);
+        errors.push(`Scrapbook: ${err.message || err}`);
+      }
+    }
+
+    // 7. Audio Logs
+    if (Array.isArray(data.audioLogs) && data.audioLogs.length > 0) {
+      try {
+        const payloads = data.audioLogs.map((log) => ({
+          id: log.id || `aud_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          campaign_code: code,
+          title: log.title || 'Diario Audio',
+          audio_url: log.audioUrl,
+          duration: log.durationSeconds || 0,
+          recorded_by: log.recordedBy || '',
+          created_at: log.createdAt || new Date().toISOString(),
+        }));
+
+        const { error } = await supabase.from('audio_logs').upsert(payloads, { onConflict: 'id' });
+        if (error) throw error;
+        stats.audioLogs = payloads.length;
+      } catch (err: any) {
+        console.error('[Supabase Bulk] Error saving audio logs:', err);
+        errors.push(`Diari Audio: ${err.message || err}`);
+      }
+    }
+
+    // 8. Character Bios
+    if (Array.isArray(data.characterBios) && data.characterBios.length > 0) {
+      try {
+        const payloads = data.characterBios.map((bio) => ({
+          player_id: bio.playerId,
+          campaign_code: code,
+          name: bio.characterName || bio.name || '',
+          avatar_url: bio.avatarUrl || '',
+          color: bio.color || '#6366f1',
+          class_level: bio.characterClass || bio.classLevel || '',
+          alignment: bio.characterAlignment || bio.alignment || '',
+          background: bio.backstoryMarkdown || bio.background || '',
+          personality: Array.isArray(bio.personalityTraits) ? bio.personalityTraits.join(', ') : (bio.personality || ''),
+          ideals: bio.ideals || '',
+          bonds: bio.bonds || '',
+          flaws: bio.flaws || '',
+          timeline_memories: bio.timelineMemories || [],
+          evolving_beliefs: bio.evolvingBeliefs || [],
+          inter_party_relations: bio.interPartyRelations || {},
+          updated_at: new Date().toISOString(),
+        }));
+
+        const { error } = await supabase.from('character_bios').upsert(payloads, { onConflict: 'player_id' });
+        if (error) throw error;
+        stats.characterBios = payloads.length;
+      } catch (err: any) {
+        console.error('[Supabase Bulk] Error saving character bios:', err);
+        errors.push(`Biografie: ${err.message || err}`);
+      }
+    }
+
+    // 9. Family Relations
+    if (Array.isArray(data.familyRelations) && data.familyRelations.length > 0) {
+      try {
+        const payloads = data.familyRelations.map((rel) => ({
+          id: rel.id,
+          campaign_code: code,
+          source_entity_id: rel.playerId || '',
+          target_entity_id: rel.linkedEntityId || rel.linkedPlayerId || '',
+          relationship_type: rel.relationshipType || 'companion',
+          description: rel.bio || '',
+          is_secret: Boolean(rel.sharedWithParty === false),
+          updated_at: new Date().toISOString(),
+        }));
+
+        const { error } = await supabase.from('family_relations').upsert(payloads, { onConflict: 'id' });
+        if (error) throw error;
+        stats.familyRelations = payloads.length;
+      } catch (err: any) {
+        console.error('[Supabase Bulk] Error saving family relations:', err);
+        errors.push(`Relazioni: ${err.message || err}`);
+      }
+    }
+
+    // 10. World Lore Articles
+    if (Array.isArray(data.worldLoreArticles) && data.worldLoreArticles.length > 0) {
+      try {
+        const payloads = data.worldLoreArticles.map((art) => ({
+          id: art._id,
+          campaign_code: code,
+          title: art.title || 'Senza Titolo',
+          content: art.fullContentMarkdown || '',
+          category_id: art.category || 'general',
+          images: art.images || [],
+          is_draft: Boolean(art.dmOnly),
+          updated_at: new Date().toISOString(),
+        }));
+
+        const { error } = await supabase.from('world_lore_articles').upsert(payloads, { onConflict: 'id' });
+        if (error) throw error;
+        stats.worldLoreArticles = payloads.length;
+      } catch (err: any) {
+        console.error('[Supabase] Bulk lore articles error:', err);
+        errors.push(`Articoli Lore: ${err.message || err}`);
+      }
+    }
+
+    return {
+      success: errors.length === 0,
+      errors,
+      stats,
+    };
   }
 }

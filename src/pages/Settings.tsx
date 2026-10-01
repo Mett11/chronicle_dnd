@@ -53,12 +53,124 @@ import { ApiKeyManager } from '../lib/apiKeyManager';
 import { useAiKeys } from '../hooks/useAiKeys';
 import { KeyModeSelector } from '../components/KeyModeSelector';
 import { ChevronRight, Palette, BookOpen, X } from 'lucide-react';
+import { isSupabaseConfigured } from '../lib/supabase';
+import { SupabaseSyncService } from '../lib/supabaseSyncService';
 
 export function Settings() {
   const activeCampaignCode = CampaignManager.getActiveCampaignCode();
   const [allCampaigns, setAllCampaigns] = useState<CampaignMeta[]>(() => CampaignManager.getCampaigns());
   const activeCampaign = allCampaigns.find((c) => c.code === activeCampaignCode);
   const [isTypographyModalOpen, setIsTypographyModalOpen] = useState(false);
+
+  // Supabase PostgreSQL sync stats
+  const [supabaseStats, setSupabaseStats] = useState<{
+    local: Record<string, number>;
+    remote: Record<string, number>;
+    loading: boolean;
+    syncing: boolean;
+    error: string | null;
+    successMsg: string | null;
+  }>({
+    local: {},
+    remote: {},
+    loading: false,
+    syncing: false,
+    error: null,
+    successMsg: null,
+  });
+
+  const loadSupabaseStats = async () => {
+    if (!isSupabaseConfigured() || !activeCampaignCode) return;
+    setSupabaseStats(prev => ({ ...prev, loading: true, error: null }));
+    try {
+      const supaData = await SupabaseSyncService.fetchCampaignData(activeCampaignCode);
+      const local = {
+        sessions: CampaignManager.getSessions().length,
+        chapters: CampaignManager.getChapters().length,
+        notes: CampaignManager.getNotes().length,
+        entities: CampaignManager.getEntities().length,
+        maps: CampaignManager.getMaps().length,
+        scrapbookItems: CampaignManager.getScrapbookItems().length,
+        audioLogs: CampaignManager.getAudioLogs().length,
+        characterBios: CampaignManager.getAllCharacterBios().length,
+        familyRelations: CampaignManager.getAllFamilyRelations().length,
+        worldLoreArticles: CampaignManager.getWorldLoreArticles().length,
+      };
+
+      if (supaData) {
+        setSupabaseStats({
+          local,
+          remote: {
+            sessions: Array.isArray(supaData.sessions) ? supaData.sessions.length : 0,
+            chapters: Array.isArray(supaData.chapters) ? supaData.chapters.length : 0,
+            notes: Array.isArray(supaData.notes) ? supaData.notes.length : 0,
+            entities: Array.isArray(supaData.entities) ? supaData.entities.length : 0,
+            maps: Array.isArray(supaData.maps) ? supaData.maps.length : 0,
+            scrapbookItems: Array.isArray(supaData.scrapbookItems) ? supaData.scrapbookItems.length : 0,
+            audioLogs: Array.isArray(supaData.audioLogs) ? supaData.audioLogs.length : 0,
+            characterBios: Array.isArray(supaData.characterBios) ? supaData.characterBios.length : 0,
+            familyRelations: Array.isArray(supaData.familyRelations) ? supaData.familyRelations.length : 0,
+            worldLoreArticles: Array.isArray(supaData.worldLoreArticles) ? supaData.worldLoreArticles.length : 0,
+          },
+          loading: false,
+          syncing: false,
+          error: null,
+          successMsg: null,
+        });
+      } else {
+        setSupabaseStats(prev => ({ ...prev, loading: false, error: 'Nessun dato trovato per questa campagna su Supabase.' }));
+      }
+    } catch (err: any) {
+      setSupabaseStats(prev => ({ ...prev, loading: false, error: err?.message || 'Impossibile connettersi a Supabase.' }));
+    }
+  };
+
+  const handleSupabaseBulkSync = async () => {
+    if (!isSupabaseConfigured() || !activeCampaignCode) return;
+    setSupabaseStats(prev => ({ ...prev, syncing: true, error: null, successMsg: null }));
+    try {
+      const payload = {
+        sessions: CampaignManager.getSessions(),
+        chapters: CampaignManager.getChapters(),
+        notes: CampaignManager.getNotes(),
+        entities: CampaignManager.getEntities(),
+        maps: CampaignManager.getMaps(),
+        scrapbookItems: CampaignManager.getScrapbookItems(),
+        audioLogs: CampaignManager.getAudioLogs(),
+        characterBios: CampaignManager.getAllCharacterBios(),
+        familyRelations: CampaignManager.getAllFamilyRelations(),
+        worldLoreArticles: CampaignManager.getWorldLoreArticles(),
+      };
+
+      const res = await SupabaseSyncService.bulkUpsertCampaignData(activeCampaignCode, payload);
+      if (res.success) {
+        setSupabaseStats(prev => ({
+          ...prev,
+          syncing: false,
+          successMsg: 'Allineamento completato! Tutti i record locali sono stati sincronizzati ed unificati su Supabase PostgreSQL.',
+        }));
+        await loadSupabaseStats();
+      } else {
+        setSupabaseStats(prev => ({
+          ...prev,
+          syncing: false,
+          error: `Errore durante la sincronizzazione: ${res.errors.join(', ')}`,
+        }));
+      }
+    } catch (err: any) {
+      setSupabaseStats(prev => ({
+        ...prev,
+        syncing: false,
+        error: err?.message || 'Impossibile completare l\'allineamento.',
+      }));
+    }
+  };
+
+  useEffect(() => {
+    if (isSupabaseConfigured() && activeCampaignCode) {
+      loadSupabaseStats();
+    }
+  }, [activeCampaignCode]);
 
   const {
     account,
@@ -933,6 +1045,119 @@ export function Settings() {
             </div>
           )}
         </div>
+
+        {isSupabaseConfigured() && (
+          <div className="p-5 rounded-xl bg-surface-2/40 border border-surface-3 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3 border-b border-surface-3 pb-3">
+              <div>
+                <h3 className="text-xs font-bold uppercase tracking-wider text-content-1 flex items-center gap-2 font-mono">
+                  <Database size={14} className="text-primary animate-pulse" />
+                  Allineamento Database Supabase (PostgreSQL)
+                </h3>
+                <p className="text-[11px] text-content-3 mt-1 leading-relaxed">
+                  Confronta i record presenti nel tuo browser (LocalStorage) con quelli salvati nel database cloud PostgreSQL di Supabase. Puoi forzare il caricamento di eventuali dati non sincronizzati.
+                </p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0 self-end sm:self-start">
+                <button
+                  type="button"
+                  onClick={loadSupabaseStats}
+                  disabled={supabaseStats.loading || supabaseStats.syncing}
+                  className="p-1.5 bg-surface-2 hover:bg-surface-3 border border-surface-3 rounded-lg text-content-2 hover:text-content-1 cursor-pointer transition-colors"
+                  title="Aggiorna statistiche"
+                >
+                  <RefreshCw size={14} className={supabaseStats.loading ? "animate-spin" : ""} />
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSupabaseBulkSync}
+                  disabled={supabaseStats.loading || supabaseStats.syncing}
+                  className="px-3 py-1.5 bg-primary/20 hover:bg-primary/30 text-primary border border-primary/40 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
+                  title="Carica e unifica tutti i dati locali sul Database di Supabase"
+                >
+                  {supabaseStats.syncing ? <Loader2 size={13} className="animate-spin" /> : <UploadCloud size={13} />}
+                  <span>{supabaseStats.syncing ? 'Allineamento...' : 'Sincronizza e Invia al DB'}</span>
+                </button>
+              </div>
+            </div>
+
+            {supabaseStats.error && (
+              <div className="p-3 rounded-xl bg-red-950/40 text-red-300 border border-red-800/50 text-xs flex items-center gap-2 animate-fadeIn">
+                <AlertTriangle size={14} className="shrink-0" />
+                <span>{supabaseStats.error}</span>
+              </div>
+            )}
+
+            {supabaseStats.successMsg && (
+              <div className="p-3 rounded-xl bg-emerald-950/40 text-emerald-300 border border-emerald-800/50 text-xs flex items-center gap-2 animate-fadeIn">
+                <Check size={14} className="shrink-0" />
+                <span>{supabaseStats.successMsg}</span>
+              </div>
+            )}
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr className="border-b border-surface-3 text-content-3 font-mono">
+                    <th className="py-2 px-3 font-medium">Categoria Dati</th>
+                    <th className="py-2 px-3 text-center font-medium">Memoria Locale</th>
+                    <th className="py-2 px-3 text-center font-medium">Database Supabase</th>
+                    <th className="py-2 px-3 text-right font-medium">Stato</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-surface-3/50 text-content-2">
+                  {[
+                    { label: 'Codex & Entità (NPC, Nemici, Luoghi)', key: 'entities', icon: Users },
+                    { label: 'Sessioni di Gioco', key: 'sessions', icon: BookOpen },
+                    { label: 'Note di Campagna', key: 'notes', icon: FileCheck },
+                    { label: 'Capitoli Storia', key: 'chapters', icon: Sliders },
+                    { label: 'Mappe dell\'Atlante', key: 'maps', icon: HardDrive },
+                    { label: 'Scrapbook (Momenti Foto)', key: 'scrapbookItems', icon: ExternalLink },
+                    { label: 'Diari Audio', key: 'audioLogs', icon: HardDrive },
+                    { label: 'Biografie Personaggi', key: 'characterBios', icon: User },
+                    { label: 'Relazioni Familiari', key: 'familyRelations', icon: ArrowRightLeft },
+                    { label: 'Articoli Lore del Mondo', key: 'worldLoreArticles', icon: Check },
+                  ].map((row) => {
+                    const localCount = supabaseStats.local[row.key] ?? 0;
+                    const remoteCount = supabaseStats.remote[row.key] ?? 0;
+                    const isAligned = localCount === remoteCount;
+                    const localHasMore = localCount > remoteCount;
+
+                    const IconComp = row.icon;
+
+                    return (
+                      <tr key={row.key} className="hover:bg-surface-2/30 transition-colors">
+                        <td className="py-2 px-3 flex items-center gap-2 font-medium">
+                          <IconComp size={13} className="text-content-3" />
+                          <span>{row.label}</span>
+                        </td>
+                        <td className="py-2 px-3 text-center font-mono font-semibold">{supabaseStats.loading ? '...' : localCount}</td>
+                        <td className="py-2 px-3 text-center font-mono font-semibold text-primary">{supabaseStats.loading ? '...' : remoteCount}</td>
+                        <td className="py-2 px-3 text-right">
+                          {supabaseStats.loading ? (
+                            <span className="text-[10px] text-content-3">Verifica...</span>
+                          ) : isAligned ? (
+                            <span className="inline-flex items-center gap-1 text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded-full font-medium">
+                              <Check size={10} /> Allineato
+                            </span>
+                          ) : localHasMore ? (
+                            <span className="inline-flex items-center gap-1 text-[10px] bg-amber-500/10 text-amber-400 border border-amber-500/20 px-2 py-0.5 rounded-full font-medium" title="Record presenti localmente ma non ancora nel database cloud">
+                              <AlertCircle size={10} /> Da Caricare ({localCount - remoteCount})
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 text-[10px] bg-blue-500/10 text-blue-400 border border-blue-500/20 px-2 py-0.5 rounded-full font-medium" title="Record scaricati dal database e memorizzati localmente">
+                              <Check size={10} /> Allineato (DB)
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
 
         {activeCampaignCode && (
           <div className="pt-4 border-t border-surface-2 flex flex-col sm:flex-row sm:items-center justify-between gap-4">

@@ -1,4 +1,4 @@
-import { Entity, PlayerAccount } from '../types';
+import { Entity } from '../types';
 
 export interface OrphanMentionInfo {
   name: string;
@@ -88,7 +88,7 @@ export function extractSnippetsForMention(text: string, mentionName: string, max
 export function findOrphanMentions(
   text: string,
   existingEntities: Entity[] = [],
-  players: (PlayerAccount | { characterName?: string; name?: string; aliases?: string[] })[] = []
+  players: any[] = []
 ): OrphanMentionInfo[] {
   const allMentions = extractAllMentions(text);
   if (allMentions.length === 0) return [];

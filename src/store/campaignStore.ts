@@ -3868,8 +3868,8 @@ export class CampaignManager {
     const entity = this.getEntities().find((e) => e._id === id);
     if (entity?.images && entity.images.length > 0) {
       FirebaseStorageService.deleteMultipleMedia(entity.images).catch(() => {});
-    } else if (entity?.imageUrl) {
-      FirebaseStorageService.deleteMedia(entity.imageUrl).catch(() => {});
+    } else if ((entity as any)?.imageUrl) {
+      FirebaseStorageService.deleteMedia((entity as any).imageUrl).catch(() => {});
     }
     const entities = this.getEntities().filter((e) => e._id !== id);
     this.saveEntities(entities);
@@ -4817,7 +4817,7 @@ export class CampaignManager {
         if (!ent.aiConfig?.partyRelations) return ent;
         const isTargetEntity =
           (targetRel.linkedEntityId && ent._id === targetRel.linkedEntityId) ||
-          (cleanRelName && ent.name.trim().toLowerCase() === cleanRelName);
+          (cleanRelName && (ent.name || '').trim().toLowerCase() === cleanRelName);
 
         if (!isTargetEntity) return ent;
 
@@ -4836,7 +4836,7 @@ export class CampaignManager {
           Object.entries(pRelations).forEach(([k, val]) => {
             if (
               k.startsWith('unregistered_') &&
-              ((val.characterName && val.characterName.trim().toLowerCase() === playerCharName) ||
+              ((val && val.characterName && typeof val.characterName === 'string' && val.characterName.trim().toLowerCase() === playerCharName) ||
                 k.includes(playerCharName.replace(/[^a-z0-9]/gi, '_')))
             ) {
               delete pRelations[k];
@@ -4890,6 +4890,7 @@ export class CampaignManager {
 
         // Find keys that match this character name or unregistered prefixes
         Object.entries(partyRelations).forEach(([key, rel]) => {
+          if (!rel) return;
           const relCharName = (rel.characterName || '').trim().toLowerCase();
           const isMatch =
             key === playerId ||
@@ -4940,7 +4941,8 @@ export class CampaignManager {
         const existingRelIndex = updatedFamilyRelations.findIndex(
           (r) =>
             r.playerId === playerId &&
-            (r.linkedEntityId === ent._id || r.name.trim().toLowerCase() === ent.name.trim().toLowerCase())
+            (r.linkedEntityId === ent._id ||
+              ((r.name || '').trim().toLowerCase() === (ent.name || '').trim().toLowerCase() && (r.name || '').trim() !== ''))
         );
 
         const attitude = pRel.attitude || 'neutral';

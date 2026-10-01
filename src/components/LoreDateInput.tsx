@@ -30,7 +30,7 @@ export interface LoreDateInputProps {
 }
 
 export function LoreDateInput({
-  value,
+  value: rawValue,
   onChange,
   sessionId,
   session: explicitSession,
@@ -44,6 +44,7 @@ export function LoreDateInput({
   hideLabel = false,
   autoFillOnSessionChange = true,
 }: LoreDateInputProps) {
+  const value = rawValue || '';
   const [calendar, setCalendar] = useState<CampaignCalendar>(() => CampaignManager.getCalendar());
   const [allSessions, setAllSessions] = useState<Session[]>(() => explicitSessions || CampaignManager.getSessions());
   const [isQuickPickerOpen, setIsQuickPickerOpen] = useState(false);

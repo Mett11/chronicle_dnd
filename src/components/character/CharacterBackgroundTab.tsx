@@ -883,10 +883,10 @@ export function CharacterBackgroundTab({
                   (b) => b.status !== 'pact' && !(b.subject && /patto|giuramento|accordo|contratto/i.test(b.subject))
                 ).length;
                 const openQuestsList = (quests || []).filter(
-                  (q) => q.status !== 'completed' && q.status !== 'resolved' && q.status !== 'archived'
+                  (q) => (q.status as any) !== 'completed' && (q.status as any) !== 'resolved' && (q.status as any) !== 'archived'
                 );
                 const completedQuestsList = (quests || []).filter(
-                  (q) => q.status === 'completed' || q.status === 'resolved'
+                  (q) => (q.status as any) === 'completed' || (q.status as any) === 'resolved'
                 );
 
                 const filterButtons = [

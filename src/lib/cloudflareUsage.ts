@@ -4,7 +4,16 @@
  * Supports persistent cloud storage via Google Firebase Firestore to survive browser cache clearance.
  */
 
-import { CloudflareUsageLog, ModelLimit, CLOUDFLARE_MODEL_METADATA } from '../types';
+export interface CloudflareUsageLog {
+  id: string;
+  timestamp: string;
+  model: string;
+  promptTextLength: number;
+  responseTextLength: number;
+  estimatedPromptTokens: number;
+  estimatedResponseTokens: number;
+  neuronsConsumed: number;
+}
 
 export interface ModelLimit {
   modelId: string;
