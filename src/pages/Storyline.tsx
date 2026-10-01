@@ -45,6 +45,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { ImageGalleryUploader } from '../components/ImageGalleryUploader';
 import { StorylineFullscreenViewer, StorylineSlide } from '../components/StorylineFullscreenViewer';
 import { motion, AnimatePresence } from 'framer-motion';
+import { extractTextFromContent } from '../lib/sanitize';
 
 // Icons & labels for entities
 const ENTITY_ICONS: Record<string, React.ComponentType<{ size?: number; className?: string }>> = {
@@ -1828,10 +1829,7 @@ export function Storyline() {
     sortedSessions.forEach((sess) => {
       const sessionDays = extractLoreDaysForSession(sess, calendar);
 
-      const recapText =
-        sess.recap && sess.recap[0]?.children?.[0]?.text
-          ? sess.recap[0].children[0].text
-          : 'Sessione di campagna registrata.';
+      const recapText = extractTextFromContent(sess.recap) || 'Sessione di campagna registrata.';
 
       const sessionCategory = deduceEventType(sess.title, recapText, sess.sessionType);
 
@@ -2191,14 +2189,7 @@ export function Storyline() {
       }
 
       // 3. Extract clean recap text
-      let recapText = "";
-      if (s.recap && Array.isArray(s.recap) && s.recap[0]?.children?.[0]?.text) {
-        recapText = s.recap[0].children[0].text;
-      } else if (typeof s.recap === "string") {
-        recapText = s.recap;
-      } else {
-        recapText = "Sessione di campagna registrata.";
-      }
+      const recapText = extractTextFromContent(s.recap) || "Sessione di campagna registrata.";
 
       // 4. Determine category, location and impact
       const category = deduceEventType(s.title, recapText, s.sessionType);

@@ -61,17 +61,13 @@ import { EntityDetailModal } from '../components/EntityDetailModal';
 import { PlayerTagsModal } from '../components/PlayerTagsModal';
 import { SessionMemorySyncModal } from '../components/SessionMemorySyncModal';
 import features from '../config/features.json';
+import { extractTextFromContent } from '../lib/sanitize';
 
 type SessionViewSection = 'cover' | 'recap' | 'events' | 'images' | 'audio' | 'party';
 
 const getRecapExcerpt = (recap: any): string => {
   if (!recap) return '';
-  let raw = '';
-  if (Array.isArray(recap) && recap[0]?.children?.[0]?.text) {
-    raw = recap[0].children[0].text;
-  } else if (typeof recap === 'string') {
-    raw = recap;
-  }
+  const raw = extractTextFromContent(recap);
   return raw
     .replace(/#+\s+/g, '')
     .replace(/[*_~`>]/g, '')
@@ -171,11 +167,10 @@ export function Sessions() {
   };
 
   const orphanTagsInCurrentSession = useMemo(() => {
-    if (!selectedSession?.recap || typeof selectedSession.recap[0]?.children?.[0]?.text !== 'string') {
+    const text = extractTextFromContent(selectedSession?.recap);
+    if (!text || !text.includes('@')) {
       return [];
     }
-    const text = selectedSession.recap[0].children[0].text;
-    if (!text.includes('@')) return [];
 
     const entityMap = CampaignManager.getEntityLookupMap();
     const players = CampaignManager.getPlayers();
@@ -325,9 +320,7 @@ export function Sessions() {
       if (sessionSearchQuery.trim()) {
         const q = sessionSearchQuery.toLowerCase();
         const matchesTitle = s.title.toLowerCase().includes(q);
-        const matchesRecap = s.recap?.[0]?.children?.[0]?.text
-          ? (s.recap[0].children[0].text as string).toLowerCase().includes(q)
-          : false;
+        const matchesRecap = extractTextFromContent(s.recap).toLowerCase().includes(q);
         const matchesNumber = s.number.toString() === q || `sessione ${s.number}`.includes(q);
         if (!matchesTitle && !matchesRecap && !matchesNumber) return false;
       }
@@ -1135,10 +1128,10 @@ export function Sessions() {
                     </div>
 
                     <div className="text-sm text-content-1 leading-relaxed font-sans text-pretty">
-                      {selectedSession.recap && typeof selectedSession.recap[0]?.children?.[0]?.text === 'string' ? (
+                      {extractTextFromContent(selectedSession.recap) ? (
                         <MarkdownRenderer
                           key={`recap-${selectedSession._id}-${showMentionTags ? 'with-tags' : 'clean'}`}
-                          content={selectedSession.recap[0].children[0].text}
+                          content={extractTextFromContent(selectedSession.recap)}
                           showMentions={showMentionTags}
                           onEntityClick={setInspectingEntity}
                         />
@@ -2458,11 +2451,10 @@ export function Sessions() {
           isOpen={isExtractModalOpen}
           onClose={() => setIsExtractModalOpen(false)}
           rawText={
-            typeof selectedSession.recap?.[0]?.children?.[0]?.text === 'string'
-              ? selectedSession.recap[0].children[0].text
-              : selectedSession.events && selectedSession.events.length > 0
+            extractTextFromContent(selectedSession.recap) ||
+            (selectedSession.events && selectedSession.events.length > 0
               ? selectedSession.events.map((e) => `${e.title}: ${e.description}`).join('\n')
-              : selectedSession.title
+              : selectedSession.title)
           }
           onApplied={(newEntitiesCreated, updatedTextWithMentions) => {
             if (selectedSession) {

@@ -31,6 +31,7 @@ import { EntityExtractionModal } from './EntityExtractionModal';
 import { CampaignManager } from '../store/campaignStore';
 import { Portal } from './Portal';
 import features from '../config/features.json';
+import { extractTextFromContent } from '../lib/sanitize';
 
 interface SessionModalProps {
   isOpen: boolean;
@@ -299,11 +300,7 @@ export function SessionModal({
       } else {
         setLoreMeta(undefined);
       }
-      setRecapText(
-        initialSession.recap && typeof initialSession.recap[0]?.children?.[0]?.text === 'string'
-          ? initialSession.recap[0].children[0].text
-          : ''
-      );
+      setRecapText(extractTextFromContent(initialSession.recap));
       setSessionImages(initialSession.images || []);
       setEventsList(initialSession.events ? initialSession.events.map(({ id, ...rest }) => rest) : []);
       setHasExtractedEntities(Boolean(initialSession.entitiesExtracted));

@@ -86,7 +86,19 @@ export function isSafeUrl(url: string): boolean {
  */
 export function extractTextFromContent(content: any): string {
   if (content === null || content === undefined) return '';
-  if (typeof content === 'string') return content;
+
+  if (typeof content === 'string') {
+    const trimmed = content.trim();
+    if ((trimmed.startsWith('[') && trimmed.endsWith(']')) || (trimmed.startsWith('{') && trimmed.endsWith('}'))) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        const extracted = extractTextFromContent(parsed);
+        if (extracted) return extracted;
+      } catch {}
+    }
+    return content;
+  }
+
   if (typeof content === 'number' || typeof content === 'boolean') return String(content);
 
   if (Array.isArray(content)) {
@@ -94,27 +106,20 @@ export function extractTextFromContent(content: any): string {
   }
 
   if (typeof content === 'object') {
-    // 1. Check direct string fields
+    // 1. Check Portable Text / rich text children array
+    if (Array.isArray(content.children)) {
+      const blockText = content.children.map(extractTextFromContent).filter(Boolean).join('');
+      if (blockText) return blockText;
+    }
+
+    // 2. Check direct string fields
     if (typeof content.text === 'string') return content.text;
     if (typeof content.value === 'string') return content.value;
     if (typeof content.name === 'string') return content.name;
     if (typeof content.title === 'string') return content.title;
     if (typeof content.label === 'string') return content.label;
 
-    // 2. Check Portable Text / rich text children array
-    if (Array.isArray(content.children)) {
-      return content.children.map(extractTextFromContent).filter(Boolean).join('');
-    }
-
-    // 3. Check nested block / span fields
-    if (content._type === 'block' || content._type === 'span') {
-      if (Array.isArray(content.children)) {
-        return content.children.map(extractTextFromContent).filter(Boolean).join('');
-      }
-      if (typeof content.text === 'string') return content.text;
-    }
-
-    // 4. Check nested document properties
+    // 3. Check nested document properties
     if (content.recap) return extractTextFromContent(content.recap);
     if (content.synopsis) return extractTextFromContent(content.synopsis);
     if (content.notes) return extractTextFromContent(content.notes);
@@ -123,7 +128,7 @@ export function extractTextFromContent(content: any): string {
     if (content.chapterName) return extractTextFromContent(content.chapterName);
     if (content.location) return extractTextFromContent(content.location);
 
-    // 5. Fallback for object: NEVER return the object itself
+    // 4. Fallback for object: NEVER return the object itself
     return '';
   }
 

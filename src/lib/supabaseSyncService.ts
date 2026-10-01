@@ -92,6 +92,14 @@ export class SupabaseSyncService {
         if (!recapData || (Array.isArray(recapData) && recapData.length === 0)) {
           recapData = row.summary || [];
         }
+        if (typeof recapData === 'string') {
+          const trimmed = recapData.trim();
+          if ((trimmed.startsWith('[') && trimmed.endsWith(']')) || (trimmed.startsWith('{') && trimmed.endsWith('}'))) {
+            try {
+              recapData = JSON.parse(trimmed);
+            } catch {}
+          }
+        }
 
         // Clean loreDate formatting
         let parsedLoreDate: string | undefined = undefined;

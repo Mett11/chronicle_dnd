@@ -1234,6 +1234,20 @@ export class CloudSyncService {
       if (!activeCode || activeCode === 'default_campaign' || activeCode === '__NONE__') {
         return { success: false, error: 'Nessuna campagna attiva valida.' };
       }
+
+      // When Supabase is configured, PostgreSQL is the source of truth for all structured data.
+      // We skip uploading the monolithic 1.2MB document to Firestore to prevent the 1MB Firestore size limit error.
+      if (isSupabaseConfigured()) {
+        if (typeof localStorage !== 'undefined') {
+          localStorage.setItem('hasPendingUpload', 'false');
+          localStorage.setItem('chronicle_last_cloud_sync_time', new Date().toISOString());
+        }
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('chronicle_cloud_sync_status', { detail: { status: 'synced', time: new Date().toISOString() } }));
+        }
+        return { success: true };
+      }
+
       const docRef = doc(db, 'dnd_campaigns', activeCode);
       const currentAccount = CampaignManager.getCurrentAccount();
       const meta = CampaignManager.getCampaignMeta();

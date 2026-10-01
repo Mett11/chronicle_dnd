@@ -1,7 +1,9 @@
 import { ImageOptimizerModal } from './ImageOptimizer';
 import React, { useState, useRef } from 'react';
-import { Image as ImageIcon, Upload, Trash2, X, Maximize2, Link as LinkIcon } from 'lucide-react';
+import { Image as ImageIcon, Upload, Trash2, X, Maximize2, Link as LinkIcon, Loader2 } from 'lucide-react';
 import { Portal } from './Portal';
+import { FirebaseStorageService } from '../lib/firebaseStorageService';
+import { CampaignManager } from '../store/campaignStore';
 
 interface ImageGalleryUploaderProps {
   images: string[];
@@ -28,6 +30,7 @@ export function ImageGalleryUploader({
   const [isUrlInputOpen, setIsUrlInputOpen] = useState(false);
   const [urlInput, setUrlInput] = useState('');
   const [isDragging, setIsDragging] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -185,14 +188,49 @@ export function ImageGalleryUploader({
         )}
       </div>
 
+      {/* Uploading indicator */}
+      {isUploading && (
+        <div className="flex items-center gap-2 py-1.5 px-3 rounded-xl bg-surface-2 border border-primary/30 text-primary text-xs font-mono">
+          <Loader2 size={13} className="animate-spin" />
+          <span>Salvataggio su Cloud Storage in corso...</span>
+        </div>
+      )}
+
       {/* Optimizer Modal for local files */}
       {pendingFiles.length > 0 && (
         <ImageOptimizerModal
           files={pendingFiles}
           onCancel={() => setPendingFiles([])}
-          onConfirm={(optimizedB64s) => {
-            onChange([...images, ...optimizedB64s]);
-            setPendingFiles([]);
+          onConfirm={async (optimizedB64s) => {
+            setIsUploading(true);
+            try {
+              const code = CampaignManager.getActiveCampaignCode() || 'default';
+              const uploadedUrls = await Promise.all(
+                optimizedB64s.map(async (b64, idx) => {
+                  if (b64.startsWith('data:')) {
+                    try {
+                      const cdnUrl = await FirebaseStorageService.uploadMedia(
+                        code,
+                        'images',
+                        `gallery_${Date.now()}_${idx}.webp`,
+                        b64
+                      );
+                      return cdnUrl || b64;
+                    } catch {
+                      return b64;
+                    }
+                  }
+                  return b64;
+                })
+              );
+              onChange([...images, ...uploadedUrls]);
+            } catch (err) {
+              console.warn('Errore upload galleria:', err);
+              onChange([...images, ...optimizedB64s]);
+            } finally {
+              setIsUploading(false);
+              setPendingFiles([]);
+            }
           }}
         />
       )}

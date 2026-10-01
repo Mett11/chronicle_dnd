@@ -47,6 +47,7 @@ import { OcrButton } from '../components/OcrButton';
 import { NoteModal } from '../components/NoteModal';
 import { QuestModal } from '../components/QuestModal';
 import { motion, AnimatePresence } from 'motion/react';
+import { extractTextFromContent } from '../lib/sanitize';
 
 type MainTab = 'notes' | 'session' | 'quests';
 
@@ -1053,13 +1054,9 @@ export function Home() {
                   </div>
 
                   <div className="prose text-sm text-content-1 leading-relaxed space-y-4 font-body">
-                    {latestSession.recap ? (
+                    {extractTextFromContent(latestSession.recap) ? (
                       <MarkdownRenderer
-                        content={
-                          typeof latestSession.recap[0]?.children?.[0]?.text === 'string'
-                            ? latestSession.recap[0].children[0].text
-                            : 'Nessun riassunto testuale registrato per questa sessione.'
-                        }
+                        content={extractTextFromContent(latestSession.recap)}
                       />
                     ) : (
                       <p className="text-xs text-content-3 italic font-mono">Nessun riassunto redatto per questa sessione.</p>

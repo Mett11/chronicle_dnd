@@ -7,6 +7,7 @@ import {
   Maximize2,
   Check,
   FileImage,
+  Loader2,
 } from 'lucide-react';
 import { ImageOptimizerModal } from './ImageOptimizer';
 import { FirebaseStorageService } from '../lib/firebaseStorageService';
@@ -123,6 +124,14 @@ export function SingleImageUploader({
               </span>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Uploading indicator */}
+      {isUploadingImage && (
+        <div className="flex items-center gap-2 py-1.5 px-3 rounded-xl bg-surface-2 border border-primary/30 text-primary text-xs font-mono">
+          <Loader2 size={13} className="animate-spin" />
+          <span>Salvataggio su Cloud Storage in corso...</span>
         </div>
       )}
 
