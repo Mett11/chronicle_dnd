@@ -981,40 +981,40 @@ export class CloudSyncService {
                 dmId: supaData.dmId || undefined,
               });
             }
-            if (Array.isArray(supaData.sessions) && supaData.sessions.length > 0) {
+            if (Array.isArray(supaData.sessions)) {
               CampaignManager.saveSessionsLocalOnly(supaData.sessions);
             }
-            if (Array.isArray(supaData.chapters) && supaData.chapters.length > 0) {
+            if (Array.isArray(supaData.chapters)) {
               CampaignManager.saveChaptersLocalOnly(supaData.chapters);
             }
-            if (Array.isArray(supaData.notes) && supaData.notes.length > 0) {
+            if (Array.isArray(supaData.notes)) {
               CampaignManager.saveNotesLocalOnly(supaData.notes);
             }
-            if (Array.isArray(supaData.entities) && supaData.entities.length > 0) {
+            if (Array.isArray(supaData.entities)) {
               CampaignManager.saveEntitiesLocalOnly(supaData.entities);
             }
-            if (Array.isArray(supaData.maps) && supaData.maps.length > 0) {
+            if (Array.isArray(supaData.maps)) {
               CampaignManager.saveMapsLocalOnly(supaData.maps);
             }
-            if (Array.isArray(supaData.mapFolders) && supaData.mapFolders.length > 0) {
+            if (Array.isArray(supaData.mapFolders)) {
               CampaignManager.saveMapFoldersLocalOnly(supaData.mapFolders);
             }
-            if (Array.isArray(supaData.scrapbookItems) && supaData.scrapbookItems.length > 0) {
+            if (Array.isArray(supaData.scrapbookItems)) {
               CampaignManager.saveScrapbookItemsLocalOnly(supaData.scrapbookItems);
             }
-            if (Array.isArray(supaData.audioLogs) && supaData.audioLogs.length > 0) {
+            if (Array.isArray(supaData.audioLogs)) {
               CampaignManager.saveAudioLogsLocalOnly(supaData.audioLogs);
             }
-            if (Array.isArray(supaData.characterBios) && supaData.characterBios.length > 0) {
+            if (Array.isArray(supaData.characterBios)) {
               CampaignManager.saveAllCharacterBiosLocalOnly(supaData.characterBios);
             }
-            if (Array.isArray(supaData.familyRelations) && supaData.familyRelations.length > 0) {
+            if (Array.isArray(supaData.familyRelations)) {
               CampaignManager.saveAllFamilyRelationsLocalOnly(supaData.familyRelations);
             }
-            if (Array.isArray(supaData.worldLoreArticles) && supaData.worldLoreArticles.length > 0) {
+            if (Array.isArray(supaData.worldLoreArticles)) {
               CampaignManager.saveAllWorldLoreArticlesLocalOnly(supaData.worldLoreArticles);
             }
-            if (Array.isArray(supaData.activePlayers) && supaData.activePlayers.length > 0) {
+            if (Array.isArray(supaData.activePlayers)) {
               this.mergeRemoteAccounts(supaData.activePlayers);
             }
 

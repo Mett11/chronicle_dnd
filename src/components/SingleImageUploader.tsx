@@ -96,6 +96,11 @@ export function SingleImageUploader({
 
   const handleRemove = (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (value) {
+      FirebaseStorageService.deleteMedia(value).catch((err) => {
+        console.warn('[SingleImage] Error deleting media file:', err);
+      });
+    }
     onChange('');
     setUrlDraft('');
   };

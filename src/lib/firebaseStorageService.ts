@@ -1,10 +1,116 @@
-import { ref, uploadString, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { ref, uploadString, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { storage } from './firebase';
 import { supabase, isSupabaseConfigured } from './supabase';
 
 export const CHRONICLE_MEDIA_BUCKET = 'chronicle-media';
 
 export class FirebaseStorageService {
+  /**
+   * Helper to parse a public URL or relative path and extract the storage path within the bucket
+   */
+  static extractStoragePath(urlOrPath: string): string | null {
+    if (!urlOrPath || typeof urlOrPath !== 'string') return null;
+    const trimmed = urlOrPath.trim();
+    if (trimmed.startsWith('campaigns/')) return trimmed;
+
+    // Check Supabase public URL pattern
+    const supaMarker = `/${CHRONICLE_MEDIA_BUCKET}/`;
+    const supaIdx = trimmed.indexOf(supaMarker);
+    if (supaIdx !== -1) {
+      const rawPath = trimmed.slice(supaIdx + supaMarker.length);
+      return rawPath.split('?')[0];
+    }
+
+    // Check Firebase storage URL pattern
+    if (trimmed.includes('firebasestorage.googleapis.com')) {
+      const match = trimmed.match(/\/o\/(.+?)(\?|$)/);
+      if (match && match[1]) {
+        return decodeURIComponent(match[1]);
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Physically deletes a single media file from the storage bucket
+   */
+  static async deleteMedia(urlOrPath: string): Promise<boolean> {
+    if (!urlOrPath) return false;
+    const path = this.extractStoragePath(urlOrPath);
+    if (!path) return false;
+
+    // 1. Supabase Storage deletion
+    if (isSupabaseConfigured()) {
+      try {
+        const { error } = await supabase.storage
+          .from(CHRONICLE_MEDIA_BUCKET)
+          .remove([path]);
+        if (error) {
+          console.warn(`[Supabase Storage] Failed to delete ${path}:`, error.message);
+          return false;
+        }
+        console.log(`[Supabase Storage] Deleted media: ${path}`);
+        return true;
+      } catch (err) {
+        console.warn(`[Supabase Storage] Delete exception for ${path}:`, err);
+        return false;
+      }
+    }
+
+    // 2. Firebase Storage fallback
+    try {
+      const storageRef = ref(storage, path);
+      await deleteObject(storageRef);
+      console.log(`[Firebase Storage] Deleted media: ${path}`);
+      return true;
+    } catch (err) {
+      console.warn(`[Firebase Storage] Delete exception for ${path}:`, err);
+      return false;
+    }
+  }
+
+  /**
+   * Batch deletes multiple media files from the storage bucket
+   */
+  static async deleteMultipleMedia(urlsOrPaths: (string | undefined | null)[]): Promise<boolean> {
+    const validPaths = (urlsOrPaths || [])
+      .filter((u): u is string => Boolean(u && typeof u === 'string'))
+      .map((u) => this.extractStoragePath(u))
+      .filter((p): p is string => Boolean(p));
+
+    if (validPaths.length === 0) return true;
+
+    if (isSupabaseConfigured()) {
+      try {
+        const { error } = await supabase.storage
+          .from(CHRONICLE_MEDIA_BUCKET)
+          .remove(validPaths);
+        if (error) {
+          console.warn('[Supabase Storage] Batch remove error:', error.message);
+          return false;
+        }
+        console.log(`[Supabase Storage] Deleted ${validPaths.length} files from storage`);
+        return true;
+      } catch (err) {
+        console.warn('[Supabase Storage] Batch delete exception:', err);
+        return false;
+      }
+    }
+
+    // Firebase fallback
+    try {
+      await Promise.all(
+        validPaths.map((p) => {
+          const storageRef = ref(storage, p);
+          return deleteObject(storageRef).catch(() => {});
+        })
+      );
+      return true;
+    } catch {
+      return false;
+    }
+  }
   /**
    * Uploads an image or audio file to Storage under the campaign folder.
    * Prioritizes Supabase Storage (bucket: chronicle-media) if configured.

@@ -185,29 +185,36 @@ export class SupabaseSyncService {
         };
       });
 
-      const notes: Note[] = (notesRes.data || []).map((row) => ({
-        _id: row.id,
-        _createdAt: row.created_at || new Date().toISOString(),
-        title: row.title || 'Nota',
-        content: row.content || '',
-        visibility: row.visibility === 'personal' ? 'personal' : 'group',
-        dmOnly: false,
-        canonState: 'canon',
-        pinned: false,
-        askDm: Boolean(row.ask_dm),
-        author: {
-          _id: row.author_id || 'unknown',
-          characterName: row.author_name || 'Giocatore',
-          isDm: false,
-        },
-        dmResponse: row.dm_reply
-          ? {
-              text: row.dm_reply,
-              answeredAt: row.updated_at || new Date().toISOString(),
-              answeredBy: 'Dungeon Master',
-            }
-          : undefined,
-      }));
+      const notesMeta = dossier.notesMeta || {};
+
+      const notes: Note[] = (notesRes.data || []).map((row) => {
+        const meta = notesMeta[row.id] || {};
+        return {
+          _id: row.id,
+          _createdAt: row.created_at || new Date().toISOString(),
+          title: row.title || 'Nota',
+          content: row.content || '',
+          visibility: row.visibility === 'personal' ? 'personal' : 'group',
+          dmOnly: meta.dmOnly !== undefined ? Boolean(meta.dmOnly) : false,
+          canonState: meta.canonState || 'canon',
+          pinned: meta.pinned !== undefined ? Boolean(meta.pinned) : false,
+          tags: Array.isArray(meta.tags) ? meta.tags : [],
+          images: Array.isArray(meta.images) ? meta.images : [],
+          askDm: Boolean(row.ask_dm),
+          author: {
+            _id: row.author_id || 'unknown',
+            characterName: row.author_name || 'Giocatore',
+            isDm: false,
+          },
+          dmResponse: row.dm_reply
+            ? {
+                text: row.dm_reply,
+                answeredAt: row.updated_at || new Date().toISOString(),
+                answeredBy: 'Dungeon Master',
+              }
+            : undefined,
+        };
+      });
 
       const maps: WorldMap[] = (mapsRes.data || []).map((row) => ({
         id: row.id,
@@ -364,12 +371,15 @@ export class SupabaseSyncService {
   }
 
   /**
-   * Delete a single session
+   * Delete a single session and clean up dossier.sessionsMeta
    */
-  static async deleteSession(sessionId: string): Promise<boolean> {
-    if (!isSupabaseConfigured()) return false;
+  static async deleteSession(sessionId: string, campaignCode?: string): Promise<boolean> {
+    if (!isSupabaseConfigured() || !sessionId) return false;
     try {
       const { error } = await supabase.from('sessions').delete().eq('id', sessionId);
+      if (campaignCode) {
+        this.removeSessionMeta(campaignCode, sessionId).catch(() => {});
+      }
       return !error;
     } catch {
       return false;
@@ -377,7 +387,7 @@ export class SupabaseSyncService {
   }
 
   /**
-   * Save or update a single note (~15ms)
+   * Save or update a single note (~15ms) with full tag, image, and pinned persistence
    */
   static async saveNote(campaignCode: string, note: Note): Promise<boolean> {
     if (!isSupabaseConfigured() || !campaignCode || !note) return false;
@@ -399,6 +409,17 @@ export class SupabaseSyncService {
 
       const { error } = await supabase.from('notes').upsert(payload, { onConflict: 'id' });
       if (error) console.error('[Supabase] Error saving note:', error);
+
+      // Save tags, images, pinned, etc. to dossier.notesMeta
+      const noteMeta = {
+        tags: Array.isArray(note.tags) ? note.tags : [],
+        images: Array.isArray(note.images) ? note.images : [],
+        pinned: Boolean(note.pinned),
+        canonState: note.canonState || 'canon',
+        dmOnly: Boolean(note.dmOnly),
+      };
+      this.saveNoteMeta(code, payload.id, noteMeta).catch(() => {});
+
       return !error;
     } catch (err) {
       console.error('[Supabase] Failed to save note:', err);
@@ -407,12 +428,15 @@ export class SupabaseSyncService {
   }
 
   /**
-   * Delete a single note
+   * Delete a single note and clean up dossier.notesMeta
    */
-  static async deleteNote(noteId: string): Promise<boolean> {
-    if (!isSupabaseConfigured()) return false;
+  static async deleteNote(noteId: string, campaignCode?: string): Promise<boolean> {
+    if (!isSupabaseConfigured() || !noteId) return false;
     try {
       const { error } = await supabase.from('notes').delete().eq('id', noteId);
+      if (campaignCode) {
+        this.removeNoteMeta(campaignCode, noteId).catch(() => {});
+      }
       return !error;
     } catch {
       return false;
@@ -679,12 +703,15 @@ export class SupabaseSyncService {
   }
 
   /**
-   * Delete a single chapter
+   * Delete a single chapter and clean up dossier.chaptersMeta
    */
-  static async deleteChapter(chapterId: string): Promise<boolean> {
+  static async deleteChapter(chapterId: string, campaignCode?: string): Promise<boolean> {
     if (!isSupabaseConfigured()) return false;
     try {
       const { error } = await supabase.from('chapters').delete().eq('id', chapterId);
+      if (campaignCode) {
+        this.removeChapterMeta(campaignCode, chapterId).catch(() => {});
+      }
       return !error;
     } catch {
       return false;
@@ -724,16 +751,129 @@ export class SupabaseSyncService {
   }
 
   /**
-   * Delete a single map
+   * Delete a single map and clean up dossier.mapsMeta
    */
-  static async deleteMap(mapId: string): Promise<boolean> {
+  static async deleteMap(mapId: string, campaignCode?: string): Promise<boolean> {
     if (!isSupabaseConfigured() || !mapId) return false;
     try {
       const { error } = await supabase.from('maps').delete().eq('id', mapId);
+      if (campaignCode) {
+        this.removeMapMeta(campaignCode, mapId).catch(() => {});
+      }
       if (error) console.error('[Supabase] Error deleting map:', error);
       return !error;
     } catch (err) {
       console.error('[Supabase] Failed to delete map:', err);
+      return false;
+    }
+  }
+
+  /**
+   * Removes session metadata from dossier
+   */
+  static async removeSessionMeta(campaignCode: string, sessionId: string): Promise<boolean> {
+    if (!isSupabaseConfigured() || !campaignCode || !sessionId) return false;
+    try {
+      const code = campaignCode.trim();
+      const { data: camp } = await supabase.from('campaigns').select('dossier').eq('code', code).maybeSingle();
+      const dossier = camp?.dossier || {};
+      if (dossier.sessionsMeta && dossier.sessionsMeta[sessionId]) {
+        delete dossier.sessionsMeta[sessionId];
+        await supabase.from('campaigns').update({
+          dossier,
+          updated_at: new Date().toISOString(),
+        }).eq('code', code);
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Persists note metadata (tags, images, pinned, canonState, dmOnly) into campaign dossier
+   */
+  static async saveNoteMeta(campaignCode: string, noteId: string, meta: any): Promise<boolean> {
+    if (!isSupabaseConfigured() || !campaignCode || !noteId) return false;
+    try {
+      const code = campaignCode.trim();
+      const { data: camp } = await supabase.from('campaigns').select('dossier').eq('code', code).maybeSingle();
+      const dossier = camp?.dossier || {};
+      const notesMeta = dossier.notesMeta || {};
+      notesMeta[noteId] = { ...(notesMeta[noteId] || {}), ...meta };
+      await supabase.from('campaigns').update({
+        dossier: { ...dossier, notesMeta },
+        updated_at: new Date().toISOString(),
+      }).eq('code', code);
+      return true;
+    } catch (err) {
+      console.error('[Supabase] Failed to save note meta:', err);
+      return false;
+    }
+  }
+
+  /**
+   * Removes note metadata from dossier
+   */
+  static async removeNoteMeta(campaignCode: string, noteId: string): Promise<boolean> {
+    if (!isSupabaseConfigured() || !campaignCode || !noteId) return false;
+    try {
+      const code = campaignCode.trim();
+      const { data: camp } = await supabase.from('campaigns').select('dossier').eq('code', code).maybeSingle();
+      const dossier = camp?.dossier || {};
+      if (dossier.notesMeta && dossier.notesMeta[noteId]) {
+        delete dossier.notesMeta[noteId];
+        await supabase.from('campaigns').update({
+          dossier,
+          updated_at: new Date().toISOString(),
+        }).eq('code', code);
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Removes chapter metadata from dossier
+   */
+  static async removeChapterMeta(campaignCode: string, chapterId: string): Promise<boolean> {
+    if (!isSupabaseConfigured() || !campaignCode || !chapterId) return false;
+    try {
+      const code = campaignCode.trim();
+      const { data: camp } = await supabase.from('campaigns').select('dossier').eq('code', code).maybeSingle();
+      const dossier = camp?.dossier || {};
+      if (dossier.chaptersMeta && dossier.chaptersMeta[chapterId]) {
+        delete dossier.chaptersMeta[chapterId];
+        await supabase.from('campaigns').update({
+          dossier,
+          updated_at: new Date().toISOString(),
+        }).eq('code', code);
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Removes map metadata from dossier
+   */
+  static async removeMapMeta(campaignCode: string, mapId: string): Promise<boolean> {
+    if (!isSupabaseConfigured() || !campaignCode || !mapId) return false;
+    try {
+      const code = campaignCode.trim();
+      const { data: camp } = await supabase.from('campaigns').select('dossier').eq('code', code).maybeSingle();
+      const dossier = camp?.dossier || {};
+      if (dossier.mapsMeta && dossier.mapsMeta[mapId]) {
+        delete dossier.mapsMeta[mapId];
+        await supabase.from('campaigns').update({
+          dossier,
+          updated_at: new Date().toISOString(),
+        }).eq('code', code);
+      }
+      return true;
+    } catch {
       return false;
     }
   }

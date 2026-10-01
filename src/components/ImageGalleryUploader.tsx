@@ -62,6 +62,12 @@ export function ImageGalleryUploader({
 
   const handleRemoveImage = (indexToRemove: number, e: React.MouseEvent) => {
     e.stopPropagation();
+    const removedUrl = images[indexToRemove];
+    if (removedUrl) {
+      FirebaseStorageService.deleteMedia(removedUrl).catch((err) => {
+        console.warn('[ImageGallery] Error deleting media file:', err);
+      });
+    }
     onChange(images.filter((_, idx) => idx !== indexToRemove));
   };
 

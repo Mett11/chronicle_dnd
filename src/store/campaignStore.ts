@@ -46,6 +46,7 @@ import { CloudSyncService } from "../lib/cloudSync";
 import { UserPreferencesService } from "../lib/userPreferencesService";
 import { IndexedDbStorage } from "../lib/indexedDbStorage";
 import { SupabaseSyncService } from "../lib/supabaseSyncService";
+import { FirebaseStorageService } from "../lib/firebaseStorageService";
 import { isSupabaseConfigured } from "../lib/supabase";
 
 const DEFAULT_MAPS: WorldMap[] = [];
@@ -2466,10 +2467,15 @@ export class CampaignManager {
 
   static deleteNote(id: string) {
     this.addDeletedNoteId(id);
+    const note = this.getNotes().find((n) => n._id === id);
+    if (note?.images && note.images.length > 0) {
+      FirebaseStorageService.deleteMultipleMedia(note.images).catch(() => {});
+    }
     const notes = this.getNotes().filter((n) => n._id !== id);
     this.saveNotes(notes);
     if (isSupabaseConfigured()) {
-      SupabaseSyncService.deleteNote(id);
+      const code = this.getActiveCampaignCode() || 'default';
+      SupabaseSyncService.deleteNote(id, code);
     }
   }
 
@@ -3112,10 +3118,15 @@ export class CampaignManager {
 
   static deleteSession(id: string) {
     this.addDeletedSessionId(id);
+    const session = this.getSessions().find((s) => s._id === id);
+    if (session?.images && session.images.length > 0) {
+      FirebaseStorageService.deleteMultipleMedia(session.images).catch(() => {});
+    }
     const sessions = this.getSessions().filter((s) => s._id !== id);
     this.saveSessions(sessions);
     if (isSupabaseConfigured()) {
-      SupabaseSyncService.deleteSession(id);
+      const code = this.getActiveCampaignCode() || 'default';
+      SupabaseSyncService.deleteSession(id, code);
     }
   }
 
@@ -3276,7 +3287,8 @@ export class CampaignManager {
     const chapters = this.getChapters().filter((c) => c.id !== id);
     this.saveChapters(chapters);
     if (isSupabaseConfigured()) {
-      SupabaseSyncService.deleteChapter(id);
+      const code = this.getActiveCampaignCode() || 'default';
+      SupabaseSyncService.deleteChapter(id, code);
     }
   }
 
@@ -3818,6 +3830,11 @@ export class CampaignManager {
   static deleteEntity(id: string) {
     this.addDeletedEntityId(id);
     const entity = this.getEntities().find((e) => e._id === id);
+    if (entity?.images && entity.images.length > 0) {
+      FirebaseStorageService.deleteMultipleMedia(entity.images).catch(() => {});
+    } else if (entity?.imageUrl) {
+      FirebaseStorageService.deleteMedia(entity.imageUrl).catch(() => {});
+    }
     const entities = this.getEntities().filter((e) => e._id !== id);
     this.saveEntities(entities);
     if (isSupabaseConfigured()) {
@@ -4156,10 +4173,14 @@ export class CampaignManager {
 
   static deleteMap(id: string) {
     const map = this.getMaps().find((m) => m.id === id);
+    if (map?.imageUrl) {
+      FirebaseStorageService.deleteMedia(map.imageUrl).catch(() => {});
+    }
     const maps = this.getMaps().filter((m) => m.id !== id);
     this.saveMaps(maps);
     if (isSupabaseConfigured()) {
-      SupabaseSyncService.deleteMap(id);
+      const code = this.getActiveCampaignCode() || 'default';
+      SupabaseSyncService.deleteMap(id, code);
     }
 
     if (map) {
@@ -4429,6 +4450,10 @@ export class CampaignManager {
 
   static deleteScrapbookItem(id: string) {
     this.addDeletedScrapbookId(id);
+    const item = this.getScrapbookItems().find((i) => i.id === id);
+    if (item?.imageUrl) {
+      FirebaseStorageService.deleteMedia(item.imageUrl).catch(() => {});
+    }
     const items = this.getScrapbookItems().filter((i) => i.id !== id);
     this.saveScrapbookItems(items);
     if (isSupabaseConfigured()) {
