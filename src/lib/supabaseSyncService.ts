@@ -9,6 +9,32 @@ import {
   AudioLog,
 } from '../types';
 
+let supabaseErrorCooldownUntil = 0;
+let lastLoggedErrorTime = 0;
+
+function shouldSuppressSupabaseError(): boolean {
+  return Date.now() < supabaseErrorCooldownUntil;
+}
+
+function handleSupabaseError(context: string, err: any) {
+  const now = Date.now();
+  const msg = String(err?.message || err?.code || '');
+  if (
+    msg.includes('Failed to fetch') ||
+    err?.code === '57014' ||
+    msg.includes('statement timeout') ||
+    msg.includes('upstream request timeout')
+  ) {
+    // Activate 30s cooldown during connection failure / statement timeouts to avoid spamming 30k errors
+    supabaseErrorCooldownUntil = now + 30000;
+  }
+
+  if (now - lastLoggedErrorTime > 5000) {
+    lastLoggedErrorTime = now;
+    console.warn(`[Supabase] ${context}: ${msg || 'Errore di sincronizzazione'}`);
+  }
+}
+
 export class SupabaseSyncService {
   /**
    * Fetches all campaign relational data from Supabase in parallel
@@ -321,7 +347,7 @@ export class SupabaseSyncService {
    * Save or update a single session with complete metadata and image persistence
    */
   static async saveSession(campaignCode: string, session: Session): Promise<boolean> {
-    if (!isSupabaseConfigured() || !campaignCode || !session) return false;
+    if (!isSupabaseConfigured() || !campaignCode || !session || shouldSuppressSupabaseError()) return false;
 
     try {
       const code = campaignCode.trim();
@@ -362,14 +388,17 @@ export class SupabaseSyncService {
       };
 
       const { error } = await supabase.from('sessions').upsert(payload, { onConflict: 'id' });
-      if (error) console.error('[Supabase] Error saving session:', error);
+      if (error) {
+        handleSupabaseError('Error saving session', error);
+        return false;
+      }
 
       // Redundant dual-layer storage in dossier.sessionsMeta
       this.saveSessionMeta(code, session._id, meta).catch(() => {});
 
-      return !error;
+      return true;
     } catch (err) {
-      console.error('[Supabase] Failed to save session:', err);
+      handleSupabaseError('Failed to save session', err);
       return false;
     }
   }
@@ -451,7 +480,7 @@ export class SupabaseSyncService {
    * Save or update a single entity with accurate type, images, and progression attributes
    */
   static async saveEntity(campaignCode: string, entity: Entity): Promise<boolean> {
-    if (!isSupabaseConfigured() || !campaignCode || !entity) return false;
+    if (!isSupabaseConfigured() || !campaignCode || !entity || shouldSuppressSupabaseError()) return false;
 
     try {
       const code = campaignCode.trim();
@@ -494,10 +523,13 @@ export class SupabaseSyncService {
       };
 
       const { error } = await supabase.from('entities').upsert(payload, { onConflict: 'id' });
-      if (error) console.warn('[Supabase] Warning/error saving entity:', error.message || error);
-      return !error;
+      if (error) {
+        handleSupabaseError('Error saving entity', error);
+        return false;
+      }
+      return true;
     } catch (err) {
-      console.warn('[Supabase] Failed to save entity (falling back to local store):', err);
+      handleSupabaseError('Failed to save entity', err);
       return false;
     }
   }
