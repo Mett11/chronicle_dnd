@@ -285,6 +285,15 @@ export function Entities() {
   const [detailEntity, setDetailEntity] = useState<Entity | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [sortOrder, setSortOrder] = useState<'alpha-asc' | 'alpha-desc' | 'recent'>('alpha-asc');
+  const [showResetModal, setShowResetModal] = useState(false);
+
+  const handleResetAllCodex = () => {
+    CampaignManager.resetCompendiumAndRelations();
+    setEntities([]);
+    setDetailEntity(null);
+    setHighlightedEntityId(null);
+    setShowResetModal(false);
+  };
 
   // Quest-specific scope filter
   const [questScopeFilter, setQuestScopeFilter] = useState<'all' | 'party' | 'personal'>('all');
@@ -1307,6 +1316,18 @@ export function Entities() {
                       <option value="recent">Recenti</option>
                     </select>
                   </div>
+
+                  {player?.isDm && (
+                    <button
+                      type="button"
+                      onClick={() => setShowResetModal(true)}
+                      className="px-2.5 py-1.5 rounded-[2px] bg-red-950/40 hover:bg-red-900/60 border border-red-800/40 text-red-300 hover:text-red-200 text-xs font-mono transition-colors flex items-center gap-1.5 cursor-pointer shrink-0"
+                      title="Azzera tutte le entità del compendio e le relazioni"
+                    >
+                      <Trash2 size={12} />
+                      <span className="hidden sm:inline">Azzera Codex</span>
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -3982,6 +4003,15 @@ export function Entities() {
         confirmLabel="Elimina"
         onConfirm={confirmDeleteEntity}
         onCancel={() => setEntityToDelete(null)}
+      />
+
+      <ConfirmModal
+        isOpen={showResetModal}
+        title="Azzera Tutte le Voci del Codex e le Relazioni"
+        message="Sei sicuro di voler cancellare TUTTE le entità catalogate nel Codex (PNG, Luoghi, Mostri, Fazioni, Oggetti, Quest) e tutte le relazioni familiari? I personaggi del Party, le sessioni, i capitoli e le note rimarranno intatti."
+        confirmLabel="Azzera Tutto"
+        onConfirm={handleResetAllCodex}
+        onCancel={() => setShowResetModal(false)}
       />
     </div>
   );

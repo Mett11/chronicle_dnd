@@ -1043,6 +1043,14 @@ export class CloudSyncService {
               try { this.mergeRemoteAccounts(supaData.activePlayers); } catch (e) { console.warn(e); }
             }
 
+            if (supaData.dossier?.aiKeys || supaData.aiConfig?.aiKeys) {
+              try {
+                ApiKeyManager.hydrateCampaignKeysFromRemote(activeCode, supaData.dossier?.aiKeys || supaData.aiConfig?.aiKeys);
+              } catch (e) {
+                console.warn('[CloudSync] AI keys hydration warn:', e);
+              }
+            }
+
             this.isCampaignHydrated = true;
             if (typeof window !== 'undefined') {
               window.dispatchEvent(new CustomEvent('chronicle_campaign_updated'));

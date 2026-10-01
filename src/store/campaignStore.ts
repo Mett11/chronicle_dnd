@@ -3417,11 +3417,31 @@ export class CampaignManager {
     CloudSyncService.triggerCloudSave();
     if (isSupabaseConfigured()) {
       const code = this.getActiveCampaignCode() || 'default';
-      sanitized.forEach((e) => SupabaseSyncService.saveEntity(code, e));
+      if (sanitized.length === 0) {
+        SupabaseSyncService.clearAllEntities(code).catch(() => {});
+      } else {
+        sanitized.forEach((e) => SupabaseSyncService.saveEntity(code, e));
+      }
     }
     try {
       window.dispatchEvent(new CustomEvent('chronicle_entities_updated', { detail: { entities: sanitized } }));
     } catch {}
+  }
+
+  static resetCompendiumAndRelations(): void {
+    const code = this.getActiveCampaignCode() || 'default';
+    this.saveEntities([]);
+    this.saveAllFamilyRelations([]);
+    if (isSupabaseConfigured()) {
+      SupabaseSyncService.clearAllEntities(code).catch(() => {});
+      SupabaseSyncService.saveFamilyRelations(code, []).catch(() => {});
+    }
+    CloudSyncService.triggerCloudSave();
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("chronicle_entities_updated"));
+      window.dispatchEvent(new CustomEvent("chronicle_family_tree_updated"));
+      window.dispatchEvent(new CustomEvent("chronicle_data_updated"));
+    }
   }
 
   static saveEntitiesLocalOnly(entities: Entity[]) {

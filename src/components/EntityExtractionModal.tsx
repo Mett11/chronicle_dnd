@@ -22,6 +22,7 @@ import {
 import { GoogleGenAI } from '@google/genai';
 import { Entity } from '../types';
 import { CampaignManager } from '../store/campaignStore';
+import { CloudSyncService } from '../lib/cloudSync';
 import { ApiKeyManager } from '../lib/apiKeyManager';
 import { cleanOpenRouterModelId } from '../lib/openrouterUtils';
 import { UserPreferencesService } from '../lib/userPreferencesService';
@@ -928,9 +929,14 @@ PG party: ${playerNames.join(', ')}.`;
           return;
         }
 
-        // Check if matches a Party Member
+        // Check if matches an already registered Party Member / Hero
         const matchedPlayerName = playerNormMap.get(nameNorm) || aliasesNorm.map((a: string) => playerNormMap.get(a)).find(Boolean);
-        const isPartyMember = Boolean(matchedPlayerName || ent.isPartyMember);
+        if (matchedPlayerName) {
+          detectedExistingSet.add(rawName);
+          return; // Skip: already registered in party!
+        }
+
+        const isPartyMember = Boolean(ent.isPartyMember);
 
         const inferredType = inferEntityTypeFromName(rawName);
         let type = (['npc', 'place', 'monster', 'item', 'faction', 'quest'].includes(ent.type)

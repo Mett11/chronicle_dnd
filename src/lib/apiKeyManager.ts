@@ -1,6 +1,7 @@
 import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
 import { db, auth } from './firebase';
 import { isSupabaseConfigured } from './supabase';
+import { SupabaseSyncService } from './supabaseSyncService';
 import { encryptApiKey, decryptApiKey } from './cryptoUtils';
 
 export type KeySourceMode = 'campaign' | 'personal';
@@ -799,7 +800,13 @@ export class ApiKeyManager {
       }
     }
 
-    if (!isSupabaseConfigured() && cleanCode && cleanCode !== 'CAMPAIGN') {
+    if (isSupabaseConfigured() && cleanCode && cleanCode !== 'CAMPAIGN') {
+      SupabaseSyncService.saveCampaignAiKeys(cleanCode, encryptedPayload).catch((err) => {
+        console.warn('[ApiKeyManager] Supabase campaign keys save warn:', err);
+      });
+    }
+
+    if (cleanCode && cleanCode !== 'CAMPAIGN') {
       try {
         const campaignKeysRef = doc(db, 'campaigns', cleanCode, 'config', 'ai_keys');
         await setDoc(
@@ -814,13 +821,72 @@ export class ApiKeyManager {
             updatedBy: updatedBy || 'Dungeon Master',
           },
           { merge: true }
-        );
+        ).catch(() => {});
       } catch (err) {
         console.warn('[ApiKeyManager] Firestore campaign keys save error:', err);
       }
     }
 
     return updated;
+  }
+
+  /**
+   * Hydrates campaign AI keys directly from remote payload (Supabase dossier / ai_config)
+   */
+  static async hydrateCampaignKeysFromRemote(campaignCode: string, remoteKeys: any): Promise<ApiKeysConfig | null> {
+    if (!remoteKeys || typeof remoteKeys !== 'object') return null;
+    const cleanCode = (campaignCode || this.getEffectiveCampaignCode()).trim().toUpperCase() || 'CAMPAIGN';
+    const salt = cleanCode;
+
+    try {
+      const decryptField = async (val: any) => {
+        if (!val || typeof val !== 'string') return '';
+        const trimmed = val.trim();
+        if (trimmed.startsWith('enc:v1:')) {
+          try {
+            const dec = await decryptApiKey(trimmed, salt);
+            return dec || '';
+          } catch {
+            return '';
+          }
+        }
+        return trimmed;
+      };
+
+      const geminiKey = await decryptField(remoteKeys.geminiKey || remoteKeys.geminiKeyPlain);
+      const openrouterKey = await decryptField(remoteKeys.openrouterKey || remoteKeys.openrouterKeyPlain);
+      const groqApiKey = await decryptField(remoteKeys.groqApiKey);
+      const cloudflareAccountId = await decryptField(remoteKeys.cloudflareAccountId);
+      const cloudflareApiToken = await decryptField(remoteKeys.cloudflareApiToken);
+
+      if (geminiKey || openrouterKey || cloudflareAccountId || groqApiKey) {
+        const decrypted: ApiKeysConfig = {
+          geminiKey: geminiKey || cachedCampaignKeys.geminiKey || '',
+          openrouterKey: openrouterKey || cachedCampaignKeys.openrouterKey || '',
+          groqApiKey: groqApiKey || cachedCampaignKeys.groqApiKey || '',
+          cloudflareAccountId: cloudflareAccountId || cachedCampaignKeys.cloudflareAccountId || '',
+          cloudflareApiToken: cloudflareApiToken || cachedCampaignKeys.cloudflareApiToken || '',
+        };
+
+        cachedCampaignKeys = { ...decrypted };
+        persistFastVault();
+
+        if (typeof window !== 'undefined') {
+          try {
+            localStorage.setItem(CAMPAIGN_KEYS_STORAGE_KEY, JSON.stringify(remoteKeys));
+            if (decrypted.geminiKey) {
+              localStorage.setItem('chronicle_gemini_api_key', decrypted.geminiKey);
+            }
+            window.dispatchEvent(new CustomEvent('chronicle_campaign_keys_updated', { detail: decrypted }));
+            window.dispatchEvent(new CustomEvent('chronicle_keys_preloaded', { detail: { campaign: decrypted, personal: cachedPersonalKeys } }));
+          } catch {}
+        }
+        return decrypted;
+      }
+    } catch (e) {
+      console.warn('[ApiKeyManager] Failed to hydrate campaign keys from remote:', e);
+    }
+    return null;
   }
 
   /**

@@ -506,6 +506,22 @@ export class SupabaseSyncService {
   }
 
   /**
+   * Clear all entities for a campaign
+   */
+  static async clearAllEntities(campaignCode: string): Promise<boolean> {
+    if (!isSupabaseConfigured() || !campaignCode) return false;
+    try {
+      const code = campaignCode.trim();
+      const { error } = await supabase.from('entities').delete().eq('campaign_code', code);
+      if (error) console.error('[Supabase] Error clearing entities:', error);
+      return !error;
+    } catch (err) {
+      console.error('[Supabase] Failed to clear entities:', err);
+      return false;
+    }
+  }
+
+  /**
    * Save or update a single chapter (~15ms)
    */
   static async saveChapter(campaignCode: string, chapter: CampaignChapter): Promise<boolean> {
@@ -651,6 +667,37 @@ export class SupabaseSyncService {
       return true;
     } catch (err) {
       console.error('[Supabase] Failed to save session meta:', err);
+      return false;
+    }
+  }
+
+  /**
+   * Securely saves encrypted campaign AI keys to campaign dossier in Supabase
+   */
+  static async saveCampaignAiKeys(campaignCode: string, encryptedPayload: any): Promise<boolean> {
+    if (!isSupabaseConfigured() || !campaignCode) return false;
+    try {
+      const code = campaignCode.trim();
+      const { data: camp } = await supabase.from('campaigns').select('dossier, ai_config').eq('code', code).maybeSingle();
+      const dossier = camp?.dossier || {};
+      const aiConfig = camp?.ai_config || {};
+
+      const { error } = await supabase.from('campaigns').update({
+        dossier: {
+          ...dossier,
+          aiKeys: encryptedPayload,
+        },
+        ai_config: {
+          ...aiConfig,
+          aiKeys: encryptedPayload,
+        },
+        updated_at: new Date().toISOString(),
+      }).eq('code', code);
+
+      if (error) console.error('[Supabase] Error saving campaign AI keys:', error);
+      return !error;
+    } catch (err) {
+      console.error('[Supabase] Failed to save campaign AI keys:', err);
       return false;
     }
   }
