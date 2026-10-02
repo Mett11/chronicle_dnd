@@ -489,6 +489,8 @@ export function RelationModal({
   const [linkedEntityId, setLinkedEntityId] = useState('');
   const [linkedPlayerId, setLinkedPlayerId] = useState('');
   const [sharedWithParty, setSharedWithParty] = useState<boolean>(true);
+  const [attitude, setAttitude] = useState<'friendly' | 'helpful' | 'neutral' | 'suspicious' | 'hostile' | 'devoted' | 'rival'>('neutral');
+  const [trustLevel, setTrustLevel] = useState<number>(5);
   const [entities, setEntities] = useState<Entity[]>([]);
   const [players, setPlayers] = useState<Player[]>([]);
   const [linkSource, setLinkSource] = useState<'custom' | 'npc' | 'player'>('custom');
@@ -519,6 +521,8 @@ export function RelationModal({
         setLinkedEntityId(initialData.linkedEntityId || '');
         setLinkedPlayerId(initialData.linkedPlayerId || '');
         setSharedWithParty(initialData.sharedWithParty !== undefined ? initialData.sharedWithParty : true);
+        setAttitude((initialData.attitude as any) || 'neutral');
+        setTrustLevel(initialData.trustLevel ?? 5);
 
         let roleMatch: string | undefined = initialData.genealogyRole;
         if (!roleMatch) {
@@ -635,6 +639,8 @@ export function RelationModal({
         setLinkedEntityId('');
         setLinkedPlayerId('');
         setLinkSource('custom');
+        setAttitude('neutral');
+        setTrustLevel(5);
       }
     }
   }, [isOpen, initialData, initialGenerationTier, initialGenealogyRole, initialSideOfFamily, playerId]);
@@ -711,6 +717,8 @@ export function RelationModal({
       linkedEntityId: linkSource === 'npc' ? linkedEntityId || undefined : undefined,
       linkedPlayerId: linkSource === 'player' ? linkedPlayerId || undefined : undefined,
       sharedWithParty,
+      attitude,
+      trustLevel,
       createdAt: initialData?.createdAt || new Date().toISOString(),
     };
 
@@ -1047,6 +1055,67 @@ export function RelationModal({
                   <span className="truncate">{st.label.split('/')[0].trim()}</span>
                 </button>
               ))}
+            </div>
+          </div>
+
+          {/* Attitude & Trust Level */}
+          <div className="bg-surface-2/40 border border-surface-3 rounded-xl p-4 space-y-3.5">
+            <div className="flex items-center justify-between text-xs">
+              <label className="font-semibold text-content-1 flex items-center gap-1.5">
+                <span>Atteggiamento &amp; Livello di Fiducia</span>
+              </label>
+              <span className="font-mono font-bold text-primary px-2 py-0.5 rounded-md bg-primary/10 border border-primary/20">
+                Fiducia: {trustLevel}/10
+              </span>
+            </div>
+
+            {/* Attitude selector */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              {[
+                { key: 'friendly', label: 'Amichevole', emoji: '😄', color: 'hover:border-emerald-500/50' },
+                { key: 'helpful', label: 'Disponibile', emoji: '🤝', color: 'hover:border-teal-500/50' },
+                { key: 'neutral', label: 'Neutrale', emoji: '😐', color: 'hover:border-amber-500/50' },
+                { key: 'suspicious', label: 'Diffidente', emoji: '🤨', color: 'hover:border-purple-500/50' },
+                { key: 'hostile', label: 'Ostile', emoji: '😡', color: 'hover:border-rose-500/50' },
+                { key: 'rival', label: 'Rivale', emoji: '⚔️', color: 'hover:border-orange-500/50' },
+                { key: 'devoted', label: 'Devoto', emoji: '👑', color: 'hover:border-pink-500/50' },
+              ].map((att) => (
+                <button
+                  key={att.key}
+                  type="button"
+                  onClick={() => setAttitude(att.key as any)}
+                  className={`px-2.5 py-1.5 rounded-xl border text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer ${
+                    attitude === att.key
+                      ? 'bg-primary/20 text-primary border-primary shadow-xs'
+                      : 'bg-surface-2/60 border-surface-3 text-content-3 hover:text-content-1'
+                  }`}
+                >
+                  <span>{att.emoji}</span>
+                  <span className="truncate">{att.label}</span>
+                </button>
+              ))}
+            </div>
+
+            {/* Trust Level slider */}
+            <div className="space-y-1.5 pt-1">
+              <div className="flex items-center justify-between text-[11px] text-content-3 font-mono">
+                <span>Diffidenza Totale (1)</span>
+                <span>Fiducia Cieca (10)</span>
+              </div>
+              <input
+                type="range"
+                min={1}
+                max={10}
+                value={trustLevel}
+                onChange={(e) => setTrustLevel(Number(e.target.value))}
+                className="w-full accent-primary cursor-pointer"
+              />
+              <div className="w-full h-1.5 bg-surface-3 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-pink-500 via-purple-500 to-indigo-500 rounded-full transition-all duration-200"
+                  style={{ width: `${(trustLevel / 10) * 100}%` }}
+                />
+              </div>
             </div>
           </div>
 

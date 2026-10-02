@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../components/AuthProvider';
 import { CampaignManager } from '../store/campaignStore';
 import { FirebaseStorageService } from '../lib/firebaseStorageService';
-import { Note, Entity, Category, ScrapbookItem, DmResponse, CharacterBio, CharacterRelationship, EntityPartyRelation } from '../types';
+import { Note, Entity, Category, ScrapbookItem, DmResponse, CharacterBio, CharacterRelationship, EntityPartyRelation, EntityAiConfig, EntityToEntityRelation, RelationAttitude } from '../types';
 import { SingleImageUploader } from '../components/SingleImageUploader';
 import { ConfirmModal } from '../components/ConfirmModal';
 import { OcrButton } from '../components/OcrButton';
@@ -53,6 +53,7 @@ import {
   Sliders,
   Users,
   Brain,
+  RefreshCw,
 } from 'lucide-react';
 
 const PRESET_COLORS = [
@@ -735,7 +736,104 @@ export function CharacterProfile() {
     const charName = (targetPlayer.characterName || '').trim();
     const existingEnt = matchedCodexEntity;
 
-    // Compose rich progress note description
+    // 1. Gather all dynamic memories, beliefs and current status from PG profile
+    const timelineMemories = currentBio?.timelineMemories || [];
+    const evolvingBeliefs = currentBio?.evolvingBeliefs || [];
+    const knownLoreBites = currentBio?.knownLoreBites || [];
+    const currentStatus =
+      currentBio?.currentStatus?.trim() ||
+      `${currentBio?.characterClass || 'Avventuriero'} attivo della Compagnia`;
+
+    // 2. Gather active personal quests / goals
+    const openQuests = quests.filter(
+      (q) =>
+        q.status === 'open' &&
+        (q.assigneePlayerId === targetPlayer._id ||
+          q.assigneePlayerName?.toLowerCase() === charName.toLowerCase() ||
+          q.questScope === 'personal')
+    );
+
+    // 3. Known Session IDs (from memories + attended campaign sessions)
+    const knownSessionIds = new Set<string>();
+    timelineMemories.forEach((m) => {
+      if (m.sessionId) knownSessionIds.add(m.sessionId);
+    });
+    try {
+      const allSessions = CampaignManager.getSessions();
+      allSessions.forEach((s) => {
+        if (
+          s.attendeePlayerIds?.includes(targetPlayer._id) ||
+          (s.title && s.title.toLowerCase().includes(charName.toLowerCase()))
+        ) {
+          knownSessionIds.add(s._id || (s as any).id);
+        }
+      });
+    } catch {}
+
+    // 4. Entity relations (NPCs, Factions, Places linked in relations)
+    const pRelations = CampaignManager.getFamilyRelations(targetPlayer._id);
+    const entityRelations: Record<string, EntityToEntityRelation> = {};
+    pRelations.forEach((r) => {
+      const targetId =
+        r.linkedEntityId ||
+        entities.find((e) => e.name.toLowerCase().trim() === r.name.toLowerCase().trim())?._id;
+      if (targetId) {
+        let attitude: RelationAttitude = 'neutral';
+        if (
+          r.relationshipType === 'enemy' ||
+          r.relationshipType === 'rival'
+        ) {
+          attitude = 'hostile';
+        } else if (
+          ['mentor', 'ally', 'spouse', 'child', 'sibling', 'parent'].includes(r.relationshipType)
+        ) {
+          attitude = 'friendly';
+        }
+        entityRelations[targetId] = {
+          targetEntityId: targetId,
+          targetEntityName: r.name,
+          relationType: r.customRelationshipLabel || r.titleOrRole || r.relationshipType,
+          attitude,
+          notes: r.bio || r.titleOrRole || '',
+        };
+      }
+    });
+
+    // 5. Party relations (Companions with real inter-party attitudes)
+    const partyRelations: Record<string, EntityPartyRelation> = {};
+    allPlayers
+      .filter((p) => p._id !== targetPlayer._id)
+      .forEach((otherP) => {
+        const customRel = currentBio?.interPartyRelations?.[otherP._id];
+        const linkedRel = pRelations.find((r) => r.linkedPlayerId === otherP._id);
+
+        let attitude: RelationAttitude = 'friendly';
+        let relationType = "Compagno d'Avventura";
+        let notes = `Condivide il viaggio e i pericoli con ${otherP.characterName}.`;
+
+        if (customRel) {
+          attitude = (customRel.attitude as RelationAttitude) || attitude;
+          relationType = customRel.relationType || relationType;
+          notes = customRel.notes || notes;
+        } else if (linkedRel) {
+          relationType = linkedRel.customRelationshipLabel || linkedRel.name;
+          if (linkedRel.relationshipType === 'enemy' || linkedRel.relationshipType === 'rival') {
+            attitude = 'hostile';
+          }
+          if (linkedRel.bio) notes = linkedRel.bio;
+        }
+
+        partyRelations[otherP._id] = {
+          playerId: otherP._id,
+          characterName: otherP.characterName,
+          relationType,
+          attitude,
+          notes,
+          progression: customRel?.progression || [],
+        };
+      });
+
+    // 6. Compose rich progress note description in structured Markdown
     const headerDetails = [
       currentBio?.characterRace,
       currentBio?.characterClass,
@@ -747,6 +845,10 @@ export function CharacterProfile() {
 
     const descriptionParts: string[] = [];
     if (headerDetails) descriptionParts.push(`**${headerDetails}**\n`);
+
+    if (currentStatus) {
+      descriptionParts.push(`### Situazione Attuale & Stato\n${currentStatus}\n`);
+    }
     if (currentBio?.appearanceDescription) {
       descriptionParts.push(`### Aspetto Visivo\n${currentBio.appearanceDescription}\n`);
     }
@@ -762,41 +864,82 @@ export function CharacterProfile() {
     if (currentBio?.bonds) descriptionParts.push(`**Legami:** ${currentBio.bonds}`);
     if (currentBio?.flaws) descriptionParts.push(`**Difetti:** ${currentBio.flaws}`);
 
+    if (openQuests.length > 0) {
+      descriptionParts.push(
+        `### Obiettivi & Quest Personali Attive\n${openQuests
+          .map((q) => `- **${q.name}**: ${q.progressNote || 'In corso'}`)
+          .join('\n')}\n`
+      );
+    }
+
+    if (timelineMemories.length > 0) {
+      const recentMemories = timelineMemories.slice(-8);
+      descriptionParts.push(
+        `### Cronologia Ricordi & Memoria Storica\n${recentMemories
+          .map((m) => `- [${m.loreDate || 'Evento'}] **${m.title}**: ${m.summary}`)
+          .join('\n')}\n`
+      );
+    }
+
+    if (evolvingBeliefs.length > 0) {
+      descriptionParts.push(
+        `### Credenze, Teorie & Verità Scoperte\n${evolvingBeliefs
+          .map(
+            (b) =>
+              `- [${b.status}] **${b.subject}**: ${b.currentTruth}${b.notes ? ` (${b.notes})` : ''}`
+          )
+          .join('\n')}\n`
+      );
+    }
+
+    if (knownLoreBites.length > 0) {
+      descriptionParts.push(
+        `### Nozioni del Mondo Conosciute\n${knownLoreBites
+          .map((k) => `- **${k.articleTitle} - ${k.biteTitle}**: ${k.note || ''}`)
+          .join('\n')}\n`
+      );
+    }
+
     const progressNote = descriptionParts.join('\n\n') || `Membro della Compagnia di Avventurieri.`;
 
-    // Compose AI Persona Config
+    // 7. Compose AI Persona Config for Sendipietra / Oracle
     const traitsStr =
       currentBio?.personalityTraits && currentBio.personalityTraits.length > 0
         ? currentBio.personalityTraits.join(', ')
         : 'determinato e leale con i compagni';
 
-    const speechStyle = `Interpreta fedelmente ${charName} (${currentBio?.characterRace || 'Eroe'} ${currentBio?.characterClass || 'Avventuriero'}). Tratti: ${traitsStr}. Allineamento: ${currentBio?.characterAlignment || 'Neutrale'}. Parla sempre in prima persona singolare.`;
+    const speechStyle = `Interpreta fedelmente ${charName} (${currentBio?.characterRace || 'Eroe'} ${currentBio?.characterClass || 'Avventuriero'}). Tratti: ${traitsStr}. Allineamento: ${currentBio?.characterAlignment || 'Neutrale'}. Parla sempre in prima persona singolare. Non rivelare segreti custoditi.`;
 
-    const knowledgeScope = `Conosce la propria storia personale${currentBio?.hometown ? ` (originario di ${currentBio.hometown})` : ''}, i compagni di viaggio (${allPlayers.map((p) => p.characterName).join(', ')}) e i fatti narrati nelle cronache.`;
+    const loreItemsStr = knownLoreBites.map((k) => `${k.articleTitle}: ${k.biteTitle}`).join(', ');
+    const questGoalsStr = openQuests.map((q) => q.name).join(', ');
 
-    const defaultRelations: Record<string, EntityPartyRelation> = {};
-    allPlayers
-      .filter((p) => p._id !== targetPlayer._id)
-      .forEach((otherP) => {
-        defaultRelations[otherP._id] = {
-          playerId: otherP._id,
-          characterName: otherP.characterName,
-          relationType: "Compagno d'Avventura",
-          attitude: 'friendly',
-          notes: `Condivide il viaggio e i pericoli con ${otherP.characterName}.`,
-        };
-      });
+    const knowledgeScopeParts = [
+      `Conosce la propria storia personale${currentBio?.hometown ? ` (originario di ${currentBio.hometown})` : ''}`,
+      `Compagni di viaggio del party: ${allPlayers.map((p) => p.characterName).join(', ')}`,
+      openQuests.length > 0 ? `Obiettivi attuali perseguiti: ${questGoalsStr}` : null,
+      loreItemsStr ? `Nozioni di mondo e fatti noti: ${loreItemsStr}` : null,
+      `Memorie storiche ed eventi vissuti nelle cronache (${timelineMemories.length} ricordi registrati)`,
+    ];
+    const knowledgeScope = knowledgeScopeParts.filter(Boolean).join('. ') + '.';
 
-    const aiConfig = {
+    const aiConfig: EntityAiConfig = {
       enabled: true,
       speechStyle,
-      currentStatus: `${currentBio?.characterClass || 'Avventuriero'} attivo della Compagnia`,
+      currentStatus,
       knowledgeScope,
       secretsToProtect: currentBio?.secrets || '',
-      partyRelations:
-        existingEnt?.aiConfig?.partyRelations && Object.keys(existingEnt.aiConfig.partyRelations).length > 0
-          ? { ...defaultRelations, ...existingEnt.aiConfig.partyRelations }
-          : defaultRelations,
+      timelineMemories,
+      evolvingBeliefs,
+      knownEntityIds: Object.keys(entityRelations),
+      knownSessionIds: Array.from(knownSessionIds),
+      partyRelations: {
+        ...partyRelations,
+        ...(existingEnt?.aiConfig?.partyRelations || {}),
+      },
+      entityRelations: {
+        ...entityRelations,
+        ...(existingEnt?.aiConfig?.entityRelations || {}),
+      },
     };
 
     const aliases = Array.from(
@@ -835,10 +978,12 @@ export function CharacterProfile() {
       });
       CampaignManager.saveEntities(updatedEnts);
       setEntities(updatedEnts);
-      setSyncStatusMsg(`Scheda di "${charName}" aggiornata nel Codex con Persona IA!`);
+      setSyncStatusMsg(
+        `Scheda di "${charName}" allineata nel Codex con memoria completa (${timelineMemories.length} ricordi, ${evolvingBeliefs.length} credenze, ${openQuests.length} obiettivi) e Persona IA!`
+      );
     } else {
       // Create new Codex entity
-      const newEnt = CampaignManager.addEntity({
+      CampaignManager.addEntity({
         name: charName,
         type: 'npc',
         aliases,
@@ -849,12 +994,14 @@ export function CharacterProfile() {
         aiConfig,
       });
       setEntities(CampaignManager.getEntities());
-      setSyncStatusMsg(`Nuova scheda di "${charName}" creata nel Codex con Persona IA abilitata!`);
+      setSyncStatusMsg(
+        `Nuova scheda di "${charName}" creata nel Codex con memoria completa (${timelineMemories.length} ricordi, ${evolvingBeliefs.length} credenze) e Persona IA!`
+      );
     }
 
     setTimeout(() => {
       setSyncStatusMsg(null);
-    }, 4000);
+    }, 5000);
   };
 
   return (
@@ -1151,8 +1298,8 @@ export function CharacterProfile() {
             </div>
             <p className="text-xs text-content-3 leading-relaxed">
               {matchedCodexEntity
-                ? `Il profilo di ${targetPlayer.characterName} è registrato nel Codex come entità del gruppo con Persona IA e relazioni lore.`
-                : `Copia automaticamente biografia, classe, razza e tratti di ${targetPlayer.characterName} in una scheda del Codex abilitata all'IA.`}
+                ? `Allinea memorie cronologiche (${(characterBio?.timelineMemories || []).length}), credenze evolutive, stato presente, quest personali e relazioni (PNG e party) con la Persona IA nel Codex per la Sendipietra.`
+                : `Crea la scheda di ${targetPlayer.characterName} nel Codex trasferendo biografia, memorie storiche, credenze, quest attive e legami per abilitare la Persona IA e la Sendipietra.`}
             </p>
           </div>
         </div>
@@ -1174,12 +1321,12 @@ export function CharacterProfile() {
             onClick={handleSyncToCodex}
             className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs ${
               matchedCodexEntity
-                ? 'bg-surface-2 hover:bg-surface-3 text-primary border border-surface-3'
+                ? 'bg-primary/10 hover:bg-primary/20 text-primary border border-primary/30'
                 : 'bg-primary text-surface-0 hover:bg-primary-hover border border-primary'
             }`}
           >
-            <Sparkles size={13} />
-            <span>{matchedCodexEntity ? 'Aggiorna Scheda Codex' : 'Sincronizza nel Codex'}</span>
+            <RefreshCw size={13} className={matchedCodexEntity ? 'text-primary' : 'text-surface-0'} />
+            <span>{matchedCodexEntity ? 'Sincronizza Memoria & Scheda Codex' : 'Crea Scheda Codex & Abilita IA'}</span>
           </button>
         </div>
       </div>

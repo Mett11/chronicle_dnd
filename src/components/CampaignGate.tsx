@@ -20,6 +20,8 @@ import {
   Palette,
   Trash2,
   Image as ImageIcon,
+  QrCode,
+  Share2,
 } from 'lucide-react';
 import { CampaignManager } from '../store/campaignStore';
 import { useAuth } from './AuthProvider';
@@ -27,6 +29,7 @@ import { CampaignMeta, CampaignProfile } from '../types';
 import { ConfirmModal } from './ConfirmModal';
 import { isSupabaseConfigured } from '../lib/supabase';
 import { SupabaseSyncService } from '../lib/supabaseSyncService';
+import { CampaignInviteModal } from './CampaignInviteModal';
 
 const PG_COLOR_PRESETS = [
   { name: 'Indaco Arcano', hex: '#6366f1' },
@@ -50,11 +53,26 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
 
   // Campaign State
   const [myCampaigns, setMyCampaigns] = useState<CampaignMeta[]>([]);
+  const [inviteCampaign, setInviteCampaign] = useState<CampaignMeta | null>(null);
 
   // Join Form State
   const [joinCode, setJoinCode] = useState('');
   const [joinError, setJoinError] = useState<string | null>(null);
   const [isSearching, setIsSearching] = useState(false);
+
+  const extractCampaignCode = (rawInput: string): string => {
+    let text = rawInput.trim();
+    if (!text) return '';
+    try {
+      if (text.includes('join=') || text.includes('campaign=')) {
+        const dummyUrl = text.startsWith('http') ? new URL(text) : new URL(`https://chronicle.local/${text}`);
+        const codeParam = dummyUrl.searchParams.get('join') || dummyUrl.searchParams.get('campaign');
+        if (codeParam) return codeParam.trim().toUpperCase();
+      }
+    } catch {}
+    const lastPart = text.split('/').pop()?.split('?')[0]?.replace(/^#/, '') || text;
+    return lastPart.replace(/[^A-Za-z0-9_-]/g, '').toUpperCase();
+  };
 
   // Create Modal State
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
@@ -125,6 +143,26 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
         CloudSyncService.fetchGlobalAccountsNow();
       });
     }
+
+    // Check if URL or localStorage has a pending join invite
+    try {
+      const searchParams = new URLSearchParams(window.location.search);
+      const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+      const pending =
+        searchParams.get('join') ||
+        searchParams.get('campaign') ||
+        hashParams.get('join') ||
+        localStorage.getItem('chronicle_pending_join_code');
+
+      if (pending) {
+        const code = extractCampaignCode(pending);
+        if (code) {
+          setJoinCode(code);
+          localStorage.removeItem('chronicle_pending_join_code');
+        }
+      }
+    } catch {}
+
     const handleUpdate = () => {
       reloadCampaignList();
     };
@@ -205,10 +243,10 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
   const handleJoinCampaign = async (e: React.FormEvent) => {
     e.preventDefault();
     setJoinError(null);
-    const cleanCode = joinCode.trim().toUpperCase();
+    const cleanCode = extractCampaignCode(joinCode);
 
     if (!cleanCode) {
-      setJoinError('Inserisci un codice campagna.');
+      setJoinError('Inserisci o incolla un link d’invito o un codice campagna valido.');
       return;
     }
 
@@ -298,7 +336,7 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
     }
   };
 
-  const handleCreateCampaignSubmit = (e: React.FormEvent) => {
+  const handleCreateCampaignSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setCreateError(null);
 
@@ -318,6 +356,16 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
     if (allCamp.some((c) => c.code === cleanCode)) {
       setCreateError('Questo codice è già in uso. Generane uno diverso.');
       return;
+    }
+
+    if (isSupabaseConfigured()) {
+      try {
+        const existingRemote = await SupabaseSyncService.fetchCampaignData(cleanCode);
+        if (existingRemote) {
+          setCreateError('Questo codice è già in uso da un altro tavolo su Cloud. Clicca su "Rigenera" per ottenerne uno nuovo.');
+          return;
+        }
+      } catch {}
     }
 
     // Create the campaign with the user as the automatic Dungeon Master
@@ -555,7 +603,21 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
                           </div>
                         )}
 
-                        <div className="flex items-center gap-2 text-xs">
+                        <div className="flex items-center gap-2 text-xs flex-wrap">
+                          {/* Invite Link & QR Code button */}
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setInviteCampaign(camp);
+                            }}
+                            title="Invita giocatori nel party (Link d'Invito & QR Code)"
+                            className="px-2.5 py-1 rounded-lg bg-surface-2 hover:bg-surface-3 border border-surface-3 text-content-1 text-[11px] font-medium flex items-center gap-1.5 transition-colors cursor-pointer"
+                          >
+                            <QrCode size={13} className="text-primary" />
+                            <span>Invito &amp; QR</span>
+                          </button>
+
                           <span className="text-[10px] font-mono text-content-3 uppercase tracking-wider">
                             Codice: <strong className="text-content-2">{camp.code}</strong>
                           </span>
@@ -614,14 +676,14 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
             )}
           </div>
 
-          {/* ================= SECTION 2: UNISCITI CON CODICE ================= */}
+          {/* ================= SECTION 2: UNISCITI CON LINK O CODICE ================= */}
           <div className="pt-6 border-t border-surface-3">
             <h2 className="text-sm font-medium text-content-2 mb-2 flex items-center gap-2">
-              <Key size={14} className="text-primary" />
+              <QrCode size={14} className="text-primary" />
               Unisciti a una Campagna Esistente
             </h2>
             <p className="text-xs text-content-3 mb-3">
-              Hai ricevuto un codice dal tuo Dungeon Master? Inseriscilo qui per accedere al tavolo e creare il tuo personaggio.
+              Hai ricevuto un link d'invito o un codice dal tuo Dungeon Master? Incolla qui il link o il codice per accedere al tavolo e creare il tuo personaggio.
             </p>
 
             {joinError && (
@@ -636,10 +698,10 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
                 <input
                   id="input-join-code"
                   type="text"
-                  placeholder="Es. WATERDEEP-2026"
+                  placeholder="Incolla Link d'Invito o Codice (es. WATERDEEP)"
                   value={joinCode}
-                  onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
-                  className="w-full bg-surface-1 border border-surface-3 focus:border-primary rounded-xl px-4 py-3 text-xs text-content-1 placeholder-[#555] outline-none font-mono uppercase tracking-wider text-center sm:text-left transition-colors"
+                  onChange={(e) => setJoinCode(e.target.value)}
+                  className="w-full bg-surface-1 border border-surface-3 focus:border-primary rounded-xl px-4 py-3 text-xs text-content-1 placeholder-[#555] outline-none font-mono tracking-wider text-center sm:text-left transition-colors"
                 />
               </div>
               <button
@@ -656,7 +718,7 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
                 ) : (
                   <>
                     <LogIn size={14} />
-                    <span>Unisciti ed Entra</span>
+                    <span>Entra nel Party</span>
                   </>
                 )}
               </button>
@@ -931,6 +993,16 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
           if (!isLeavingCampaign) setCampaignToLeave(null);
         }}
       />
+
+      {/* Campaign Invite & QR Code Modal */}
+      {inviteCampaign && (
+        <CampaignInviteModal
+          isOpen={Boolean(inviteCampaign)}
+          onClose={() => setInviteCampaign(null)}
+          campaignCode={inviteCampaign.code}
+          campaignName={inviteCampaign.name}
+        />
+      )}
     </div>
   );
 }

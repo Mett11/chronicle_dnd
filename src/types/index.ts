@@ -716,6 +716,8 @@ export interface CharacterRelationship {
   order?: number;
   createdAt?: string;
   sharedWithParty?: boolean; // Visibility control for party members
+  attitude?: 'friendly' | 'hostile' | 'neutral' | 'suspicious' | 'helpful' | 'devoted' | 'rival';
+  trustLevel?: number; // 1 to 10
 }
 
 export interface CharacterSectionPrivacy {

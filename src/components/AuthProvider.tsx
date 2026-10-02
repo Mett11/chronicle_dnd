@@ -13,6 +13,7 @@ import { CloudSyncService } from '../lib/cloudSync';
 import { UserPreferencesService } from '../lib/userPreferencesService';
 import { UserProfileSyncService } from '../lib/userProfileSync';
 import { ApiKeyManager } from '../lib/apiKeyManager';
+import { SupabaseSyncService } from '../lib/supabaseSyncService';
 import { auth, googleProvider } from '../lib/firebase';
 import { onAuthStateChanged } from 'firebase/auth';
 

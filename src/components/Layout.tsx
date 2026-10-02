@@ -28,11 +28,13 @@ import {
   User,
   Globe,
   Database,
+  QrCode,
 } from 'lucide-react';
 import { CampaignManager } from '../store/campaignStore';
 import { NotificationsModal } from './NotificationsModal';
 import { ThemeSelectorModal } from './ThemeSelectorModal';
 import { InstallAppModal } from './InstallAppModal';
+import { CampaignInviteModal } from './CampaignInviteModal';
 import { CampaignTypographyModal, getCampaignTitleClasses } from './CampaignTypographyModal';
 import { OrphanTagModal } from './OrphanTagModal';
 import { getStoredTheme, ClassTheme } from '../lib/theme';
@@ -49,6 +51,7 @@ export function Layout() {
   const [isThemeModalOpen, setIsThemeModalOpen] = useState(false);
   const [isInstallModalOpen, setIsInstallModalOpen] = useState(false);
   const [isTypographyModalOpen, setIsTypographyModalOpen] = useState(false);
+  const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
   const [pwaStatus, setPwaStatus] = useState<PwaStatus>(getPwaStatus);
   const [currentTheme, setCurrentTheme] = useState<ClassTheme>(getStoredTheme);
   const [unreadNotifsCount, setUnreadNotifsCount] = useState(0);
@@ -426,6 +429,17 @@ export function Layout() {
           </div>
 
           <div className="flex items-center gap-3">
+            {/* Invite Party Button */}
+            <button
+              type="button"
+              onClick={() => setIsInviteModalOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-surface-2 hover:bg-surface-3 border border-surface-3/80 text-content-2 hover:text-content-1 text-xs font-medium transition-all cursor-pointer shadow-2xs group"
+              title="Invita giocatori nel party (Link & QR Code)"
+            >
+              <QrCode size={15} className="text-primary group-hover:scale-110 transition-transform" />
+              <span>Invita Party</span>
+            </button>
+
             {/* Notification Bell Button */}
             <button
               type="button"
@@ -529,6 +543,15 @@ export function Layout() {
             onClose={() => setIsTypographyModalOpen(false)}
             campaign={campaignMeta}
             onSaved={(updated) => setCampaignMeta(updated)}
+          />
+        )}
+
+        {campaignMeta && (
+          <CampaignInviteModal
+            isOpen={isInviteModalOpen}
+            onClose={() => setIsInviteModalOpen(false)}
+            campaignCode={campaignMeta.code}
+            campaignName={campaignMeta.name}
           />
         )}
 

@@ -83,8 +83,13 @@ export function Settings() {
     if (!isSupabaseConfigured() || !activeCampaignCode) return;
     setSupabaseStats(prev => ({ ...prev, loading: true, error: null }));
     try {
-      const supaData = await SupabaseSyncService.fetchCampaignData(activeCampaignCode);
+      const [supaData, remoteAccounts] = await Promise.all([
+        SupabaseSyncService.fetchCampaignData(activeCampaignCode),
+        SupabaseSyncService.fetchAllUserAccounts().catch(() => []),
+      ]);
+
       const local = {
+        accounts: CampaignManager.getAccounts().length,
         sessions: CampaignManager.getSessions().length,
         chapters: CampaignManager.getChapters().length,
         notes: CampaignManager.getNotes().length,
@@ -101,6 +106,7 @@ export function Settings() {
         setSupabaseStats({
           local,
           remote: {
+            accounts: Array.isArray(remoteAccounts) ? remoteAccounts.length : 0,
             sessions: Array.isArray(supaData.sessions) ? supaData.sessions.length : 0,
             chapters: Array.isArray(supaData.chapters) ? supaData.chapters.length : 0,
             notes: Array.isArray(supaData.notes) ? supaData.notes.length : 0,
@@ -129,6 +135,24 @@ export function Settings() {
     if (!isSupabaseConfigured() || !activeCampaignCode) return;
     setSupabaseStats(prev => ({ ...prev, syncing: true, error: null, successMsg: null }));
     try {
+      // 1. Bulk push all registered user accounts and party members
+      const allAccounts = CampaignManager.getAccounts();
+      if (allAccounts && allAccounts.length > 0) {
+        await SupabaseSyncService.saveAllUserAccounts(allAccounts);
+        await SupabaseSyncService.saveActivePlayers(activeCampaignCode, allAccounts);
+      }
+
+      // 2. Also ensure active_players on campaign record is updated with all party members
+      const allPlayers = CampaignManager.getPlayers();
+      const combinedPlayers = [
+        ...allAccounts,
+        ...allPlayers.filter(
+          (p) => !allAccounts.some((a) => a.id === p._id || a.email === p.email)
+        ),
+      ];
+      await SupabaseSyncService.saveActivePlayers(activeCampaignCode, combinedPlayers);
+
+      // 3. Bulk push all campaign data (including entities with aiConfig & memories, bios, relations)
       const payload = {
         sessions: CampaignManager.getSessions(),
         chapters: CampaignManager.getChapters(),
@@ -147,7 +171,7 @@ export function Settings() {
         setSupabaseStats(prev => ({
           ...prev,
           syncing: false,
-          successMsg: 'Allineamento completato! Tutti i record locali sono stati sincronizzati ed unificati su Supabase PostgreSQL.',
+          successMsg: `Allineamento completato con successo! Sincronizzati sul Database: ${allAccounts.length} account giocatori, ${res.stats.entities || 0} entità codex, ${res.stats.sessions || 0} sessioni, ${res.stats.notes || 0} note, ${res.stats.characterBios || 0} biografie PG e ${res.stats.familyRelations || 0} relazioni.`,
         }));
         await loadSupabaseStats();
       } else {
@@ -1107,6 +1131,7 @@ export function Settings() {
                 </thead>
                 <tbody className="divide-y divide-surface-3/50 text-content-2">
                   {[
+                    { label: 'Account Utenti & PG (Party Amici)', key: 'accounts', icon: UserCheck },
                     { label: 'Codex & Entità (NPC, Nemici, Luoghi)', key: 'entities', icon: Users },
                     { label: 'Sessioni di Gioco', key: 'sessions', icon: BookOpen },
                     { label: 'Note di Campagna', key: 'notes', icon: FileCheck },

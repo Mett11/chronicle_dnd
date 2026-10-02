@@ -57,6 +57,19 @@ function AppContent() {
   const [campaignCode, setCampaignCode] = useState<string | null>(() => CampaignManager.getActiveCampaignCode());
   const [, setForceTick] = useState(0);
 
+  // Capture invite link (?join=CODE or #join=CODE)
+  useEffect(() => {
+    try {
+      const searchParams = new URLSearchParams(window.location.search);
+      const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+      const pendingCode = searchParams.get('join') || searchParams.get('campaign') || hashParams.get('join');
+      if (pendingCode) {
+        const clean = pendingCode.trim().toUpperCase();
+        localStorage.setItem('chronicle_pending_join_code', clean);
+      }
+    } catch {}
+  }, []);
+
   // Pre-hydrate high-capacity IndexedDB cache on initial boot
   useEffect(() => {
     CampaignManager.hydrateFromIndexedDb().then(() => {
