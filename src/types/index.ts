@@ -112,6 +112,8 @@ export interface CampaignAiConfig {
 export interface CampaignMeta {
   code: string;
   name: string;
+  subtitle?: string;
+  description?: string;
   createdAt: string;
   dmId?: string;
   dmName?: string;

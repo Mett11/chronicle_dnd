@@ -45,9 +45,11 @@ export function resolveStorageUrl(
     let targetBucket = defaultBucket;
 
     // Detect explicit bucket prefix in path
-    if (cleanPath.startsWith('campaign-assets/')) {
+    if (cleanPath.startsWith('chronicle-media/')) {
+      targetBucket = 'chronicle-media';
+      cleanPath = cleanPath.slice('chronicle-media/'.length);
+    } else if (cleanPath.startsWith('campaign-assets/')) {
       targetBucket = 'campaign-assets';
-      finalPathSlice(cleanPath, 'campaign-assets/');
       cleanPath = cleanPath.slice('campaign-assets/'.length);
     } else if (cleanPath.startsWith('user-avatars/')) {
       targetBucket = 'user-avatars';

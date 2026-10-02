@@ -514,19 +514,7 @@ export class CloudSyncService {
    * Directly syncs global campaigns
    */
   static async syncCampaignsToCloud(campaigns: CampaignMeta[]) {
-    if (!Array.isArray(campaigns) || campaigns.length === 0) return;
-    try {
-      campaigns.forEach((camp) => {
-        if (camp && camp.code) {
-          SupabaseSyncService.saveCampaign(camp.code, {
-            title: camp.name || camp.code,
-            dmId: camp.dmId || '',
-          }).catch(() => {});
-        }
-      });
-    } catch (e) {
-      console.warn('[CloudSync] Failed to sync campaigns to Supabase:', e);
-    }
+    // No-op: Supabase is authoritative. Campaigns are created/deleted explicitly via SupabaseSyncService.
   }
 
   /**
@@ -539,9 +527,9 @@ export class CloudSyncService {
   ) {
     if (!campaignCode) return;
     try {
-      const code = campaignCode.trim();
+      const code = campaignCode.trim().toUpperCase();
       const { supabase } = await import('./supabase');
-      await supabase.from('campaigns').delete().eq('code', code);
+      await supabase.from('campaigns').delete().or(`code.eq.${code},code.eq.${campaignCode.trim()}`);
     } catch (e) {
       console.warn('[CloudSync] Failed to delete campaign from Supabase:', e);
     }
@@ -771,37 +759,36 @@ export class CloudSyncService {
   }
 
   private static mergeRemoteCampaigns(remoteCampaigns: CampaignMeta[]) {
-    const localCampaigns = CampaignManager.getCampaigns();
-    const map = new Map<string, CampaignMeta>();
+    if (!isSupabaseConfigured() || !Array.isArray(remoteCampaigns)) return;
 
+    // Remote campaigns from Supabase database are authoritative
+    const remoteMap = new Map<string, CampaignMeta>();
     remoteCampaigns.forEach((c) => {
       if (c && c.code) {
         const cleanCode = c.code.toUpperCase();
-        map.set(cleanCode, { ...c, code: cleanCode });
+        remoteMap.set(cleanCode, { ...c, code: cleanCode });
       }
     });
 
-    localCampaigns.forEach((c) => {
-      if (c && c.code) {
-        const cleanCode = c.code.toUpperCase();
-        if (!map.has(cleanCode)) {
-          map.set(cleanCode, { ...c, code: cleanCode });
-        } else {
-          const rem = map.get(cleanCode)!;
-          const mergedExpelled = Array.from(new Set([
-            ...(rem.expelledAccountIds || []),
-            ...(c.expelledAccountIds || []),
-          ]));
-          map.set(cleanCode, {
-            ...rem,
-            ...c,
-            expelledAccountIds: mergedExpelled,
-          });
-        }
+    const localCampaigns = CampaignManager.getCampaigns();
+
+    // Only preserve local metadata for campaigns that ACTUALLY EXIST in Supabase
+    const finalCampaigns: CampaignMeta[] = [];
+    remoteMap.forEach((remCamp, cleanCode) => {
+      const loc = localCampaigns.find((l) => l.code.toUpperCase() === cleanCode);
+      if (loc) {
+        finalCampaigns.push({
+          ...loc,
+          ...remCamp,
+          expelledAccountIds: Array.from(
+            new Set([...(remCamp.expelledAccountIds || []), ...(loc.expelledAccountIds || [])])
+          ),
+        });
+      } else {
+        finalCampaigns.push(remCamp);
       }
     });
 
-    const finalCampaigns = Array.from(map.values());
     const prevCampJson = localStorage.getItem('chronicle_campaigns_list');
     const newCampJson = JSON.stringify(finalCampaigns);
     const hasCampChanges = prevCampJson !== newCampJson;
@@ -905,14 +892,16 @@ export class CloudSyncService {
   /**
    * Initializes real-time two-way synchronization with Firebase Firestore
    */
-  static async init(onCloudUpdated?: () => void) {
-    // Reset any transient quota lock on clean init
-    resetQuotaExhaustedFlag();
+  private static currentSyncRequestId = 0;
 
-    // Reset hydration state for the incoming campaign
+  /**
+   * Initializes real-time synchronization for the active campaign.
+   */
+  static async init(onCloudUpdated?: () => void) {
+    const syncId = ++this.currentSyncRequestId;
+    resetQuotaExhaustedFlag();
     this.isCampaignHydrated = false;
 
-    // If already initialized, stop first to avoid orphan listeners
     if (this.isInitialized) {
       this.stop();
     }
@@ -927,12 +916,19 @@ export class CloudSyncService {
         return;
       }
 
-      // 0. Primary Source of Truth: Fetch from Supabase PostgreSQL if configured
       if (isSupabaseConfigured()) {
         try {
           const supaData = await SupabaseSyncService.fetchCampaignData(activeCode);
+          
+          // Discard response if a newer sync request was initiated (e.g. campaign switch)
+          if (this.currentSyncRequestId !== syncId) {
+            console.log('[CloudSync] Sync request superseded, discarding response.');
+            return;
+          }
+
           if (supaData) {
             console.log(`[CloudSync] Hydrated from Supabase: ${supaData.sessions?.length || 0} sessions, ${supaData.notes?.length || 0} notes, ${supaData.entities?.length || 0} entities`);
+            
             if (supaData.title) {
               try {
                 const allCamps = CampaignManager.getCampaigns();
@@ -950,172 +946,49 @@ export class CloudSyncService {
                   });
                   CampaignManager.saveCampaignsLocalOnly(allCamps);
                 }
-                CampaignManager.updateCampaignMeta(activeCode, {
-                  name: supaData.title,
-                  dmId: supaData.dmId || undefined,
-                });
               } catch (e) {
                 console.warn('[Supabase] meta hydration warn:', e);
               }
             }
+
+            // Strictly apply Supabase data as single source of truth without auto-reuploading stale local cache
             if (Array.isArray(supaData.sessions)) {
-              try {
-                const localSess = CampaignManager.getSessions();
-                const supaIds = new Set(supaData.sessions.map((s: any) => s._id));
-                const localOnly = localSess.filter((s: any) => s && s._id && !supaIds.has(s._id));
-                const merged = [...supaData.sessions, ...localOnly];
-                CampaignManager.saveSessionsLocalOnly(merged);
-                if (localOnly.length > 0) {
-                  console.log(`[CloudSync] Syncing ${localOnly.length} local-only sessions to Supabase...`);
-                  setTimeout(() => {
-                    localOnly.forEach((s: any) => SupabaseSyncService.saveSession(activeCode, s));
-                  }, 2500);
-                }
-              } catch (e) { console.warn(e); }
+              CampaignManager.saveSessionsLocalOnly(supaData.sessions);
             }
             if (Array.isArray(supaData.chapters)) {
-              try {
-                const localChaps = CampaignManager.getChapters();
-                const supaIds = new Set(supaData.chapters.map((c: any) => c.id));
-                const localOnly = localChaps.filter((c: any) => c && c.id && !supaIds.has(c.id));
-                const merged = [...supaData.chapters, ...localOnly];
-                CampaignManager.saveChaptersLocalOnly(merged);
-                if (localOnly.length > 0) {
-                  console.log(`[CloudSync] Syncing ${localOnly.length} local-only chapters to Supabase...`);
-                  setTimeout(() => {
-                    localOnly.forEach((c: any) => SupabaseSyncService.saveChapter(activeCode, c));
-                  }, 2500);
-                }
-              } catch (e) { console.warn(e); }
+              CampaignManager.saveChaptersLocalOnly(supaData.chapters);
             }
             if (Array.isArray(supaData.notes)) {
-              try {
-                const localNotes = CampaignManager.getNotes();
-                const supaIds = new Set(supaData.notes.map((n: any) => n._id));
-                const localOnly = localNotes.filter((n: any) => n && n._id && !supaIds.has(n._id));
-                const merged = [...supaData.notes, ...localOnly];
-                CampaignManager.saveNotesLocalOnly(merged);
-                if (localOnly.length > 0) {
-                  console.log(`[CloudSync] Syncing ${localOnly.length} local-only notes to Supabase...`);
-                  setTimeout(() => {
-                    localOnly.forEach((n: any) => SupabaseSyncService.saveNote(activeCode, n));
-                  }, 2500);
-                }
-              } catch (e) { console.warn(e); }
+              CampaignManager.saveNotesLocalOnly(supaData.notes);
             }
             if (Array.isArray(supaData.entities)) {
-              try {
-                const localEnts = CampaignManager.getEntities();
-                const supaIds = new Set(supaData.entities.map((e: any) => e._id));
-                const localOnly = localEnts.filter((e: any) => e && e._id && !supaIds.has(e._id));
-                const merged = [...supaData.entities, ...localOnly];
-                CampaignManager.saveEntitiesLocalOnly(merged);
-                if (localOnly.length > 0) {
-                  console.log(`[CloudSync] Syncing ${localOnly.length} local-only entities to Supabase...`);
-                  setTimeout(() => {
-                    localOnly.forEach((e: any) => SupabaseSyncService.saveEntity(activeCode, e));
-                  }, 2500);
-                }
-              } catch (e) { console.warn(e); }
+              CampaignManager.saveEntitiesLocalOnly(supaData.entities);
             }
             if (Array.isArray(supaData.maps)) {
-              try {
-                const localMaps = CampaignManager.getMaps();
-                const supaIds = new Set(supaData.maps.map((m: any) => m.id));
-                const localOnly = localMaps.filter((m: any) => m && m.id && !supaIds.has(m.id));
-                const merged = [...supaData.maps, ...localOnly];
-                CampaignManager.saveMapsLocalOnly(merged);
-                if (localOnly.length > 0) {
-                  console.log(`[CloudSync] Syncing ${localOnly.length} local-only maps to Supabase...`);
-                  setTimeout(() => {
-                    localOnly.forEach((m: any) => SupabaseSyncService.saveMap(activeCode, m));
-                  }, 2500);
-                }
-              } catch (e) { console.warn(e); }
+              CampaignManager.saveMapsLocalOnly(supaData.maps);
             }
             if (Array.isArray(supaData.mapFolders)) {
-              try { CampaignManager.saveMapFoldersLocalOnly(supaData.mapFolders); } catch (e) { console.warn(e); }
+              CampaignManager.saveMapFoldersLocalOnly(supaData.mapFolders);
             }
             if (Array.isArray(supaData.scrapbookItems)) {
-              try {
-                const localItems = CampaignManager.getScrapbookItems();
-                const supaIds = new Set(supaData.scrapbookItems.map((i: any) => i.id));
-                const localOnly = localItems.filter((i: any) => i && i.id && !supaIds.has(i.id));
-                const merged = [...supaData.scrapbookItems, ...localOnly];
-                CampaignManager.saveScrapbookItemsLocalOnly(merged);
-                if (localOnly.length > 0) {
-                  console.log(`[CloudSync] Syncing ${localOnly.length} local-only scrapbook items to Supabase...`);
-                  setTimeout(() => {
-                    localOnly.forEach((i: any) => SupabaseSyncService.saveScrapbookItem(activeCode, i));
-                  }, 2500);
-                }
-              } catch (e) { console.warn(e); }
+              CampaignManager.saveScrapbookItemsLocalOnly(supaData.scrapbookItems);
             }
             if (Array.isArray(supaData.audioLogs)) {
-              try {
-                const localLogs = CampaignManager.getAudioLogs();
-                const supaIds = new Set(supaData.audioLogs.map((l: any) => l.id));
-                const localOnly = localLogs.filter((l: any) => l && l.id && !supaIds.has(l.id));
-                const merged = [...supaData.audioLogs, ...localOnly];
-                CampaignManager.saveAudioLogsLocalOnly(merged);
-                if (localOnly.length > 0) {
-                  console.log(`[CloudSync] Syncing ${localOnly.length} local-only audio logs to Supabase...`);
-                  setTimeout(() => {
-                    localOnly.forEach((l: any) => SupabaseSyncService.saveAudioLog(activeCode, l));
-                  }, 2500);
-                }
-              } catch (e) { console.warn(e); }
+              CampaignManager.saveAudioLogsLocalOnly(supaData.audioLogs);
             }
             if (Array.isArray(supaData.characterBios)) {
-              try {
-                const localBios = CampaignManager.getAllCharacterBios();
-                const supaIds = new Set(supaData.characterBios.map((b: any) => b.playerId));
-                const localOnly = localBios.filter((b: any) => b && b.playerId && !supaIds.has(b.playerId));
-                const merged = [...supaData.characterBios, ...localOnly];
-                CampaignManager.saveAllCharacterBiosLocalOnly(merged);
-                if (localOnly.length > 0) {
-                  console.log(`[CloudSync] Syncing ${localOnly.length} local-only biographies to Supabase...`);
-                  setTimeout(() => {
-                    SupabaseSyncService.saveCharacterBios(activeCode, localOnly);
-                  }, 2500);
-                }
-              } catch (e) { console.warn(e); }
+              CampaignManager.saveAllCharacterBiosLocalOnly(supaData.characterBios);
             }
             if (Array.isArray(supaData.familyRelations)) {
-              try {
-                const localRels = CampaignManager.getAllFamilyRelations();
-                const supaIds = new Set(supaData.familyRelations.map((r: any) => r.id));
-                const localOnly = localRels.filter((r: any) => r && r.id && !supaIds.has(r.id));
-                const merged = [...supaData.familyRelations, ...localOnly];
-                CampaignManager.saveAllFamilyRelationsLocalOnly(merged);
-                if (localOnly.length > 0) {
-                  console.log(`[CloudSync] Syncing ${localOnly.length} local-only relations to Supabase...`);
-                  setTimeout(() => {
-                    SupabaseSyncService.saveFamilyRelations(activeCode, localOnly);
-                  }, 2500);
-                }
-              } catch (e) { console.warn(e); }
+              CampaignManager.saveAllFamilyRelationsLocalOnly(supaData.familyRelations);
             }
             if (Array.isArray(supaData.worldLoreArticles)) {
-              try {
-                const localArts = CampaignManager.getWorldLoreArticles();
-                const supaIds = new Set(supaData.worldLoreArticles.map((a: any) => a._id));
-                const localOnly = localArts.filter((a: any) => a && a._id && !supaIds.has(a._id));
-                const merged = [...supaData.worldLoreArticles, ...localOnly];
-                CampaignManager.saveAllWorldLoreArticlesLocalOnly(merged);
-                if (localOnly.length > 0) {
-                  console.log(`[CloudSync] Syncing ${localOnly.length} local-only world lore articles to Supabase...`);
-                  setTimeout(() => {
-                    SupabaseSyncService.saveWorldLoreArticles(activeCode, localOnly);
-                  }, 2500);
-                }
-              } catch (e) { console.warn(e); }
+              CampaignManager.saveAllWorldLoreArticlesLocalOnly(supaData.worldLoreArticles);
             }
             if (Array.isArray(supaData.activePlayers)) {
               try { this.mergeRemoteAccounts(supaData.activePlayers); } catch (e) { console.warn(e); }
             }
 
-            // Hydrate lore calendar from Supabase
             if (supaData.calendarSystem && typeof supaData.calendarSystem === 'object' && Object.keys(supaData.calendarSystem).length > 0) {
               try {
                 CampaignManager.saveCalendarLocalOnly(supaData.calendarSystem);
@@ -1123,34 +996,6 @@ export class CloudSyncService {
                 console.warn('[CloudSync] Calendar hydration warn:', e);
               }
             }
-
-            // Self-heal legacy base64 scrapbook items to Supabase Storage
-            try {
-              const currentItems = CampaignManager.getScrapbookItems();
-              const base64Items = currentItems.filter((i) => i.imageUrl && i.imageUrl.startsWith('data:'));
-              if (base64Items.length > 0) {
-                setTimeout(async () => {
-                  const { FirebaseStorageService } = await import('./firebaseStorageService');
-                  let updatedAny = false;
-                  const newItems = [...CampaignManager.getScrapbookItems()];
-                  for (const bItem of base64Items) {
-                    try {
-                      const pubUrl = await FirebaseStorageService.uploadMedia(activeCode, 'scrapbook', `${bItem.id}.webp`, bItem.imageUrl);
-                      if (pubUrl && pubUrl.startsWith('http')) {
-                        const targetIdx = newItems.findIndex((it) => it.id === bItem.id);
-                        if (targetIdx !== -1) {
-                          newItems[targetIdx] = { ...newItems[targetIdx], imageUrl: pubUrl };
-                          updatedAny = true;
-                        }
-                      }
-                    } catch {}
-                  }
-                  if (updatedAny) {
-                    CampaignManager.saveScrapbookItems(newItems);
-                  }
-                }, 3000);
-              }
-            } catch {}
 
             if (supaData.dossier?.aiKeys || supaData.aiConfig?.aiKeys) {
               try {
@@ -1161,6 +1006,8 @@ export class CloudSyncService {
             }
 
             this.isCampaignHydrated = true;
+            this.setupSupabaseRealtime(activeCode);
+
             if (typeof window !== 'undefined') {
               window.dispatchEvent(new CustomEvent('chronicle_campaign_updated'));
               window.dispatchEvent(new CustomEvent('chronicle_sessions_updated', { detail: { sessions: supaData.sessions } }));
@@ -1234,6 +1081,34 @@ export class CloudSyncService {
           }
         } catch (e) {
           console.warn('[Realtime] Session update error:', e);
+        }
+      },
+      onChaptersChange: (payload) => {
+        try {
+          const chaps = CampaignManager.getChapters();
+          if (payload.eventType === 'DELETE') {
+            const delId = payload.old?.id;
+            if (delId) {
+              const updated = chaps.filter((c) => c.id !== delId);
+              CampaignManager.saveChaptersLocalOnly(updated);
+            }
+          } else if (payload.new) {
+            const row = payload.new;
+            const cleanChap: CampaignChapter = {
+              id: row.id,
+              name: row.title || 'Capitolo',
+              description: row.synopsis || '',
+              order: Number(row.order_index ?? row.number ?? 1),
+              color: row.color || '#6366f1',
+              coverImageUrl: row.cover_image_url || '',
+              createdAt: row.created_at || new Date().toISOString(),
+            };
+            const idx = chaps.findIndex((c) => c.id === cleanChap.id);
+            const updated = idx !== -1 ? chaps.map((c) => c.id === cleanChap.id ? { ...c, ...cleanChap, coverImageUrl: cleanChap.coverImageUrl || c.coverImageUrl } : c) : [...chaps, cleanChap];
+            CampaignManager.saveChaptersLocalOnly(updated);
+          }
+        } catch (e) {
+          console.warn('[Realtime] Chapter update error:', e);
         }
       },
       onNotesChange: (payload) => {
@@ -1442,6 +1317,9 @@ export class CloudSyncService {
                 dmId: row.dm_id || undefined,
               });
             }
+            if (row.dossier?.chapters && Array.isArray(row.dossier.chapters)) {
+              CampaignManager.saveChaptersLocalOnly(row.dossier.chapters);
+            }
           }
         } catch (e) {
           console.warn('[Realtime] Campaign update error:', e);
@@ -1475,22 +1353,47 @@ export class CloudSyncService {
   }
 
   /**
-   * Forces an immediate synchronization of the campaign and global data to Firestore Cloud.
+   * Forces an immediate synchronization of the active campaign data to Supabase Cloud.
    */
   static async syncNow(force: boolean = false): Promise<{ success: boolean; error?: string }> {
-    if (force) {
-      resetQuotaExhaustedFlag();
-      lastSyncedPayloadHash = '';
-    }
-
     try {
-      // 1. Sync global accounts and campaigns
-      this.syncAccountsToCloud(CampaignManager.getAccounts());
-      this.syncCampaignsToCloud(CampaignManager.getCampaigns());
+      const activeCode = CampaignManager.getActiveCampaignCode();
+      if (!activeCode || activeCode === '__NONE__') {
+        return { success: false, error: 'Nessuna campagna attiva valida.' };
+      }
 
-      // 2. Upload current active campaign
-      const uploadResult = await this.uploadLocalToCloud(force);
-      return uploadResult;
+      if (isSupabaseConfigured()) {
+        const localData = {
+          sessions: CampaignManager.getSessions(),
+          chapters: CampaignManager.getChapters(),
+          entities: CampaignManager.getEntities(),
+          notes: CampaignManager.getNotes(),
+          maps: CampaignManager.getMaps(),
+          scrapbookItems: CampaignManager.getScrapbookItems(),
+          audioLogs: CampaignManager.getAudioLogs(),
+          characterBios: CampaignManager.getAllCharacterBios(),
+          familyRelations: CampaignManager.getAllFamilyRelations(),
+          worldLoreArticles: CampaignManager.getWorldLoreArticles(),
+        };
+
+        const res = await SupabaseSyncService.bulkUpsertCampaignData(activeCode, localData);
+        if (res.errors && res.errors.length > 0) {
+          return { success: false, error: `Sincronizzazione fallita: ${res.errors.join('; ')}` };
+        }
+
+        const nowIso = new Date().toISOString();
+        if (typeof localStorage !== 'undefined') {
+          localStorage.setItem('chronicle_last_cloud_sync_time', nowIso);
+        }
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(
+            new CustomEvent('chronicle_cloud_sync_status', { detail: { status: 'synced', time: nowIso } })
+          );
+        }
+        return { success: true };
+      }
+
+      return { success: true };
     } catch (e: any) {
       console.error('Error during manual Cloud Sync:', e);
       return { success: false, error: e?.message || 'Impossibile completare la sincronizzazione Cloud.' };
@@ -1505,48 +1408,7 @@ export class CloudSyncService {
   }
 
   private static async uploadLocalToCloud(force: boolean = false): Promise<{ success: boolean; error?: string }> {
-    if (isApplyingRemoteUpdate || (!force && checkIsQuotaExhausted())) {
-      return { success: false, error: 'Sincronizzazione in corso o quota Firestore temporaneamente limitata.' };
-    }
-
-    if (!force && !this.isCampaignHydrated) {
-      console.warn('[CloudSync] Upload blocked: campaign hydration in progress.');
-      return { success: false, error: 'Sincronizzazione iniziale in corso...' };
-    }
-
-    if (isUploadInFlight) {
-      hasQueuedUpload = true;
-      return { success: true };
-    }
-
-    isUploadInFlight = true;
-
-    try {
-      const activeCode = CampaignManager.getActiveCampaignCode();
-      if (!activeCode || activeCode === 'default_campaign' || activeCode === '__NONE__') {
-        return { success: false, error: 'Nessuna campagna attiva valida.' };
-      }
-
-      const nowIso = new Date().toISOString();
-      if (typeof localStorage !== 'undefined') {
-        localStorage.setItem('hasPendingUpload', 'false');
-        localStorage.setItem('chronicle_last_cloud_sync_time', nowIso);
-      }
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('chronicle_cloud_sync_status', { detail: { status: 'synced', time: nowIso } }));
-      }
-      return { success: true };
-    } catch (e: any) {
-      return { success: false, error: e?.message || 'Errore durante la sincronizzazione.' };
-    } finally {
-      isUploadInFlight = false;
-      if (hasQueuedUpload) {
-        hasQueuedUpload = false;
-        setTimeout(() => {
-          this.uploadLocalToCloud();
-        }, 500);
-      }
-    }
+    return this.syncNow(force);
   }
 
   private static async _legacyUnusedUpload() {

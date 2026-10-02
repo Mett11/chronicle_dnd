@@ -217,9 +217,36 @@ export class SupabaseSyncService {
       const sessionsMeta = dossier.sessionsMeta || {};
       const mapFolders = Array.isArray(dossier.mapFolders) ? dossier.mapFolders : [];
 
-      const chapters: CampaignChapter[] = (chaptersRes.data || []).map((row) =>
+      let chapters: CampaignChapter[] = (chaptersRes.data || []).map((row) =>
         chapterRowToModel(row, chaptersMeta)
       );
+
+      // Merge with chapters stored directly in campaign dossier (full dual-layer persistence)
+      if (Array.isArray(dossier.chapters) && dossier.chapters.length > 0) {
+        const existingMap = new Map(chapters.map((c) => [c.id, c]));
+        dossier.chapters.forEach((dc: any) => {
+          if (!dc || !dc.id) return;
+          const cover = dc.coverImageUrl || chaptersMeta[dc.id]?.coverImageUrl || '';
+          if (!existingMap.has(dc.id)) {
+            const newChap: CampaignChapter = {
+              id: dc.id,
+              name: dc.name || dc.title || 'Nuovo Capitolo',
+              description: dc.description || dc.synopsis || '',
+              color: dc.color || '#6366f1',
+              coverImageUrl: cover,
+              order: Number(dc.order ?? dc.order_index ?? 1),
+              createdAt: dc.createdAt || dc.created_at || new Date().toISOString(),
+            };
+            existingMap.set(dc.id, newChap);
+          } else {
+            const existing = existingMap.get(dc.id)!;
+            if (!existing.coverImageUrl && cover) {
+              existing.coverImageUrl = cover;
+            }
+          }
+        });
+        chapters = Array.from(existingMap.values()).sort((a, b) => (a.order || 0) - (b.order || 0));
+      }
 
       const sessions: Session[] = (sessionsRes.data || []).map((row) =>
         sessionRowToModel(row, sessionsMeta)
@@ -564,27 +591,72 @@ export class SupabaseSyncService {
   }
 
   /**
-   * Save or update base campaign info
+   * Safe partial update for campaign metadata.
+   * Only updates explicitly passed fields, NEVER wiping out calendar, ai_config, active_players or dossier.
+   */
+  static async updateCampaignMetadata(campaignCode: string, updates: Record<string, any>): Promise<boolean> {
+    if (!isSupabaseConfigured() || !campaignCode) return false;
+
+    try {
+      const code = campaignCode.trim();
+      const cleanCode = code.toUpperCase();
+      const patch: Record<string, any> = { updated_at: new Date().toISOString() };
+
+      if (updates.title !== undefined) patch.title = updates.title;
+      if (updates.subtitle !== undefined) patch.subtitle = updates.subtitle;
+      if (updates.description !== undefined) patch.description = updates.description;
+      if (updates.system !== undefined) patch.system = updates.system;
+      if (updates.dmId !== undefined) patch.dm_id = updates.dmId;
+      if (updates.calendarSystem !== undefined) patch.calendar_system = updates.calendarSystem;
+      if (updates.aiConfig !== undefined) patch.ai_config = updates.aiConfig;
+      if (updates.activePlayers !== undefined) patch.active_players = updates.activePlayers;
+
+      const { error } = await supabase
+        .from('campaigns')
+        .update(patch)
+        .or(`code.eq.${cleanCode},code.eq.${code}`);
+
+      if (error) {
+        return handleSupabaseError('Error updating campaign metadata', error);
+      }
+      return true;
+    } catch (err) {
+      return handleSupabaseError('Failed to update campaign metadata', err);
+    }
+  }
+
+  /**
+   * Save or create campaign info with full field preservation
    */
   static async saveCampaign(campaignCode: string, data: Record<string, any>): Promise<boolean> {
     if (!isSupabaseConfigured() || !campaignCode) return false;
 
     try {
       const code = campaignCode.trim();
-      const existingDossier = data.dossier || {};
+      const cleanCode = code.toUpperCase();
+
+      // Read existing campaign first to merge existing columns
+      const { data: existing } = await supabase
+        .from('campaigns')
+        .select('*')
+        .or(`code.eq.${cleanCode},code.eq.${code}`)
+        .maybeSingle();
+
+      const existingDossier = existing?.dossier || data.dossier || {};
       const payload = {
-        id: code,
-        code,
-        title: data.title || 'Nuova Campagna',
-        subtitle: data.subtitle || '',
-        description: data.description || '',
-        system: data.system || 'D&D 5e',
-        dm_id: data.dmId || '',
-        calendar_system: data.calendarSystem || {},
-        ai_config: data.aiConfig || {},
-        active_players: data.activePlayers || [],
+        id: cleanCode,
+        code: cleanCode,
+        title: data.title !== undefined ? data.title : existing?.title || 'Nuova Campagna',
+        subtitle: data.subtitle !== undefined ? data.subtitle : existing?.subtitle || '',
+        description: data.description !== undefined ? data.description : existing?.description || '',
+        system: data.system !== undefined ? data.system : existing?.system || 'D&D 5e',
+        dm_id: data.dmId !== undefined ? data.dmId : existing?.dm_id || '',
+        calendar_system: data.calendarSystem !== undefined ? data.calendarSystem : existing?.calendar_system || {},
+        ai_config: data.aiConfig !== undefined ? data.aiConfig : existing?.ai_config || {},
+        active_players: data.activePlayers !== undefined ? data.activePlayers : existing?.active_players || [],
         dossier: {
           ...existingDossier,
+          ...(data.dossier || {}),
           characterBios: data.characterBios || existingDossier.characterBios || [],
           familyRelations: data.familyRelations || existingDossier.familyRelations || [],
           worldLoreArticles: data.worldLoreArticles || existingDossier.worldLoreArticles || [],
@@ -823,37 +895,109 @@ export class SupabaseSyncService {
 
     try {
       const code = campaignCode.trim();
-      const payload = chapterModelToRow(chapter, code);
+      const cleanCode = code.toUpperCase();
+      const payload = chapterModelToRow(chapter, cleanCode);
 
       const { error } = await supabase.from('chapters').upsert(payload, { onConflict: 'id' });
-      if (error) return handleSupabaseError('Error saving chapter', error);
-
-      // Save coverImageUrl into campaign dossier as redundancy
-      if (chapter.coverImageUrl !== undefined) {
-        this.saveChapterCover(code, chapter.id, chapter.coverImageUrl || '').catch(() => {});
+      if (error) {
+        console.warn('[Supabase] Warning upserting to chapters table:', error.message);
       }
 
-      return !error;
+      // Dual-layer persistence: also store directly in campaign dossier.chapters & chaptersMeta
+      try {
+        const { data: camp } = await supabase
+          .from('campaigns')
+          .select('dossier')
+          .or(`code.eq.${cleanCode},code.eq.${code}`)
+          .maybeSingle();
+
+        if (camp) {
+          const dossier = camp.dossier || {};
+          const existingChapters: any[] = Array.isArray(dossier.chapters) ? [...dossier.chapters] : [];
+          const idx = existingChapters.findIndex((c) => c && c.id === chapter.id);
+          const sanitizedChap = {
+            id: chapter.id,
+            name: chapter.name || 'Capitolo',
+            description: chapter.description || '',
+            color: chapter.color || '#6366f1',
+            coverImageUrl: chapter.coverImageUrl || '',
+            order: chapter.order || 1,
+            createdAt: chapter.createdAt || new Date().toISOString(),
+          };
+
+          if (idx !== -1) {
+            existingChapters[idx] = { ...existingChapters[idx], ...sanitizedChap };
+          } else {
+            existingChapters.push(sanitizedChap);
+          }
+
+          const chaptersMeta = dossier.chaptersMeta || {};
+          if (chapter.coverImageUrl !== undefined) {
+            chaptersMeta[chapter.id] = {
+              ...(chaptersMeta[chapter.id] || {}),
+              coverImageUrl: chapter.coverImageUrl,
+            };
+          }
+
+          await supabase
+            .from('campaigns')
+            .update({
+              dossier: { ...dossier, chapters: existingChapters, chaptersMeta },
+              updated_at: new Date().toISOString(),
+            })
+            .or(`code.eq.${cleanCode},code.eq.${code}`);
+        }
+      } catch (dossierErr) {
+        console.warn('[Supabase] Dossier chapter update warning:', dossierErr);
+      }
+
+      return true;
     } catch (err) {
       return handleSupabaseError('Failed to save chapter', err);
     }
   }
 
   /**
-   * Persists chapter cover image URL to campaign dossier
+   * Persists chapter cover image URL to campaign dossier and chapters table
    */
   static async saveChapterCover(campaignCode: string, chapterId: string, coverImageUrl: string): Promise<boolean> {
     if (!isSupabaseConfigured() || !campaignCode || !chapterId) return false;
     try {
       const code = campaignCode.trim();
-      const { data: camp } = await supabase.from('campaigns').select('dossier').eq('code', code).maybeSingle();
+      const cleanCode = code.toUpperCase();
+
+      // 1. Update chapters table
+      supabase
+        .from('chapters')
+        .update({ cover_image_url: coverImageUrl, updated_at: new Date().toISOString() })
+        .eq('id', chapterId)
+        .then(() => {}, () => {});
+
+      // 2. Update campaign dossier
+      const { data: camp } = await supabase
+        .from('campaigns')
+        .select('dossier')
+        .or(`code.eq.${cleanCode},code.eq.${code}`)
+        .maybeSingle();
+
       const dossier = camp?.dossier || {};
       const chaptersMeta = dossier.chaptersMeta || {};
       chaptersMeta[chapterId] = { ...(chaptersMeta[chapterId] || {}), coverImageUrl };
-      await supabase.from('campaigns').update({
-        dossier: { ...dossier, chaptersMeta },
-        updated_at: new Date().toISOString(),
-      }).eq('code', code);
+
+      if (Array.isArray(dossier.chapters)) {
+        dossier.chapters = dossier.chapters.map((c: any) =>
+          c && c.id === chapterId ? { ...c, coverImageUrl } : c
+        );
+      }
+
+      await supabase
+        .from('campaigns')
+        .update({
+          dossier: { ...dossier, chaptersMeta },
+          updated_at: new Date().toISOString(),
+        })
+        .or(`code.eq.${cleanCode},code.eq.${code}`);
+
       return true;
     } catch (err) {
       return handleSupabaseError('Failed to save chapter cover', err);
@@ -2115,6 +2259,7 @@ export class SupabaseSyncService {
     campaignCode: string,
     callbacks: {
       onSessionsChange?: (payload: any) => void;
+      onChaptersChange?: (payload: any) => void;
       onNotesChange?: (payload: any) => void;
       onEntitiesChange?: (payload: any) => void;
       onBiosChange?: (payload: any) => void;
@@ -2128,6 +2273,7 @@ export class SupabaseSyncService {
     }
 
     const code = campaignCode.trim();
+    const cleanCode = code.toUpperCase();
 
     // Clean up previous channel if any
     if (this.activeRealtimeChannel) {
@@ -2138,12 +2284,19 @@ export class SupabaseSyncService {
     }
 
     try {
-      const channel = supabase.channel(`chronicle_live_${code}`)
+      const channel = supabase.channel(`chronicle_live_${cleanCode}`)
         .on(
           'postgres_changes',
-          { event: '*', schema: 'public', table: 'sessions', filter: `campaign_code=eq.${code}` },
+          { event: '*', schema: 'public', table: 'sessions', filter: `campaign_code=eq.${cleanCode}` },
           (payload) => {
             if (callbacks.onSessionsChange) callbacks.onSessionsChange(payload);
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'chapters', filter: `campaign_code=eq.${cleanCode}` },
+          (payload) => {
+            if (callbacks.onChaptersChange) callbacks.onChaptersChange(payload);
           }
         )
         .on(

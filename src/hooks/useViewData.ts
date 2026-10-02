@@ -43,7 +43,7 @@ export function useCalendarData() {
           CampaignManager.saveCalendarLocalOnly(fresh.calendar);
           setCalendar(fresh.calendar);
         }
-        if (fresh.sessions && fresh.sessions.length > 0) {
+        if (Array.isArray(fresh.sessions)) {
           CampaignManager.saveSessionsLocalOnly(fresh.sessions);
           setSessions(fresh.sessions);
         }
@@ -111,11 +111,11 @@ export function useSessionsData() {
     try {
       const fresh = await SupabaseSyncService.fetchSessionsOnly(activeCode);
       if (fresh) {
-        if (fresh.chapters && fresh.chapters.length > 0) {
+        if (Array.isArray(fresh.chapters)) {
           CampaignManager.saveChaptersLocalOnly(fresh.chapters);
           setChapters(fresh.chapters);
         }
-        if (fresh.sessions && fresh.sessions.length > 0) {
+        if (Array.isArray(fresh.sessions)) {
           CampaignManager.saveSessionsLocalOnly(fresh.sessions);
           setSessions(fresh.sessions);
         }
@@ -180,7 +180,7 @@ export function useNotesData() {
 
     try {
       const freshNotes = await SupabaseSyncService.fetchNotesOnly(activeCode);
-      if (freshNotes && freshNotes.length > 0) {
+      if (Array.isArray(freshNotes)) {
         CampaignManager.saveNotesLocalOnly(freshNotes);
         setNotes(freshNotes);
       }

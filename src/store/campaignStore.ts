@@ -97,20 +97,20 @@ function invalidateCacheKey(key: string) {
 }
 
 // Debounced and deduped event dispatcher to eliminate cascading re-render loops
-const pendingEvents = new Set<string>();
+const pendingEvents = new Map<string, any>();
 let dispatchTimer: any = null;
 
 export function emitChronicleEvent(eventName: string, detail?: any) {
   if (typeof window === 'undefined') return;
-  pendingEvents.add(eventName);
+  pendingEvents.set(eventName, detail);
   if (!dispatchTimer) {
     dispatchTimer = setTimeout(() => {
       dispatchTimer = null;
-      const eventsToDispatch = Array.from(pendingEvents);
+      const eventsToDispatch = Array.from(pendingEvents.entries());
       pendingEvents.clear();
-      eventsToDispatch.forEach((evt) => {
+      eventsToDispatch.forEach(([evt, evtDetail]) => {
         try {
-          window.dispatchEvent(new CustomEvent(evt, { detail }));
+          window.dispatchEvent(new CustomEvent(evt, { detail: evtDetail }));
         } catch {}
       });
     }, 25);
@@ -724,12 +724,7 @@ export class CampaignManager {
   }
 
   static saveCampaigns(campaigns: CampaignMeta[]) {
-    setCached("chronicle_global_campaigns", campaigns);
-    localStorage.setItem(
-      "chronicle_global_campaigns",
-      JSON.stringify(campaigns),
-    );
-    CloudSyncService.syncCampaignsToCloud(campaigns);
+    this.saveCampaignsLocalOnly(campaigns);
   }
 
   static saveCampaignsLocalOnly(campaigns: CampaignMeta[]) {
@@ -749,8 +744,15 @@ export class CampaignManager {
     const index = campaigns.findIndex((c) => c.code === cleanCode);
     if (index === -1) return null;
     campaigns[index] = { ...campaigns[index], ...updates };
-    CampaignManager.saveCampaigns(campaigns);
-    CloudSyncService.triggerCloudSave();
+    CampaignManager.saveCampaignsLocalOnly(campaigns);
+    if (isSupabaseConfigured()) {
+      SupabaseSyncService.updateCampaignMetadata(cleanCode, {
+        title: updates.name,
+        subtitle: updates.subtitle,
+        description: updates.description,
+        dmId: updates.dmId,
+      }).catch(() => {});
+    }
     if (typeof window !== "undefined") {
       window.dispatchEvent(
         new CustomEvent("chronicle_campaign_updated", {
@@ -912,7 +914,13 @@ export class CampaignManager {
       dmEmail: dmAccount?.email,
     };
     campaigns.push(newCamp);
-    this.saveCampaigns(campaigns);
+    this.saveCampaignsLocalOnly(campaigns);
+    if (isSupabaseConfigured()) {
+      SupabaseSyncService.saveCampaign(cleanCode, {
+        title: cleanName,
+        dmId: dmAccount?.id || '',
+      }).catch(() => {});
+    }
 
     if (dmAccount) {
       this.makeDmOfCampaign(dmAccount.id, cleanCode);
@@ -2445,17 +2453,7 @@ export class CampaignManager {
   }
 
   static saveNotes(notes: Note[]) {
-    const key = this.getStorageKey("notes");
-    const sanitized = sanitizeArray<Note>(notes);
-    setCached(key, sanitized);
-    safeLocalStorageSetItem(key, JSON.stringify(sanitized));
-    CloudSyncService.triggerCloudSave();
-    if (isSupabaseConfigured()) {
-      const code = this.getActiveCampaignCode() || 'default';
-      sanitized.forEach((n) => SupabaseSyncService.saveNote(code, n));
-    }
-    emitChronicleEvent('chronicle_notes_updated', { notes: sanitized });
-    emitChronicleEvent('chronicle_data_updated');
+    this.saveNotesLocalOnly(notes);
   }
 
   static saveNotesLocalOnly(notes: Note[]) {
@@ -2497,7 +2495,11 @@ export class CampaignManager {
       tags: note.tags || [],
     };
     const updated = [newNote, ...notes];
-    this.saveNotes(updated);
+    this.saveNotesLocalOnly(updated);
+    if (isSupabaseConfigured()) {
+      const code = this.getActiveCampaignCode() || 'default';
+      SupabaseSyncService.saveNote(code, newNote);
+    }
 
     // Auto-generate notification for group notes
     if (!newNote.dmOnly && newNote.visibility === 'group') {
@@ -2543,7 +2545,11 @@ export class CampaignManager {
       _updatedAt: new Date().toISOString(),
     };
     notes[idx] = updatedNote;
-    this.saveNotes(notes);
+    this.saveNotesLocalOnly(notes);
+    if (isSupabaseConfigured()) {
+      const code = this.getActiveCampaignCode() || 'default';
+      SupabaseSyncService.saveNote(code, updatedNote);
+    }
     return updatedNote;
   }
 
@@ -2554,7 +2560,7 @@ export class CampaignManager {
       FirebaseStorageService.deleteMultipleMedia(note.images).catch(() => {});
     }
     const notes = this.getNotes().filter((n) => n._id !== id);
-    this.saveNotes(notes);
+    this.saveNotesLocalOnly(notes);
     if (isSupabaseConfigured()) {
       const code = this.getActiveCampaignCode() || 'default';
       SupabaseSyncService.deleteNote(id, code);
@@ -2562,10 +2568,16 @@ export class CampaignManager {
   }
 
   static togglePinNote(id: string) {
-    const notes = this.getNotes().map((n) =>
-      n._id === id ? { ...n, pinned: !n.pinned, _updatedAt: new Date().toISOString() } : n,
-    );
-    this.saveNotes(notes);
+    const notes = this.getNotes();
+    const idx = notes.findIndex((n) => n._id === id);
+    if (idx === -1) return;
+    const updatedNote = { ...notes[idx], pinned: !notes[idx].pinned, _updatedAt: new Date().toISOString() };
+    notes[idx] = updatedNote;
+    this.saveNotesLocalOnly(notes);
+    if (isSupabaseConfigured()) {
+      const code = this.getActiveCampaignCode() || 'default';
+      SupabaseSyncService.saveNote(code, updatedNote);
+    }
   }
 
   static replyToDmClarification(
@@ -3109,17 +3121,7 @@ export class CampaignManager {
   }
 
   static saveSessions(sessions: Session[]) {
-    const key = this.getStorageKey("sessions");
-    const sanitized = sanitizeArray<Session>(sessions);
-    setCached(key, sanitized);
-    safeLocalStorageSetItem(key, JSON.stringify(sanitized));
-    if (isSupabaseConfigured()) {
-      const code = this.getActiveCampaignCode() || 'default';
-      sanitized.forEach((s) => SupabaseSyncService.saveSession(code, s));
-    }
-    emitChronicleEvent("chronicle_sessions_updated", { sessions: sanitized });
-    emitChronicleEvent("chronicle_data_updated");
-    CloudSyncService.triggerCloudSave();
+    this.saveSessionsLocalOnly(sessions);
   }
 
   static saveSessionsLocalOnly(sessions: Session[]) {
@@ -3209,7 +3211,11 @@ export class CampaignManager {
     const updated = [newSession, ...sessions].sort(
       (a, b) => b.number - a.number,
     );
-    this.saveSessions(updated);
+    this.saveSessionsLocalOnly(updated);
+    if (isSupabaseConfigured()) {
+      const code = this.getActiveCampaignCode() || 'default';
+      SupabaseSyncService.saveSession(code, newSession);
+    }
 
     this.addCampaignNotification({
       category: 'session',
@@ -3270,7 +3276,11 @@ export class CampaignManager {
     }
 
     sessions[index] = updatedSession;
-    this.saveSessions(sessions);
+    this.saveSessionsLocalOnly(sessions);
+    if (isSupabaseConfigured()) {
+      const code = this.getActiveCampaignCode() || 'default';
+      SupabaseSyncService.saveSession(code, updatedSession);
+    }
     return sessions[index];
   }
 
@@ -3281,7 +3291,7 @@ export class CampaignManager {
       FirebaseStorageService.deleteMultipleMedia(session.images).catch(() => {});
     }
     const sessions = this.getSessions().filter((s) => s._id !== id);
-    this.saveSessions(sessions);
+    this.saveSessionsLocalOnly(sessions);
     if (isSupabaseConfigured()) {
       const code = this.getActiveCampaignCode() || 'default';
       SupabaseSyncService.deleteSession(id, code);
@@ -3360,23 +3370,13 @@ export class CampaignManager {
   }
 
   static saveChapters(chapters: CampaignChapter[]) {
-    const key = this.getStorageKey("chapters");
-    const deduped = this.deduplicateChapters(chapters);
-    const sanitized = sanitizeArray<CampaignChapter>(deduped);
-    setCached(key, sanitized);
-    safeLocalStorageSetItem(key, JSON.stringify(sanitized));
-    if (isSupabaseConfigured()) {
-      const code = this.getActiveCampaignCode() || 'default';
-      sanitized.forEach((c) => SupabaseSyncService.saveChapter(code, c));
-    }
-    emitChronicleEvent("chronicle_chapters_updated", { chapters: sanitized });
-    emitChronicleEvent("chronicle_data_updated");
-    CloudSyncService.triggerCloudSave();
+    this.saveChaptersLocalOnly(chapters);
   }
 
   static saveChaptersLocalOnly(chapters: CampaignChapter[]) {
     const key = this.getStorageKey("chapters");
-    const sanitized = sanitizeArray<CampaignChapter>(chapters);
+    const deduped = this.deduplicateChapters(chapters);
+    const sanitized = sanitizeArray<CampaignChapter>(deduped);
     setCached(key, sanitized);
     safeLocalStorageSetItem(key, JSON.stringify(sanitized));
     emitChronicleEvent("chronicle_chapters_updated", { chapters: sanitized });
@@ -3397,7 +3397,11 @@ export class CampaignManager {
     const updated = [...chapters, newChapter].sort(
       (a, b) => (a.order || 0) - (b.order || 0),
     );
-    this.saveChapters(updated);
+    this.saveChaptersLocalOnly(updated);
+    if (isSupabaseConfigured()) {
+      const code = this.getActiveCampaignCode() || 'default';
+      SupabaseSyncService.saveChapter(code, newChapter);
+    }
     return newChapter;
   }
 
@@ -3411,7 +3415,11 @@ export class CampaignManager {
     const oldName = chapters[index].name;
     const updated = { ...chapters[index], ...updates };
     chapters[index] = updated;
-    this.saveChapters(chapters);
+    this.saveChaptersLocalOnly(chapters);
+    if (isSupabaseConfigured()) {
+      const code = this.getActiveCampaignCode() || 'default';
+      SupabaseSyncService.saveChapter(code, updated);
+    }
 
     // If chapter name changed, propagate to sessions that used old name
     if (updates.name && updates.name !== oldName) {
@@ -3425,7 +3433,7 @@ export class CampaignManager {
         return s;
       });
       if (changed) {
-        this.saveSessions(updatedSessions);
+        this.saveSessionsLocalOnly(updatedSessions);
       }
     }
 
@@ -3434,7 +3442,7 @@ export class CampaignManager {
 
   static deleteChapter(id: string) {
     const chapters = this.getChapters().filter((c) => c.id !== id);
-    this.saveChapters(chapters);
+    this.saveChaptersLocalOnly(chapters);
     if (isSupabaseConfigured()) {
       const code = this.getActiveCampaignCode() || 'default';
       SupabaseSyncService.deleteChapter(id, code);
@@ -3558,22 +3566,7 @@ export class CampaignManager {
   }
 
   static saveEntities(entities: Entity[]) {
-    const key = this.getStorageKey("entities");
-    const sanitized = sanitizeArray<Entity>(entities);
-    setCached(key, sanitized);
-    cachedEntityLookupMap = null; // Invalidate memoized lookup map
-    safeLocalStorageSetItem(key, JSON.stringify(sanitized));
-    CloudSyncService.triggerCloudSave();
-    if (isSupabaseConfigured()) {
-      const code = this.getActiveCampaignCode() || 'default';
-      if (sanitized.length === 0) {
-        SupabaseSyncService.clearAllEntities(code).catch(() => {});
-      } else {
-        sanitized.forEach((e) => SupabaseSyncService.saveEntity(code, e));
-      }
-    }
-    emitChronicleEvent('chronicle_entities_updated', { entities: sanitized });
-    emitChronicleEvent('chronicle_data_updated');
+    this.saveEntitiesLocalOnly(entities);
   }
 
   static resetCompendiumAndRelations(): void {
@@ -3739,7 +3732,11 @@ export class CampaignManager {
           : undefined,
     };
     const updated = [newEntity, ...entities];
-    this.saveEntities(updated);
+    this.saveEntitiesLocalOnly(updated);
+    if (isSupabaseConfigured()) {
+      const code = this.getActiveCampaignCode() || 'default';
+      SupabaseSyncService.saveEntity(code, newEntity);
+    }
 
     this.addCampaignNotification({
       category: 'codex',
@@ -3863,7 +3860,11 @@ export class CampaignManager {
     const oldEntity = entities[index];
     const updatedEntity = { ...oldEntity, ...updates };
     entities[index] = updatedEntity;
-    this.saveEntities(entities);
+    this.saveEntitiesLocalOnly(entities);
+    if (isSupabaseConfigured()) {
+      const code = this.getActiveCampaignCode() || 'default';
+      SupabaseSyncService.saveEntity(code, updatedEntity);
+    }
 
     // Bi-directional synchronization with Atlas
     if (updatedEntity.type === "place") {
@@ -4001,7 +4002,7 @@ export class CampaignManager {
       FirebaseStorageService.deleteMedia((entity as any).imageUrl).catch(() => {});
     }
     const entities = this.getEntities().filter((e) => e._id !== id);
-    this.saveEntities(entities);
+    this.saveEntitiesLocalOnly(entities);
     if (isSupabaseConfigured()) {
       SupabaseSyncService.deleteEntity(id);
     }
