@@ -99,6 +99,7 @@ function invalidateCacheKey(key: string) {
 /**
  * Emergency global eviction routine that strips heavy base64 images from localStorage
  * across all campaign keys to free up critical megabytes for text metadata.
+ * Note: Remote URLs (http/https) are NEVER stripped.
  */
 function runEmergencyGlobalStorageEviction(): boolean {
   if (typeof localStorage === 'undefined') return false;
@@ -129,11 +130,11 @@ function runEmergencyGlobalStorageEviction(): boolean {
               const stripped = parsed.map((item: any) => {
                 if (!item || typeof item !== 'object') return item;
                 const clone = { ...item };
-                if (clone.imageUrl && clone.imageUrl.length > 1000) clone.imageUrl = '';
-                if (clone.avatarUrl && clone.avatarUrl.length > 1000) clone.avatarUrl = '';
-                if (Array.isArray(clone.images) && clone.images.length > 0) clone.images = [];
-                if (clone.dataUrl && clone.dataUrl.length > 1000) clone.dataUrl = '';
-                if (clone.audioData && clone.audioData.length > 1000) clone.audioData = '';
+                // Only strip raw base64 data URIs that consume MBs, never remote HTTP(S) URLs
+                if (typeof clone.imageUrl === 'string' && clone.imageUrl.startsWith('data:') && clone.imageUrl.length > 10000) clone.imageUrl = '';
+                if (typeof clone.avatarUrl === 'string' && clone.avatarUrl.startsWith('data:') && clone.avatarUrl.length > 10000) clone.avatarUrl = '';
+                if (typeof clone.dataUrl === 'string' && clone.dataUrl.startsWith('data:') && clone.dataUrl.length > 10000) clone.dataUrl = '';
+                if (typeof clone.audioData === 'string' && clone.audioData.startsWith('data:') && clone.audioData.length > 10000) clone.audioData = '';
                 return clone;
               });
               localStorage.setItem(k, JSON.stringify(stripped));
@@ -2256,16 +2257,22 @@ export class CampaignManager {
       if (saved) {
         try {
           const parsed = JSON.parse(saved);
-          if (parsed && typeof parsed === "object" && Array.isArray(parsed.months) && parsed.months.length > 0) {
+          if (parsed && typeof parsed === "object") {
+            const parsedMonths = Array.isArray(parsed.months) && parsed.months.length > 0 ? parsed.months : HARPTOS_CALENDAR.months;
             cal = {
               ...HARPTOS_CALENDAR,
               ...parsed,
+              months: parsedMonths,
               currentYear: typeof parsed.currentYear === "number" ? parsed.currentYear : 1492,
               currentDay: typeof parsed.currentDay === "number" ? parsed.currentDay : 1,
               currentMonthIndex: typeof parsed.currentMonthIndex === "number" ? parsed.currentMonthIndex : 0,
             };
           }
         } catch {}
+      }
+
+      if (!cal.months || !Array.isArray(cal.months) || cal.months.length === 0) {
+        cal.months = HARPTOS_CALENDAR.months;
       }
 
       // Safely auto-reconcile with sessions by reading raw sessions directly from localStorage to avoid circular recursion
@@ -2883,6 +2890,84 @@ export class CampaignManager {
     return unreadCampaignNotifs.length + pendingClarifications;
   }
 
+  // === RECONCILIATION HELPER ===
+  static reconcileSessionsAndChapters(sessions: Session[], chapters: CampaignChapter[]): {
+    sessions: Session[];
+    chapters: CampaignChapter[];
+    hasSessionChanges: boolean;
+    hasChapterChanges: boolean;
+  } {
+    if (!Array.isArray(sessions)) sessions = [];
+    if (!Array.isArray(chapters)) chapters = [];
+
+    const norm = (str?: string) => (str || '').trim().toLowerCase();
+
+    // Map chapters by ID and by normalized name
+    const chapterById = new Map<string, CampaignChapter>();
+    const chapterByName = new Map<string, CampaignChapter>();
+
+    chapters.forEach((c) => {
+      if (!c || !c.id) return;
+      chapterById.set(c.id, c);
+      if (c.name) {
+        chapterByName.set(norm(c.name), c);
+      }
+    });
+
+    let hasSessionChanges = false;
+
+    const reconciledSessions = sessions.map((s) => {
+      if (!s) return s;
+      let matchedChapter: CampaignChapter | undefined;
+
+      // 1. Direct match by chapterId
+      if (s.chapterId && chapterById.has(s.chapterId)) {
+        matchedChapter = chapterById.get(s.chapterId);
+      }
+
+      // 2. Match by exact chapterName
+      if (!matchedChapter && s.chapterName && chapterByName.has(norm(s.chapterName))) {
+        matchedChapter = chapterByName.get(norm(s.chapterName));
+      }
+
+      // 3. Match by partial/fuzzy chapterName or prefix (e.g. "Prologo" <-> "Prologo - La Matrona Scorpiona")
+      if (!matchedChapter && s.chapterName) {
+        const sNameNorm = norm(s.chapterName);
+        for (const [cNameNorm, c] of chapterByName.entries()) {
+          if (cNameNorm.startsWith(sNameNorm) || sNameNorm.startsWith(cNameNorm) || cNameNorm.includes(sNameNorm) || sNameNorm.includes(cNameNorm)) {
+            matchedChapter = c;
+            break;
+          }
+        }
+      }
+
+      // 4. Match if only single chapter exists in campaign
+      if (!matchedChapter && chapters.length === 1 && chapters[0]) {
+        matchedChapter = chapters[0];
+      }
+
+      if (matchedChapter) {
+        if (s.chapterId !== matchedChapter.id || s.chapterName !== matchedChapter.name) {
+          hasSessionChanges = true;
+          return {
+            ...s,
+            chapterId: matchedChapter.id,
+            chapterName: matchedChapter.name,
+          };
+        }
+      }
+
+      return s;
+    });
+
+    return {
+      sessions: reconciledSessions,
+      chapters,
+      hasSessionChanges,
+      hasChapterChanges: false,
+    };
+  }
+
   // === SESSIONS & STORYLINE EVENTS ===
   static getSessions(): Session[] {
     const key = this.getStorageKey("sessions");
@@ -2896,7 +2981,7 @@ export class CampaignManager {
             const cal = this.getCalendar();
             let hasRepairs = false;
 
-            const repaired = parsed.map((s) => {
+            const dateRepaired = parsed.map((s) => {
               // If session already has both structured metadata and loreDate, keep it
               if (s.loreMonth && s.loreStartDay !== undefined && s.loreDate) {
                 return s;
@@ -2954,12 +3039,26 @@ export class CampaignManager {
               };
             });
 
-            if (hasRepairs) {
-              // Persist repair quietly
-              localStorage.setItem(key, JSON.stringify(repaired));
+            // Reconcile with chapters in-memory
+            const chaptersKey = this.getStorageKey("chapters");
+            const storedChapters = localStorage.getItem(chaptersKey);
+            let chaptersList: CampaignChapter[] = [];
+            if (storedChapters) {
+              try {
+                chaptersList = JSON.parse(storedChapters);
+              } catch {}
             }
 
-            return repaired;
+            const { sessions: reconciled, hasSessionChanges } = this.reconcileSessionsAndChapters(
+              dateRepaired,
+              chaptersList
+            );
+
+            if (hasRepairs || hasSessionChanges) {
+              localStorage.setItem(key, JSON.stringify(reconciled));
+            }
+
+            return reconciled;
           }
         } catch {}
       }
@@ -3228,12 +3327,17 @@ export class CampaignManager {
       const existingId = seenNames.get(normName);
       if (existingId && map.has(existingId)) {
         const prev = map.get(existingId)!;
+        const resolvedCover = (c.coverImageUrl && c.coverImageUrl.trim()) || (prev.coverImageUrl && prev.coverImageUrl.trim()) || "";
+        const resolvedDesc = (c.description && c.description.trim()) || (prev.description && prev.description.trim()) || "";
+        const resolvedColor = c.color || prev.color || "#D4AF37";
         map.set(existingId, {
-          ...c,
           ...prev,
-          description: prev.description || c.description || "",
-          coverImageUrl: prev.coverImageUrl || c.coverImageUrl || "",
-          color: prev.color || c.color || "#D4AF37",
+          ...c,
+          id: existingId,
+          name: c.name.trim() || prev.name.trim(),
+          description: resolvedDesc,
+          coverImageUrl: resolvedCover,
+          color: resolvedColor,
         });
       } else {
         const cleanId = c.id || "chap_" + Date.now();

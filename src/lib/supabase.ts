@@ -17,8 +17,26 @@ const getEnvVar = (name: string): string => {
 const supabaseUrl = getEnvVar('VITE_SUPABASE_URL');
 const supabaseAnonKey = getEnvVar('VITE_SUPABASE_ANON_KEY');
 
+let supabaseOfflineUntil = 0;
+
+export const markSupabaseOffline = (durationMs = 60000) => {
+  supabaseOfflineUntil = Date.now() + durationMs;
+};
+
+export const resetSupabaseOffline = () => {
+  supabaseOfflineUntil = 0;
+};
+
 export const isSupabaseConfigured = (): boolean => {
-  return Boolean(supabaseUrl && supabaseAnonKey && supabaseUrl.startsWith('http'));
+  if (Date.now() < supabaseOfflineUntil) return false;
+  return Boolean(
+    supabaseUrl &&
+    supabaseAnonKey &&
+    supabaseUrl.startsWith('http') &&
+    !supabaseUrl.includes('placeholder') &&
+    !supabaseUrl.includes('your-project') &&
+    !supabaseAnonKey.includes('placeholder')
+  );
 };
 
 // Create client or fallback dummy client if credentials are not yet set

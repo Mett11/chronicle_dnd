@@ -48,11 +48,13 @@ import { NoteModal } from '../components/NoteModal';
 import { QuestModal } from '../components/QuestModal';
 import { motion, AnimatePresence } from 'framer-motion';
 import { extractTextFromContent } from '../lib/sanitize';
+import { useNotesData } from '../hooks/useViewData';
 
 type MainTab = 'notes' | 'session' | 'quests';
 
 export function Home() {
   const { player, allPlayers } = useAuth();
+  const { refresh: refreshNotesData } = useNotesData();
   const [searchParams] = useSearchParams();
   const selectParam = searchParams.get('select');
 

@@ -400,21 +400,31 @@ export class CloudSyncService {
 
       if (existingCanonicalId && chapterMap.has(existingCanonicalId)) {
         const existing = chapterMap.get(existingCanonicalId)!;
+        const resolvedCover = (chap.coverImageUrl && chap.coverImageUrl.trim()) || (existing.coverImageUrl && existing.coverImageUrl.trim()) || "";
+        const resolvedDesc = (chap.description && chap.description.trim()) || (existing.description && existing.description.trim()) || "";
+        const resolvedColor = chap.color || existing.color || "#D4AF37";
         chapterMap.set(existingCanonicalId, {
-          ...chap,
           ...existing,
-          description: existing.description || chap.description || "",
-          coverImageUrl: existing.coverImageUrl || chap.coverImageUrl || "",
-          color: existing.color || chap.color || "#D4AF37",
+          ...chap,
+          id: existingCanonicalId,
+          name: chap.name.trim() || existing.name.trim(),
+          description: resolvedDesc,
+          coverImageUrl: resolvedCover,
+          color: resolvedColor,
         });
       } else if (chap.id && chapterMap.has(chap.id)) {
         const existing = chapterMap.get(chap.id)!;
+        const resolvedCover = (chap.coverImageUrl && chap.coverImageUrl.trim()) || (existing.coverImageUrl && existing.coverImageUrl.trim()) || "";
+        const resolvedDesc = (chap.description && chap.description.trim()) || (existing.description && existing.description.trim()) || "";
+        const resolvedColor = chap.color || existing.color || "#D4AF37";
         chapterMap.set(chap.id, {
-          ...chap,
           ...existing,
-          description: existing.description || chap.description || "",
-          coverImageUrl: existing.coverImageUrl || chap.coverImageUrl || "",
-          color: existing.color || chap.color || "#D4AF37",
+          ...chap,
+          id: chap.id,
+          name: chap.name.trim() || existing.name.trim(),
+          description: resolvedDesc,
+          coverImageUrl: resolvedCover,
+          color: resolvedColor,
         });
         nameToCanonicalIdMap.set(normName, chap.id);
       } else {

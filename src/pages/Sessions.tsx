@@ -46,6 +46,7 @@ import {
   Brain,
   MoreVertical,
   SlidersHorizontal,
+  Maximize2,
 } from 'lucide-react';
 import { Link, useSearchParams, useParams } from 'react-router-dom';
 import { LoreDatePicker } from '../components/LoreDatePicker';
@@ -1031,33 +1032,63 @@ export function Sessions() {
 
                 {/* Session Manuscript Continuous Reading View */}
                 <div className="flex-1 overflow-y-auto custom-scrollbar w-full mx-auto p-4 sm:p-6 md:p-8 max-w-3xl space-y-6">
-                  {/* Chapter Cover Artwork Banner */}
+                  {/* Session & Chapter Hero Artwork Banner */}
                   {(() => {
                     const currentChapter = selectedSession.chapterId
                       ? chapters.find((c) => c.id === selectedSession.chapterId)
                       : (selectedSession.chapterName ? chapters.find((c) => c.name === selectedSession.chapterName) : activeChapterObj);
-                    if (!currentChapter?.coverImageUrl) return null;
+
+                    const sessionCover =
+                      (typeof selectedSession.coverImage === 'string' ? selectedSession.coverImage : selectedSession.coverImage?.url) ||
+                      (selectedSession.images && selectedSession.images.length > 0 ? selectedSession.images[0] : null);
+
+                    const bannerUrl = sessionCover || currentChapter?.coverImageUrl;
+                    if (!bannerUrl) return null;
 
                     return (
-                      <div className="relative w-full h-32 sm:h-44 md:h-52 rounded-xl overflow-hidden mb-5 sm:mb-6 border border-surface-2 shadow-lg group">
+                      <div
+                        onClick={() => setActiveLightboxImg(bannerUrl)}
+                        className="relative w-full h-36 sm:h-52 md:h-64 rounded-xl overflow-hidden mb-5 sm:mb-6 border border-surface-2 shadow-lg group cursor-pointer"
+                        title="Clicca per ingrandire la copertina"
+                      >
                         <img
-                          src={currentChapter.coverImageUrl}
-                          alt={currentChapter.name}
+                          src={bannerUrl}
+                          alt={selectedSession.title}
                           className="w-full h-full object-cover object-center group-hover:scale-102 transition-transform duration-700"
                           referrerPolicy="no-referrer"
                         />
-                        <div className="absolute inset-0 bg-gradient-to-t from-surface-0/90 via-surface-0/30 to-transparent" />
-                        <div className="absolute bottom-2.5 left-2.5 sm:bottom-4 sm:left-4 right-2.5 sm:right-4 flex items-center justify-between text-xs font-mono text-white/90 drop-shadow-md">
-                          <span className="flex items-center gap-2 px-2.5 py-1 rounded bg-black/70 backdrop-blur-xs border border-white/10">
-                            <span
-                              className="w-2 h-2 rounded-full shadow-xs"
-                              style={{ backgroundColor: currentChapter.color || '#6366f1' }}
-                            />
-                            <span className="font-serif font-bold text-xs sm:text-sm tracking-wide text-white">
-                              {currentChapter.name}
-                            </span>
+                        <div className="absolute inset-0 bg-gradient-to-t from-surface-0/90 via-surface-0/30 to-transparent pointer-events-none" />
+
+                        {/* Top action badge */}
+                        <div className="absolute top-3 right-3 flex items-center gap-1.5 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <span className="p-1.5 rounded-[2px] bg-black/80 text-white backdrop-blur-md text-[10px] font-mono border border-white/10 flex items-center gap-1">
+                            <Maximize2 size={12} />
+                            <span>Ingrandisci</span>
                           </span>
-                          {currentChapter.description && (
+                        </div>
+
+                        {/* Bottom Tag Strip */}
+                        <div className="absolute bottom-2.5 left-2.5 sm:bottom-4 sm:left-4 right-2.5 sm:right-4 flex items-center justify-between text-xs font-mono text-white/90 drop-shadow-md pointer-events-none">
+                          <div className="flex items-center gap-2">
+                            {currentChapter && (
+                              <span className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-black/75 backdrop-blur-xs border border-white/10">
+                                <span
+                                  className="w-2 h-2 rounded-full shadow-xs"
+                                  style={{ backgroundColor: currentChapter.color || '#6366f1' }}
+                                />
+                                <span className="font-serif font-bold text-xs sm:text-sm tracking-wide text-white">
+                                  {currentChapter.name}
+                                </span>
+                              </span>
+                            )}
+                            {sessionCover && (
+                              <span className="px-2 py-1 rounded bg-primary/80 backdrop-blur-xs text-[10px] font-mono font-semibold text-white">
+                                Artwork Sessione
+                              </span>
+                            )}
+                          </div>
+
+                          {currentChapter?.description && (
                             <span className="text-[11px] text-white/80 italic max-w-xs truncate hidden sm:inline drop-shadow">
                               {currentChapter.description}
                             </span>

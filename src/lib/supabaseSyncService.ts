@@ -1,4 +1,4 @@
-import { supabase, isSupabaseConfigured } from './supabase';
+import { supabase, isSupabaseConfigured, markSupabaseOffline } from './supabase';
 import {
   Session,
   CampaignChapter,
@@ -8,6 +8,28 @@ import {
   ScrapbookItem,
   AudioLog,
 } from '../types';
+
+/**
+ * Graceful error handler that avoids polluting console.error when Supabase is offline or unreachable.
+ * Automatically activates circuit-breaker backoff.
+ */
+function handleSupabaseError(context: string, err: any): boolean {
+  if (!err) return false;
+  const msg = (err.message || String(err)).toLowerCase();
+  if (
+    msg.includes('failed to fetch') ||
+    msg.includes('network') ||
+    msg.includes('load failed') ||
+    msg.includes('typeerror: failed to fetch') ||
+    msg.includes('abort')
+  ) {
+    markSupabaseOffline(60000);
+    console.warn(`[Supabase Offline] ${context}: Servizio remoto temporaneamente non raggiungibile, operazione salvata in locale.`);
+    return false;
+  }
+  console.warn(`[Supabase] ${context}:`, err.message || err);
+  return false;
+}
 
 /**
  * Traverses any nested structure and replaces large base64 strings/images (>100KB)
@@ -202,12 +224,16 @@ export class SupabaseSyncService {
           ? meta.images
           : (Array.isArray((row as any).images) ? (row as any).images : []);
 
+        const resolvedChapId = row.chapter_id || meta.chapterId || undefined;
+        const resolvedChapName = meta.chapterName || undefined;
+
         return {
           _id: row.id,
           number: Number(row.number) || 1,
           title: row.title || `Sessione ${row.number || 1}`,
           date: row.date_str || new Date().toISOString().split('T')[0],
-          chapterId: row.chapter_id || undefined,
+          chapterId: resolvedChapId,
+          chapterName: resolvedChapName,
           loreDate: parsedLoreDate,
           events: Array.isArray(row.plot_events) ? row.plot_events : [],
           recap: recapData,
@@ -224,6 +250,28 @@ export class SupabaseSyncService {
           attendees: Array.isArray(meta.attendees) ? meta.attendees : [],
           tags: cleanTags,
         };
+      });
+
+      // Auto-reconcile sessions with chapters
+      const chapById = new Map(chapters.map((c) => [c.id, c]));
+      const chapByName = new Map(chapters.map((c) => [(c.name || '').trim().toLowerCase(), c]));
+      sessions.forEach((s) => {
+        if (s.chapterId && chapById.has(s.chapterId)) {
+          s.chapterName = chapById.get(s.chapterId)!.name;
+        } else if (s.chapterName) {
+          const sNorm = (s.chapterName || '').trim().toLowerCase();
+          const match = chapByName.get(sNorm) || Array.from(chapByName.values()).find((c) => {
+            const cNorm = (c.name || '').trim().toLowerCase();
+            return cNorm.includes(sNorm) || sNorm.includes(cNorm);
+          });
+          if (match) {
+            s.chapterId = match.id;
+            s.chapterName = match.name;
+          }
+        } else if (chapters.length === 1 && chapters[0]) {
+          s.chapterId = chapters[0].id;
+          s.chapterName = chapters[0].name;
+        }
       });
 
       const entities: Entity[] = (entitiesRes.data || []).map((row) => {
@@ -440,7 +488,175 @@ export class SupabaseSyncService {
         audioLogs,
       };
     } catch (err) {
-      console.error('[Supabase] Failed to fetch campaign data:', err);
+      handleSupabaseError('Failed to fetch campaign data', err);
+      return null;
+    }
+  }
+
+  /**
+   * Granular On-Demand Fetch: Calendar & current storyline dates
+   */
+  static async fetchCalendarOnly(campaignCode: string): Promise<{ calendar?: any; sessions?: Session[] } | null> {
+    if (!isSupabaseConfigured() || !campaignCode) return null;
+    try {
+      const cleanCode = campaignCode.trim().toUpperCase();
+      const [campRes, sessionsRes] = await Promise.all([
+        supabase.from('campaigns').select('calendar_system,dossier').or(`code.eq.${cleanCode},code.eq.${campaignCode.trim()}`).maybeSingle(),
+        supabase.from('sessions').select('*').or(`campaign_code.eq.${cleanCode},campaign_code.eq.${campaignCode.trim()}`).order('number', { ascending: true }),
+      ]);
+
+      const campRow: any = campRes.data || {};
+      const cal = campRow.calendar_system || campRow.dossier?.calendar || null;
+      const sessions = (sessionsRes.data || []).map((row: any) => ({
+        _id: row.id,
+        number: Number(row.number) || 1,
+        title: row.title || `Sessione ${row.number || 1}`,
+        date: row.date_str || new Date().toISOString().split('T')[0],
+        loreDate: typeof row.calendar_date === 'string' ? row.calendar_date : undefined,
+        events: Array.isArray(row.plot_events) ? row.plot_events : [],
+        recap: row.recap || row.summary || [],
+      })) as Session[];
+
+      return { calendar: cal, sessions };
+    } catch (e) {
+      console.warn('[Supabase] fetchCalendarOnly error:', e);
+      return null;
+    }
+  }
+
+  /**
+   * Granular On-Demand Fetch: Sessions and Chapters
+   */
+  static async fetchSessionsOnly(campaignCode: string): Promise<{ sessions: Session[]; chapters: CampaignChapter[] } | null> {
+    if (!isSupabaseConfigured() || !campaignCode) return null;
+    try {
+      const cleanCode = campaignCode.trim().toUpperCase();
+      const [campRes, sessionsRes, chaptersRes] = await Promise.all([
+        supabase.from('campaigns').select('dossier').or(`code.eq.${cleanCode},code.eq.${campaignCode.trim()}`).maybeSingle(),
+        supabase.from('sessions').select('*').or(`campaign_code.eq.${cleanCode},campaign_code.eq.${campaignCode.trim()}`).order('number', { ascending: true }),
+        supabase.from('chapters').select('*').or(`campaign_code.eq.${cleanCode},campaign_code.eq.${campaignCode.trim()}`).order('order_index', { ascending: true }),
+      ]);
+
+      const dossier = campRes.data?.dossier || {};
+      const chaptersMeta = dossier.chaptersMeta || {};
+      const sessionsMeta = dossier.sessionsMeta || {};
+
+      const chapters: CampaignChapter[] = (chaptersRes.data || []).map((row: any) => {
+        const title = row.title || 'Capitolo';
+        const metaCover = chaptersMeta[row.id]?.coverImageUrl || chaptersMeta[title]?.coverImageUrl;
+        return {
+          id: row.id,
+          name: title,
+          description: row.synopsis || '',
+          order: row.order_index ?? row.number ?? 0,
+          coverImageUrl: metaCover || (row as any).cover_image_url || undefined,
+        };
+      });
+
+      const sessions: Session[] = (sessionsRes.data || []).map((row: any) => {
+        let meta: any = sessionsMeta[row.id] || {};
+        return {
+          _id: row.id,
+          number: Number(row.number) || 1,
+          title: row.title || `Sessione ${row.number || 1}`,
+          date: row.date_str || new Date().toISOString().split('T')[0],
+          chapterId: row.chapter_id || undefined,
+          loreDate: typeof row.calendar_date === 'string' ? row.calendar_date : undefined,
+          events: Array.isArray(row.plot_events) ? row.plot_events : [],
+          recap: row.recap || row.summary || [],
+          images: Array.isArray(meta.images) ? meta.images : (Array.isArray(row.images) ? row.images : []),
+          coverImage: meta.coverImage || row.cover_image || undefined,
+          tags: Array.isArray(row.tags) ? row.tags.filter((t: string) => !t.startsWith('__meta__:')) : [],
+        };
+      });
+
+      return { sessions, chapters };
+    } catch (e) {
+      console.warn('[Supabase] fetchSessionsOnly error:', e);
+      return null;
+    }
+  }
+
+  /**
+   * Granular On-Demand Fetch: Notes & Clarifications
+   */
+  static async fetchNotesOnly(campaignCode: string): Promise<Note[] | null> {
+    if (!isSupabaseConfigured() || !campaignCode) return null;
+    try {
+      const cleanCode = campaignCode.trim().toUpperCase();
+      const [campRes, notesRes] = await Promise.all([
+        supabase.from('campaigns').select('dossier').or(`code.eq.${cleanCode},code.eq.${campaignCode.trim()}`).maybeSingle(),
+        supabase.from('notes').select('*').or(`campaign_code.eq.${cleanCode},campaign_code.eq.${campaignCode.trim()}`).order('created_at', { ascending: false }),
+      ]);
+
+      const dossier = campRes.data?.dossier || {};
+      const notesMeta = dossier.notesMeta || {};
+
+      return (notesRes.data || []).map((row: any) => {
+        const meta = notesMeta[row.id] || {};
+        return {
+          _id: row.id,
+          _createdAt: row.created_at || new Date().toISOString(),
+          title: row.title || 'Nota',
+          content: row.content || '',
+          visibility: row.visibility === 'personal' ? 'personal' : 'group',
+          dmOnly: meta.dmOnly !== undefined ? Boolean(meta.dmOnly) : false,
+          canonState: meta.canonState || 'canon',
+          pinned: meta.pinned !== undefined ? Boolean(meta.pinned) : false,
+          tags: Array.isArray(meta.tags) ? meta.tags : [],
+          images: Array.isArray(meta.images) ? meta.images : [],
+          askDm: Boolean(row.ask_dm),
+          author: {
+            _id: row.author_id || 'unknown',
+            characterName: row.author_name || 'Giocatore',
+            isDm: false,
+          },
+          dmResponse: row.dm_reply
+            ? {
+                text: row.dm_reply,
+                answeredAt: row.updated_at || new Date().toISOString(),
+                answeredBy: 'Dungeon Master',
+              }
+            : undefined,
+        };
+      });
+    } catch (e) {
+      console.warn('[Supabase] fetchNotesOnly error:', e);
+      return null;
+    }
+  }
+
+  /**
+   * Granular On-Demand Fetch: Codex Entities
+   */
+  static async fetchEntitiesOnly(campaignCode: string): Promise<Entity[] | null> {
+    if (!isSupabaseConfigured() || !campaignCode) return null;
+    try {
+      const cleanCode = campaignCode.trim().toUpperCase();
+      const res = await supabase.from('entities').select('*').or(`campaign_code.eq.${cleanCode},campaign_code.eq.${campaignCode.trim()}`);
+      return (res.data || []).map((row: any) => {
+        const customAttrs = (row.attributes && typeof row.attributes === 'object') ? row.attributes : {};
+        const entityType = row.type || customAttrs.type || customAttrs.category || 'npc';
+        const entityImages = Array.isArray(customAttrs.images) && customAttrs.images.length > 0
+          ? customAttrs.images
+          : (row.image_url ? [row.image_url] : []);
+
+        return {
+          _id: row.id,
+          name: row.name || 'Senza Nome',
+          type: entityType,
+          description: row.description || '',
+          imageUrl: row.image_url || entityImages[0] || '',
+          images: entityImages,
+          status: row.status || 'alive',
+          ...customAttrs,
+          aliases: Array.isArray(customAttrs.aliases) ? customAttrs.aliases : [],
+          progressNote: customAttrs.progressNote || '',
+          aiConfig: customAttrs.aiConfig || undefined,
+        };
+      });
+    } catch (e) {
+      console.warn('[Supabase] fetchEntitiesOnly error:', e);
       return null;
     }
   }
@@ -476,13 +692,11 @@ export class SupabaseSyncService {
 
       const { error } = await supabase.from('campaigns').upsert(payload, { onConflict: 'code' });
       if (error) {
-        console.error('[Supabase] Error saving campaign:', error);
-        return false;
+        return handleSupabaseError('Error saving campaign', error);
       }
       return true;
     } catch (err) {
-      console.error('[Supabase] Failed to save campaign:', err);
-      return false;
+      return handleSupabaseError('Failed to save campaign', err);
     }
   }
 
@@ -532,15 +746,14 @@ export class SupabaseSyncService {
       };
 
       const { error } = await supabase.from('sessions').upsert(payload, { onConflict: 'id' });
-      if (error) console.error('[Supabase] Error saving session:', error);
+      if (error) return handleSupabaseError('Error saving session', error);
 
       // Redundant dual-layer storage in dossier.sessionsMeta
       this.saveSessionMeta(code, cleanSession._id, meta).catch(() => {});
 
       return !error;
     } catch (err) {
-      console.error('[Supabase] Failed to save session:', err);
-      return false;
+      return handleSupabaseError('Failed to save session', err);
     }
   }
 
@@ -582,7 +795,7 @@ export class SupabaseSyncService {
       };
 
       const { error } = await supabase.from('notes').upsert(payload, { onConflict: 'id' });
-      if (error) console.error('[Supabase] Error saving note:', error);
+      if (error) return handleSupabaseError('Error saving note', error);
 
       // Save tags, images, pinned, etc. to dossier.notesMeta
       const noteMeta = {
@@ -596,8 +809,7 @@ export class SupabaseSyncService {
 
       return !error;
     } catch (err) {
-      console.error('[Supabase] Failed to save note:', err);
-      return false;
+      return handleSupabaseError('Failed to save note', err);
     }
   }
 
@@ -721,7 +933,7 @@ export class SupabaseSyncService {
       };
 
       const { error } = await supabase.from('chapters').upsert(payload, { onConflict: 'id' });
-      if (error) console.error('[Supabase] Error saving chapter:', error);
+      if (error) return handleSupabaseError('Error saving chapter', error);
 
       // Save coverImageUrl into campaign dossier
       if (chapter.coverImageUrl !== undefined) {
@@ -730,8 +942,7 @@ export class SupabaseSyncService {
 
       return !error;
     } catch (err) {
-      console.error('[Supabase] Failed to save chapter:', err);
-      return false;
+      return handleSupabaseError('Failed to save chapter', err);
     }
   }
 
@@ -752,8 +963,7 @@ export class SupabaseSyncService {
       }).eq('code', code);
       return true;
     } catch (err) {
-      console.error('[Supabase] Failed to save chapter cover:', err);
-      return false;
+      return handleSupabaseError('Failed to save chapter cover', err);
     }
   }
 
@@ -840,11 +1050,10 @@ export class SupabaseSyncService {
         updated_at: new Date().toISOString(),
       }).eq('code', code);
 
-      if (error) console.error('[Supabase] Error saving active players:', error);
+      if (error) return handleSupabaseError('Error saving active players', error);
       return !error;
     } catch (err) {
-      console.error('[Supabase] Failed to save active players:', err);
-      return false;
+      return handleSupabaseError('Failed to save active players', err);
     }
   }
 

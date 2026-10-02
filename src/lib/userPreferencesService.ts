@@ -266,8 +266,12 @@ export class UserPreferencesService {
     return this.getLocalPreferences(norm);
   }
 
+  private static userLastFetchedMap = new Map<string, number>();
+  private static userSubscribersMap = new Map<string, Set<(prefs: UserPreferences) => void>>();
+  private static isGlobalListenerRegistered = false;
+
   /**
-   * Listens for preference changes.
+   * Listens for preference changes with singleton subscriber pooling and no repeated network loops.
    */
   static subscribeUserPreferences(
     userId: string,
@@ -279,51 +283,75 @@ export class UserPreferencesService {
       return () => {};
     }
 
-    // Load initial local preference
+    // 1. Immediately emit current local preferences
     const initialLocal = this.getLocalPreferences(norm);
     this.applyThemeToDOM(initialLocal.theme);
     onUpdate(initialLocal);
 
-    // Asynchronously fetch preferences from Supabase to stay updated across devices
-    SupabaseSyncService.fetchUserPreferences(norm).then((remoteData) => {
-      if (remoteData) {
-        const mergedFromRemote: UserPreferences = {
-          ...DEFAULT_USER_PREFERENCES,
-          theme: { ...DEFAULT_USER_PREFERENCES.theme, ...(initialLocal.theme || {}), ...(remoteData.theme || {}) },
-          ai: { ...DEFAULT_USER_PREFERENCES.ai, ...(initialLocal.ai || {}), ...(remoteData.ai || {}) },
-          reading: { ...DEFAULT_USER_PREFERENCES.reading, ...(initialLocal.reading || {}), ...(remoteData.reading || {}) },
-          notifications: {
-            dismissedByCampaign: {
-              ...(initialLocal.notifications?.dismissedByCampaign || {}),
-              ...(remoteData.notifications?.dismissedByCampaign || {}),
-            },
-          },
-          updatedAt: remoteData.updated_at || new Date().toISOString(),
-        };
+    // 2. Register subscriber in singleton pool
+    if (!this.userSubscribersMap.has(norm)) {
+      this.userSubscribersMap.set(norm, new Set());
+    }
+    const subSet = this.userSubscribersMap.get(norm)!;
+    subSet.add(onUpdate);
 
-        try {
-          localStorage.setItem(getStorageKey(norm), JSON.stringify(mergedFromRemote));
-        } catch {}
-
-        this.applyThemeToDOM(mergedFromRemote.theme);
-        onUpdate(mergedFromRemote);
-      }
-    }).catch(() => {});
-
-    const handler = (e: Event) => {
-      const customEvent = e as CustomEvent;
-      if (customEvent.detail?.userId === norm && customEvent.detail?.preferences) {
-        onUpdate(customEvent.detail.preferences);
-      }
-    };
-
-    if (typeof window !== 'undefined') {
-      window.addEventListener('chronicle_user_preferences_updated', handler);
+    // 3. Register global window listener only once across the entire application
+    if (!this.isGlobalListenerRegistered && typeof window !== 'undefined') {
+      this.isGlobalListenerRegistered = true;
+      window.addEventListener('chronicle_user_preferences_updated', (e: Event) => {
+        const customEvent = e as CustomEvent;
+        const targetUser = customEvent.detail?.userId;
+        const newPrefs = customEvent.detail?.preferences;
+        if (targetUser && newPrefs) {
+          const callbacks = UserPreferencesService.userSubscribersMap.get(targetUser);
+          if (callbacks) {
+            callbacks.forEach((cb) => cb(newPrefs));
+          }
+        }
+      });
     }
 
+    // 4. Fetch from remote ONLY ONCE every 10 minutes per user session
+    const lastFetch = this.userLastFetchedMap.get(norm) || 0;
+    const now = Date.now();
+    if (now - lastFetch > 10 * 60 * 1000) {
+      this.userLastFetchedMap.set(norm, now);
+      SupabaseSyncService.fetchUserPreferences(norm)
+        .then((remoteData) => {
+          if (remoteData) {
+            const mergedFromRemote: UserPreferences = {
+              ...DEFAULT_USER_PREFERENCES,
+              theme: { ...DEFAULT_USER_PREFERENCES.theme, ...(initialLocal.theme || {}), ...(remoteData.theme || {}) },
+              ai: { ...DEFAULT_USER_PREFERENCES.ai, ...(initialLocal.ai || {}), ...(remoteData.ai || {}) },
+              reading: { ...DEFAULT_USER_PREFERENCES.reading, ...(initialLocal.reading || {}), ...(remoteData.reading || {}) },
+              notifications: {
+                dismissedByCampaign: {
+                  ...(initialLocal.notifications?.dismissedByCampaign || {}),
+                  ...(remoteData.notifications?.dismissedByCampaign || {}),
+                },
+              },
+              updatedAt: remoteData.updated_at || new Date().toISOString(),
+            };
+
+            try {
+              localStorage.setItem(getStorageKey(norm), JSON.stringify(mergedFromRemote));
+            } catch {}
+
+            this.applyThemeToDOM(mergedFromRemote.theme);
+            const currentSubs = UserPreferencesService.userSubscribersMap.get(norm);
+            if (currentSubs) {
+              currentSubs.forEach((cb) => cb(mergedFromRemote));
+            }
+          }
+        })
+        .catch(() => {});
+    }
+
+    // Return unsubscriber that cleans up the set
     return () => {
-      if (typeof window !== 'undefined') {
-        window.removeEventListener('chronicle_user_preferences_updated', handler);
+      const subs = UserPreferencesService.userSubscribersMap.get(norm);
+      if (subs) {
+        subs.delete(onUpdate);
       }
     };
   }

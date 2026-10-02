@@ -4,6 +4,8 @@ import { CampaignManager } from '../store/campaignStore';
 import { CampaignCalendar, CalendarMonth, Session, SessionEvent, ScrapbookItem } from '../types';
 import { HARPTOS_CALENDAR, CUSTOM_DEFAULT_CALENDAR } from '../lib/calendarPresets';
 import { matchesLoreDayAndMonth } from '../lib/loreDateUtils';
+import { useCalendarData } from '../hooks/useViewData';
+import { Skeleton } from '../components/Skeleton';
 import {
   Calendar as CalendarIcon,
   Compass,
@@ -52,11 +54,25 @@ interface DayStorylineEvent extends SessionEvent {
 
 export function CalendarPage() {
   const { player } = useAuth();
-  const [calendar, setCalendar] = useState<CampaignCalendar>(() => CampaignManager.getCalendar());
-  const [sessions, setSessions] = useState<Session[]>(() => CampaignManager.getSessions());
-  const [scrapbook, setScrapbook] = useState<ScrapbookItem[]>(() => CampaignManager.getScrapbookItems());
+  const { calendar: hookedCalendar, sessions: hookedSessions, scrapbook: hookedScrapbook, isLoading } = useCalendarData();
+  const [calendar, setCalendar] = useState<CampaignCalendar>(hookedCalendar);
+  const [sessions, setSessions] = useState<Session[]>(hookedSessions);
+  const [scrapbook, setScrapbook] = useState<ScrapbookItem[]>(hookedScrapbook);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [activeTab, setActiveTab] = useState<'overview' | 'config' | 'presets'>('overview');
+
+  // Sync internal state when hooked data updates from Supabase / cache
+  useEffect(() => {
+    setCalendar(hookedCalendar);
+  }, [hookedCalendar]);
+
+  useEffect(() => {
+    setSessions(hookedSessions);
+  }, [hookedSessions]);
+
+  useEffect(() => {
+    setScrapbook(hookedScrapbook);
+  }, [hookedScrapbook]);
 
   // Month structure editor state
   const [newMonthName, setNewMonthName] = useState('');
@@ -72,13 +88,13 @@ export function CalendarPage() {
   } | null>(null);
 
   // Visual calendar month browsing
-  const [browsingMonthIndex, setBrowsingMonthIndex] = useState<number>(() => calendar.currentMonthIndex || 0);
+  const [browsingMonthIndex, setBrowsingMonthIndex] = useState<number>(() => calendar?.currentMonthIndex || 0);
 
   // Year quick edit input state
-  const [heroYearInput, setHeroYearInput] = useState<string>(() => String(calendar.currentYear || 1492));
+  const [heroYearInput, setHeroYearInput] = useState<string>(() => String(calendar?.currentYear || 1492));
 
   // Selected day for storyline details inspector
-  const [selectedDayNumber, setSelectedDayNumber] = useState<number | null>(() => calendar.currentDay || 1);
+  const [selectedDayNumber, setSelectedDayNumber] = useState<number | null>(() => calendar?.currentDay || 1);
 
   // Lightbox for event images
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
@@ -92,24 +108,10 @@ export function CalendarPage() {
   };
 
   useEffect(() => {
-    refreshData();
-    const handleCalUpdate = () => {
-      const cal = CampaignManager.getCalendar();
-      setCalendar(cal);
-      setHeroYearInput(String(cal.currentYear || 1492));
-      refreshData();
-    };
-    window.addEventListener('chronicle_calendar_updated', handleCalUpdate);
-    window.addEventListener('chronicle_sessions_updated', handleCalUpdate);
-    window.addEventListener('chronicle_data_updated', handleCalUpdate);
-    window.addEventListener('chronicle_campaign_changed', handleCalUpdate);
-    return () => {
-      window.removeEventListener('chronicle_calendar_updated', handleCalUpdate);
-      window.removeEventListener('chronicle_sessions_updated', handleCalUpdate);
-      window.removeEventListener('chronicle_data_updated', handleCalUpdate);
-      window.removeEventListener('chronicle_campaign_changed', handleCalUpdate);
-    };
-  }, []);
+    if (calendar) {
+      setHeroYearInput(String(calendar.currentYear || 1492));
+    }
+  }, [calendar]);
 
   const handleSave = (newCal?: CampaignCalendar) => {
     const calToSave = newCal || calendar;
@@ -231,8 +233,8 @@ export function CalendarPage() {
     }
   };
 
-  const currentMonth = calendar.months[calendar.currentMonthIndex] || calendar.months[0];
-  const activeBrowsingMonth = calendar.months[browsingMonthIndex] || currentMonth;
+  const currentMonth = (calendar?.months && calendar.months[calendar.currentMonthIndex]) || (calendar?.months && calendar.months[0]) || HARPTOS_CALENDAR.months[0];
+  const activeBrowsingMonth = (calendar?.months && calendar.months[browsingMonthIndex]) || currentMonth || HARPTOS_CALENDAR.months[0];
 
   // Flatten all events across all sessions with parent session metadata
   const allStorylineEvents = useMemo(() => {
@@ -375,6 +377,28 @@ export function CalendarPage() {
       }
     );
   }, [selectedDayNumber, monthDayDataMap]);
+
+  if (isLoading && (!calendar?.months || calendar.months.length === 0)) {
+    return (
+      <div className="p-4 sm:p-8 max-w-7xl mx-auto w-full space-y-6">
+        <div className="flex items-center gap-3 border-b border-surface-2 pb-5">
+          <Skeleton variant="circular" className="w-10 h-10" />
+          <div className="space-y-2">
+            <Skeleton variant="text" className="w-48 h-6" />
+            <Skeleton variant="text" className="w-64 h-3" />
+          </div>
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="lg:col-span-2 space-y-4">
+            <Skeleton variant="rectangular" className="h-96 w-full rounded-[2px]" />
+          </div>
+          <div className="space-y-4">
+            <Skeleton variant="rectangular" className="h-96 w-full rounded-[2px]" />
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-4 sm:p-8 max-w-7xl mx-auto w-full space-y-6">

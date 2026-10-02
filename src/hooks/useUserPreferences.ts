@@ -3,13 +3,28 @@ import { useAuth } from '../components/AuthProvider';
 import { UserPreferences } from '../types';
 import { UserPreferencesService, DEFAULT_USER_PREFERENCES } from '../lib/userPreferencesService';
 
+// Module-level cache for active user preferences to share across all hook consumers
+let cachedUserId = '';
+let cachedPreferences: UserPreferences = DEFAULT_USER_PREFERENCES;
+const listeners = new Set<(prefs: UserPreferences) => void>();
+
+function notifyAll(prefs: UserPreferences) {
+  cachedPreferences = prefs;
+  listeners.forEach((fn) => fn(prefs));
+}
+
 export function useUserPreferences() {
   const { account } = useAuth();
   const userId = account?.id || '';
 
-  const [preferences, setPreferences] = useState<UserPreferences>(() =>
-    UserPreferencesService.getLocalPreferences(userId)
-  );
+  const [preferences, setPreferences] = useState<UserPreferences>(() => {
+    if (!userId) return DEFAULT_USER_PREFERENCES;
+    if (cachedUserId === userId) return cachedPreferences;
+    const initial = UserPreferencesService.getLocalPreferences(userId);
+    cachedUserId = userId;
+    cachedPreferences = initial;
+    return initial;
+  });
 
   useEffect(() => {
     if (!userId) {
@@ -17,27 +32,24 @@ export function useUserPreferences() {
       return;
     }
 
-    // Set initial
-    setPreferences(UserPreferencesService.getLocalPreferences(userId));
+    if (cachedUserId !== userId) {
+      cachedUserId = userId;
+      cachedPreferences = UserPreferencesService.getLocalPreferences(userId);
+    }
+    setPreferences(cachedPreferences);
 
-    // Subscribe to Firestore changes
-    const unsub = UserPreferencesService.subscribeUserPreferences(userId, (updated) => {
+    const listener = (updated: UserPreferences) => {
       setPreferences(updated);
+    };
+    listeners.add(listener);
+
+    const unsubService = UserPreferencesService.subscribeUserPreferences(userId, (updated) => {
+      notifyAll(updated);
     });
 
-    // Also listen to local window event
-    const handleLocalUpdate = (e: Event) => {
-      const customEv = e as CustomEvent;
-      if (customEv.detail?.userId === userId && customEv.detail?.preferences) {
-        setPreferences(customEv.detail.preferences);
-      }
-    };
-
-    window.addEventListener('chronicle_user_preferences_updated', handleLocalUpdate);
-
     return () => {
-      unsub();
-      window.removeEventListener('chronicle_user_preferences_updated', handleLocalUpdate);
+      listeners.delete(listener);
+      unsubService();
     };
   }, [userId]);
 
@@ -49,7 +61,7 @@ export function useUserPreferences() {
     }) => {
       if (!userId) return;
       const updated = await UserPreferencesService.saveUserPreferences(userId, updates);
-      setPreferences(updated);
+      notifyAll(updated);
       return updated;
     },
     [userId]
@@ -60,3 +72,4 @@ export function useUserPreferences() {
     updatePreferences,
   };
 }
+
