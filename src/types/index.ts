@@ -295,6 +295,7 @@ export interface Session {
   attendeePlayerIds?: string[]; // IDs dei PG presenti alla sessione
   audioLogs?: AudioLog[];
   quotes?: { speaker: string; text: string }[];
+  tags?: string[];
   entitiesExtracted?: boolean;
   entitiesExtractedAt?: string;
   memorySynced?: boolean;
@@ -535,6 +536,8 @@ export interface Entity {
   _id: string;
   type: 'npc' | 'monster' | 'place' | 'item' | 'faction' | 'quest';
   name: string;
+  description?: string;
+  imageUrl?: string;
   aliases?: string[];
   status: 'alive' | 'dead' | 'unknown' | 'destroyed' | 'open' | 'completed' | 'failed';
   body?: any[];
@@ -806,6 +809,15 @@ export interface CharacterKnownLoreItem {
 export interface CharacterBio {
   playerId: string;
   campaignCode?: string;
+  characterName?: string;
+  name?: string;
+  avatarUrl?: string;
+  color?: string;
+  bio?: string;
+  notes?: string;
+  traits?: any;
+  stats?: any;
+  status?: string;
   characterTitle?: string;
   characterClass?: string;
   characterRace?: string;

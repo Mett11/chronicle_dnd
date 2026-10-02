@@ -96,6 +96,27 @@ function invalidateCacheKey(key: string) {
   memoryCache.delete(key);
 }
 
+// Debounced and deduped event dispatcher to eliminate cascading re-render loops
+const pendingEvents = new Set<string>();
+let dispatchTimer: any = null;
+
+export function emitChronicleEvent(eventName: string, detail?: any) {
+  if (typeof window === 'undefined') return;
+  pendingEvents.add(eventName);
+  if (!dispatchTimer) {
+    dispatchTimer = setTimeout(() => {
+      dispatchTimer = null;
+      const eventsToDispatch = Array.from(pendingEvents);
+      pendingEvents.clear();
+      eventsToDispatch.forEach((evt) => {
+        try {
+          window.dispatchEvent(new CustomEvent(evt, { detail }));
+        } catch {}
+      });
+    }, 25);
+  }
+}
+
 /**
  * Emergency global eviction routine that strips heavy base64 images from localStorage
  * across all campaign keys to free up critical megabytes for text metadata.
@@ -198,36 +219,22 @@ export function safeLocalStorageSetItem(key: string, value: string): boolean {
       } catch {}
     }
 
-    // 4. If sessions array exceeds browser storage quota due to base64 images,
-    // strip heavy images from older sessions in local cache while keeping ALL session records intact
+    // 4. If sessions array exceeds browser storage quota, strip only heavy base64 strings
     if (key.includes('_sessions')) {
       try {
         const parsed = JSON.parse(value);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          const lightweight = parsed.map((s, idx) => {
-            if (idx < parsed.length - 3) {
-              return {
-                ...s,
-                images: [],
-                events: (s.events || []).map((e: any) => ({ ...e, images: [] })),
-              };
-            }
-            return s;
-          });
-          localStorage.setItem(key, JSON.stringify(lightweight));
-          return true;
-        }
-      } catch {}
-    }
-
-    // 5. If world lore articles exceed storage quota due to embedded media
-    if (key.includes('world_lore_articles')) {
-      try {
-        const parsed = JSON.parse(value);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          const lightweight = parsed.map((a: any) => ({
-            ...a,
-            images: [],
+          const lightweight = parsed.map((s) => ({
+            ...s,
+            images: Array.isArray(s.images)
+              ? s.images.filter((img: any) => typeof img === 'string' && !img.startsWith('data:'))
+              : [],
+            events: (s.events || []).map((e: any) => ({
+              ...e,
+              images: Array.isArray(e.images)
+                ? e.images.filter((img: any) => typeof img === 'string' && !img.startsWith('data:'))
+                : [],
+            })),
           }));
           localStorage.setItem(key, JSON.stringify(lightweight));
           return true;
@@ -235,15 +242,33 @@ export function safeLocalStorageSetItem(key: string, value: string): boolean {
       } catch {}
     }
 
-    // 6. If entities or notes exceed storage quota
+    // 5. If world lore articles exceed storage quota, strip only base64 data
+    if (key.includes('world_lore_articles')) {
+      try {
+        const parsed = JSON.parse(value);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const lightweight = parsed.map((a: any) => ({
+            ...a,
+            images: Array.isArray(a.images)
+              ? a.images.filter((img: any) => typeof img === 'string' && !img.startsWith('data:'))
+              : [],
+          }));
+          localStorage.setItem(key, JSON.stringify(lightweight));
+          return true;
+        }
+      } catch {}
+    }
+
+    // 6. If entities or notes exceed storage quota, strip only base64 data
     if (key.includes('_entities') || key.includes('_notes')) {
       try {
         const parsed = JSON.parse(value);
         if (Array.isArray(parsed) && parsed.length > 0) {
           const lightweight = parsed.map((item: any) => ({
             ...item,
-            images: [],
-            avatarUrl: item.avatarUrl && item.avatarUrl.length > 2000 ? '' : item.avatarUrl,
+            images: Array.isArray(item.images)
+              ? item.images.filter((img: any) => typeof img === 'string' && !img.startsWith('data:'))
+              : [],
           }));
           localStorage.setItem(key, JSON.stringify(lightweight));
           return true;
@@ -2429,9 +2454,8 @@ export class CampaignManager {
       const code = this.getActiveCampaignCode() || 'default';
       sanitized.forEach((n) => SupabaseSyncService.saveNote(code, n));
     }
-    try {
-      window.dispatchEvent(new CustomEvent('chronicle_notes_updated', { detail: { notes: sanitized } }));
-    } catch {}
+    emitChronicleEvent('chronicle_notes_updated', { notes: sanitized });
+    emitChronicleEvent('chronicle_data_updated');
   }
 
   static saveNotesLocalOnly(notes: Note[]) {
@@ -2439,9 +2463,8 @@ export class CampaignManager {
     const sanitized = sanitizeArray<Note>(notes);
     setCached(key, sanitized);
     safeLocalStorageSetItem(key, JSON.stringify(sanitized));
-    try {
-      window.dispatchEvent(new CustomEvent('chronicle_notes_updated', { detail: { notes: sanitized } }));
-    } catch {}
+    emitChronicleEvent('chronicle_notes_updated', { notes: sanitized });
+    emitChronicleEvent('chronicle_data_updated');
   }
 
   static addNote(note: Partial<Note>, author: Player): Note {
@@ -3094,16 +3117,8 @@ export class CampaignManager {
       const code = this.getActiveCampaignCode() || 'default';
       sanitized.forEach((s) => SupabaseSyncService.saveSession(code, s));
     }
-    if (typeof window !== "undefined") {
-      try {
-        window.dispatchEvent(
-          new CustomEvent("chronicle_sessions_updated", {
-            detail: { sessions: sanitized },
-          }),
-        );
-        window.dispatchEvent(new CustomEvent("chronicle_data_updated"));
-      } catch {}
-    }
+    emitChronicleEvent("chronicle_sessions_updated", { sessions: sanitized });
+    emitChronicleEvent("chronicle_data_updated");
     CloudSyncService.triggerCloudSave();
   }
 
@@ -3112,16 +3127,8 @@ export class CampaignManager {
     const sanitized = sanitizeArray<Session>(sessions);
     setCached(key, sanitized);
     safeLocalStorageSetItem(key, JSON.stringify(sanitized));
-    if (typeof window !== "undefined") {
-      try {
-        window.dispatchEvent(
-          new CustomEvent("chronicle_sessions_updated", {
-            detail: { sessions: sanitized },
-          }),
-        );
-        window.dispatchEvent(new CustomEvent("chronicle_data_updated"));
-      } catch {}
-    }
+    emitChronicleEvent("chronicle_sessions_updated", { sessions: sanitized });
+    emitChronicleEvent("chronicle_data_updated");
   }
 
   static addSession(session: Partial<Session>): Session {
@@ -3289,27 +3296,11 @@ export class CampaignManager {
       if (stored) {
         try {
           const parsed = sanitizeArray<CampaignChapter>(JSON.parse(stored));
-          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            return this.deduplicateChapters(parsed);
+          }
         } catch {}
       }
-      // Derive in-memory from existing sessions if any has chapterName, without triggering an auto-save to cloud
-      const sessions = this.getSessions();
-      const distinctChapterNames = Array.from(
-        new Set(sessions.map((s) => s.chapterName).filter(Boolean)),
-      ) as string[];
-      if (distinctChapterNames.length > 0) {
-        const generated: CampaignChapter[] = distinctChapterNames.map(
-          (name, idx) => ({
-            id: "chap_" + idx,
-            name,
-            color:
-              idx % 3 === 0 ? "#8B5CF6" : idx % 3 === 1 ? "#3B82F6" : "#10B981",
-            order: idx + 1,
-          }),
-        );
-        return generated;
-      }
-
       return [];
     });
   }
@@ -3321,27 +3312,45 @@ export class CampaignManager {
 
     chapters.forEach((c) => {
       if (!c || !c.name) return;
-      const normName = c.name.trim().toLowerCase();
+      const rawName = String(c.name).trim();
+      const normName = rawName.toLowerCase();
       if (!normName) return;
 
-      const existingId = seenNames.get(normName);
+      const rawCover = (c.coverImageUrl && typeof c.coverImageUrl === 'string' ? c.coverImageUrl.trim() : '') ||
+        ((c as any).imageUrl && typeof (c as any).imageUrl === 'string' ? (c as any).imageUrl.trim() : '');
+
+      const existingId = seenNames.get(normName) || (c.id && map.has(c.id) ? c.id : undefined);
       if (existingId && map.has(existingId)) {
         const prev = map.get(existingId)!;
-        const resolvedCover = (c.coverImageUrl && c.coverImageUrl.trim()) || (prev.coverImageUrl && prev.coverImageUrl.trim()) || "";
+        const prevCover = (prev.coverImageUrl && typeof prev.coverImageUrl === 'string' ? prev.coverImageUrl.trim() : '') ||
+          ((prev as any).imageUrl && typeof (prev as any).imageUrl === 'string' ? (prev as any).imageUrl.trim() : '');
+
+        const resolvedCover = rawCover || prevCover || "";
         const resolvedDesc = (c.description && c.description.trim()) || (prev.description && prev.description.trim()) || "";
         const resolvedColor = c.color || prev.color || "#D4AF37";
+        const canonicalId = (prev.id && !prev.id.startsWith('chap_0') && !prev.id.startsWith('chap_1') && !prev.id.startsWith('chap_2'))
+          ? prev.id
+          : (c.id || prev.id);
+
         map.set(existingId, {
           ...prev,
           ...c,
-          id: existingId,
-          name: c.name.trim() || prev.name.trim(),
+          id: canonicalId,
+          name: rawName || prev.name,
           description: resolvedDesc,
           coverImageUrl: resolvedCover,
           color: resolvedColor,
+          order: c.order || prev.order || 1,
         });
       } else {
         const cleanId = c.id || "chap_" + Date.now();
-        const item = { ...c, id: cleanId, name: c.name.trim() };
+        const item: CampaignChapter = {
+          ...c,
+          id: cleanId,
+          name: rawName,
+          coverImageUrl: rawCover,
+          order: Number(c.order || 1),
+        };
         map.set(cleanId, item);
         seenNames.set(normName, cleanId);
       }
@@ -3360,16 +3369,8 @@ export class CampaignManager {
       const code = this.getActiveCampaignCode() || 'default';
       sanitized.forEach((c) => SupabaseSyncService.saveChapter(code, c));
     }
-    if (typeof window !== "undefined") {
-      try {
-        window.dispatchEvent(
-          new CustomEvent("chronicle_chapters_updated", {
-            detail: { chapters: sanitized },
-          }),
-        );
-        window.dispatchEvent(new CustomEvent("chronicle_data_updated"));
-      } catch {}
-    }
+    emitChronicleEvent("chronicle_chapters_updated", { chapters: sanitized });
+    emitChronicleEvent("chronicle_data_updated");
     CloudSyncService.triggerCloudSave();
   }
 
@@ -3378,16 +3379,8 @@ export class CampaignManager {
     const sanitized = sanitizeArray<CampaignChapter>(chapters);
     setCached(key, sanitized);
     safeLocalStorageSetItem(key, JSON.stringify(sanitized));
-    if (typeof window !== "undefined") {
-      try {
-        window.dispatchEvent(
-          new CustomEvent("chronicle_chapters_updated", {
-            detail: { chapters: sanitized },
-          }),
-        );
-        window.dispatchEvent(new CustomEvent("chronicle_data_updated"));
-      } catch {}
-    }
+    emitChronicleEvent("chronicle_chapters_updated", { chapters: sanitized });
+    emitChronicleEvent("chronicle_data_updated");
   }
 
   static addChapter(chapter: Partial<CampaignChapter>): CampaignChapter {
@@ -3579,9 +3572,8 @@ export class CampaignManager {
         sanitized.forEach((e) => SupabaseSyncService.saveEntity(code, e));
       }
     }
-    try {
-      window.dispatchEvent(new CustomEvent('chronicle_entities_updated', { detail: { entities: sanitized } }));
-    } catch {}
+    emitChronicleEvent('chronicle_entities_updated', { entities: sanitized });
+    emitChronicleEvent('chronicle_data_updated');
   }
 
   static resetCompendiumAndRelations(): void {
@@ -3593,11 +3585,9 @@ export class CampaignManager {
       SupabaseSyncService.saveFamilyRelations(code, []).catch(() => {});
     }
     CloudSyncService.triggerCloudSave();
-    if (typeof window !== "undefined") {
-      window.dispatchEvent(new CustomEvent("chronicle_entities_updated"));
-      window.dispatchEvent(new CustomEvent("chronicle_family_tree_updated"));
-      window.dispatchEvent(new CustomEvent("chronicle_data_updated"));
-    }
+    emitChronicleEvent("chronicle_entities_updated");
+    emitChronicleEvent("chronicle_family_tree_updated");
+    emitChronicleEvent("chronicle_data_updated");
   }
 
   static saveEntitiesLocalOnly(entities: Entity[]) {
@@ -3606,9 +3596,8 @@ export class CampaignManager {
     setCached(key, sanitized);
     cachedEntityLookupMap = null; // Invalidate memoized lookup map
     safeLocalStorageSetItem(key, JSON.stringify(sanitized));
-    try {
-      window.dispatchEvent(new CustomEvent('chronicle_entities_updated', { detail: { entities: sanitized } }));
-    } catch {}
+    emitChronicleEvent('chronicle_entities_updated', { entities: sanitized });
+    emitChronicleEvent('chronicle_data_updated');
   }
 
   /**

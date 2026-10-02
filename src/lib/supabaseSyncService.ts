@@ -1,5 +1,24 @@
 import { supabase, isSupabaseConfigured, markSupabaseOffline } from './supabase';
 import {
+  chapterRowToModel,
+  chapterModelToRow,
+  sessionRowToModel,
+  sessionModelToRow,
+  entityRowToModel,
+  entityModelToRow,
+  noteRowToModel,
+  noteModelToRow,
+  mapRowToModel,
+  mapModelToRow,
+  scrapbookRowToModel,
+  scrapbookModelToRow,
+  audioLogRowToModel,
+  audioLogModelToRow,
+  characterBioRowToModel,
+  characterBioModelToRow,
+  resolveStorageUrl,
+} from './supabaseAdapter';
+import {
   Session,
   CampaignChapter,
   Note,
@@ -157,100 +176,13 @@ export class SupabaseSyncService {
       const sessionsMeta = dossier.sessionsMeta || {};
       const mapFolders = Array.isArray(dossier.mapFolders) ? dossier.mapFolders : [];
 
-      const chapters: CampaignChapter[] = (chaptersRes.data || []).map((row) => {
-        const title = row.title || 'Capitolo';
-        const metaCover = chaptersMeta[row.id]?.coverImageUrl ||
-          chaptersMeta[row.id]?.imageUrl ||
-          chaptersMeta[title]?.coverImageUrl ||
-          chaptersMeta[title]?.imageUrl;
+      const chapters: CampaignChapter[] = (chaptersRes.data || []).map((row) =>
+        chapterRowToModel(row, chaptersMeta)
+      );
 
-        const rowCover = (row as any).cover_image_url ||
-          (row as any).image_url ||
-          (row as any).cover_image ||
-          (row as any).coverUrl ||
-          (row as any).imageUrl ||
-          (row as any).thumbnail_url ||
-          undefined;
-
-        return {
-          id: row.id,
-          name: title,
-          description: row.synopsis || '',
-          order: row.order_index ?? row.number ?? 0,
-          coverImageUrl: metaCover || rowCover || undefined,
-        };
-      });
-
-      const sessions: Session[] = (sessionsRes.data || []).map((row) => {
-        // Support both recap array or summary markdown string
-        let recapData: any = row.recap;
-        if (!recapData || (Array.isArray(recapData) && recapData.length === 0)) {
-          recapData = row.summary || [];
-        }
-        if (typeof recapData === 'string') {
-          const trimmed = recapData.trim();
-          if ((trimmed.startsWith('[') && trimmed.endsWith(']')) || (trimmed.startsWith('{') && trimmed.endsWith('}'))) {
-            try {
-              recapData = JSON.parse(trimmed);
-            } catch {}
-          }
-        }
-
-        // Clean loreDate formatting
-        let parsedLoreDate: string | undefined = undefined;
-        if (typeof row.calendar_date === 'string') {
-          parsedLoreDate = row.calendar_date;
-        } else if (row.calendar_date && typeof row.calendar_date === 'object') {
-          parsedLoreDate = JSON.stringify(row.calendar_date);
-        }
-
-        let meta: any = {};
-        const metaTag = Array.isArray(row.tags)
-          ? row.tags.find((t: string) => typeof t === 'string' && t.startsWith('__meta__:'))
-          : null;
-        if (metaTag) {
-          try {
-            meta = JSON.parse(metaTag.slice('__meta__:'.length));
-          } catch {}
-        }
-        if (sessionsMeta && sessionsMeta[row.id]) {
-          meta = { ...sessionsMeta[row.id], ...meta };
-        }
-        const cleanTags = Array.isArray(row.tags)
-          ? row.tags.filter((t: string) => typeof t === 'string' && !t.startsWith('__meta__:'))
-          : [];
-
-        const sessionImages = Array.isArray(meta.images) && meta.images.length > 0
-          ? meta.images
-          : (Array.isArray((row as any).images) ? (row as any).images : []);
-
-        const resolvedChapId = row.chapter_id || meta.chapterId || undefined;
-        const resolvedChapName = meta.chapterName || undefined;
-
-        return {
-          _id: row.id,
-          number: Number(row.number) || 1,
-          title: row.title || `Sessione ${row.number || 1}`,
-          date: row.date_str || new Date().toISOString().split('T')[0],
-          chapterId: resolvedChapId,
-          chapterName: resolvedChapName,
-          loreDate: parsedLoreDate,
-          events: Array.isArray(row.plot_events) ? row.plot_events : [],
-          recap: recapData,
-          images: sessionImages,
-          coverImage: meta.coverImage || (row as any).cover_image || undefined,
-          entitiesExtracted: meta.entitiesExtracted !== undefined ? Boolean(meta.entitiesExtracted) : Boolean((row as any).entities_extracted),
-          entitiesExtractedAt: meta.entitiesExtractedAt || (row as any).entities_extracted_at || undefined,
-          memorySynced: meta.memorySynced !== undefined ? Boolean(meta.memorySynced) : Boolean((row as any).memory_synced),
-          memorySyncedAt: meta.memorySyncedAt || (row as any).memory_synced_at || undefined,
-          sessionType: meta.sessionType || (row as any).session_type || 'mixed',
-          quotes: Array.isArray(meta.quotes) ? meta.quotes : (Array.isArray((row as any).quotes) ? (row as any).quotes : []),
-          audioLogs: Array.isArray(meta.audioLogs) ? meta.audioLogs : (Array.isArray((row as any).audio_logs) ? (row as any).audio_logs : []),
-          excludedPlayerIds: Array.isArray(meta.excludedPlayerIds) ? meta.excludedPlayerIds : [],
-          attendees: Array.isArray(meta.attendees) ? meta.attendees : [],
-          tags: cleanTags,
-        };
-      });
+      const sessions: Session[] = (sessionsRes.data || []).map((row) =>
+        sessionRowToModel(row, sessionsMeta)
+      );
 
       // Auto-reconcile sessions with chapters
       const chapById = new Map(chapters.map((c) => [c.id, c]));
@@ -274,91 +206,20 @@ export class SupabaseSyncService {
         }
       });
 
-      const entities: Entity[] = (entitiesRes.data || []).map((row) => {
-        const customAttrs = (row.attributes && typeof row.attributes === 'object') ? row.attributes : {};
-        const entityType = row.type || customAttrs.type || customAttrs.category || 'npc';
-        const entityImages = Array.isArray(customAttrs.images) && customAttrs.images.length > 0
-          ? customAttrs.images
-          : (row.image_url ? [row.image_url] : []);
-
-        return {
-          _id: row.id,
-          name: row.name || 'Senza Nome',
-          type: entityType,
-          description: row.description || '',
-          imageUrl: row.image_url || entityImages[0] || '',
-          images: entityImages,
-          status: row.status || 'alive',
-          ...customAttrs,
-          aliases: Array.isArray(customAttrs.aliases) ? customAttrs.aliases : [],
-          progressNote: customAttrs.progressNote || '',
-          aiConfig: customAttrs.aiConfig || undefined,
-          body: customAttrs.body || [],
-          location: customAttrs.location || undefined,
-          mapId: customAttrs.mapId || undefined,
-          pinId: customAttrs.pinId || undefined,
-        };
-      });
+      const entities: Entity[] = (entitiesRes.data || []).map(entityRowToModel);
 
       const notesMeta = dossier.notesMeta || {};
+      const notes: Note[] = (notesRes.data || []).map((row) =>
+        noteRowToModel(row, notesMeta)
+      );
 
-      const notes: Note[] = (notesRes.data || []).map((row) => {
-        const meta = notesMeta[row.id] || {};
-        return {
-          _id: row.id,
-          _createdAt: row.created_at || new Date().toISOString(),
-          title: row.title || 'Nota',
-          content: row.content || '',
-          visibility: row.visibility === 'personal' ? 'personal' : 'group',
-          dmOnly: meta.dmOnly !== undefined ? Boolean(meta.dmOnly) : false,
-          canonState: meta.canonState || 'canon',
-          pinned: meta.pinned !== undefined ? Boolean(meta.pinned) : false,
-          tags: Array.isArray(meta.tags) ? meta.tags : [],
-          images: Array.isArray(meta.images) ? meta.images : [],
-          askDm: Boolean(row.ask_dm),
-          author: {
-            _id: row.author_id || 'unknown',
-            characterName: row.author_name || 'Giocatore',
-            isDm: false,
-          },
-          dmResponse: row.dm_reply
-            ? {
-                text: row.dm_reply,
-                answeredAt: row.updated_at || new Date().toISOString(),
-                answeredBy: 'Dungeon Master',
-              }
-            : undefined,
-        };
-      });
+      const maps: WorldMap[] = (mapsRes.data || []).map((row) =>
+        mapRowToModel(row, mapsMeta)
+      );
 
-      const maps: WorldMap[] = (mapsRes.data || []).map((row) => ({
-        id: row.id,
-        title: row.title || 'Mappa',
-        description: mapsMeta[row.id]?.description || (row as any).description || '',
-        folderId: mapsMeta[row.id]?.folderId || (row as any).folder_id || undefined,
-        imageUrl: row.image_url || '',
-        pins: Array.isArray(row.pins) ? row.pins : [],
-        createdAt: row.created_at || new Date().toISOString(),
-      }));
+      const scrapbookItems: ScrapbookItem[] = (scrapbookRes.data || []).map(scrapbookRowToModel);
 
-      const scrapbookItems: ScrapbookItem[] = (scrapbookRes.data || []).map((row) => ({
-        id: row.id,
-        title: row.title || '',
-        imageUrl: row.image_url || '',
-        caption: row.caption || '',
-        authorName: row.created_by || '',
-        category: 'moment',
-        createdAt: row.created_at || new Date().toISOString(),
-      }));
-
-      const audioLogs: AudioLog[] = (audioRes.data || []).map((row) => ({
-        id: row.id,
-        title: row.title || 'Diario Audio',
-        audioUrl: row.audio_url || '',
-        durationSeconds: row.duration || 0,
-        recordedBy: row.recorded_by || '',
-        createdAt: row.created_at || new Date().toISOString(),
-      }));
+      const audioLogs: AudioLog[] = (audioRes.data || []).map(audioLogRowToModel);
 
       // --- HYDRATION & AUTO-MIGRATION LAYER FOR NEW TABLES ---
       const characterBiosRows = characterBiosRes?.data || [];
@@ -921,21 +782,12 @@ export class SupabaseSyncService {
 
     try {
       const code = campaignCode.trim();
-      const payload = {
-        id: chapter.id || `chap_${Date.now()}`,
-        campaign_code: code,
-        number: chapter.order || 1,
-        title: chapter.name || '',
-        synopsis: chapter.description || '',
-        status: 'in_progress',
-        order_index: chapter.order || 0,
-        updated_at: new Date().toISOString(),
-      };
+      const payload = chapterModelToRow(chapter, code);
 
       const { error } = await supabase.from('chapters').upsert(payload, { onConflict: 'id' });
       if (error) return handleSupabaseError('Error saving chapter', error);
 
-      // Save coverImageUrl into campaign dossier
+      // Save coverImageUrl into campaign dossier as redundancy
       if (chapter.coverImageUrl !== undefined) {
         this.saveChapterCover(code, chapter.id, chapter.coverImageUrl || '').catch(() => {});
       }
