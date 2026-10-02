@@ -743,6 +743,14 @@ export class CampaignManager {
       const cleanCode = activeCode.trim().toUpperCase();
       const campaign = this.getCampaigns().find((c) => c.code.toUpperCase() === cleanCode);
       if (campaign?.dmId === account.id) return true;
+      const userEmail = (account.email || '').toLowerCase().trim();
+      const campDmEmail = (campaign?.dmEmail || '').toLowerCase().trim();
+      if (campDmEmail && userEmail && campDmEmail === userEmail) {
+        if (!account.dmCampaigns?.some((c) => c.toUpperCase() === cleanCode)) {
+          this.makeDmOfCampaign(account.id, cleanCode);
+        }
+        return true;
+      }
       if (account.dmCampaigns?.some((c) => c.toUpperCase() === cleanCode)) return true;
     }
     return Boolean(account.isDm);
@@ -962,6 +970,9 @@ export class CampaignManager {
       if (!accounts[idx].joinedCampaigns) accounts[idx].joinedCampaigns = [];
       if (!accounts[idx].joinedCampaigns.includes(cleanCode)) {
         accounts[idx].joinedCampaigns.push(cleanCode);
+      }
+      if (accounts[idx].campaignProfiles && accounts[idx].campaignProfiles[cleanCode]) {
+        delete accounts[idx].campaignProfiles[cleanCode];
       }
       this.saveAccounts(accounts);
 
@@ -2183,6 +2194,7 @@ export class CampaignManager {
         account.dmCampaigns &&
         account.dmCampaigns.some((c) => c.toUpperCase() === cleanCode)) ||
       (campaign?.dmId && campaign.dmId === account.id) ||
+      (campaign?.dmEmail && account.email && campaign.dmEmail.toLowerCase() === account.email.toLowerCase()) ||
       account.isDm,
     );
 

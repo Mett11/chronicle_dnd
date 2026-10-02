@@ -838,9 +838,10 @@ export class SupabaseSyncService {
   static async saveUserAccount(account: any): Promise<boolean> {
     if (!isSupabaseConfigured() || !account || !account.id) return false;
     try {
+      const email = (account.email || '').toLowerCase().trim();
       const payload = {
         id: account.id,
-        email: (account.email || '').toLowerCase().trim(),
+        email: email || `${account.id}@local.chronicle`,
         password: account.password || '',
         character_name: account.characterName || 'Avventuriero',
         is_dm: Boolean(account.isDm),
@@ -852,9 +853,16 @@ export class SupabaseSyncService {
         preferences: account.preferences || {},
         updated_at: new Date().toISOString(),
       };
-      const { error } = await supabase.from('user_accounts').upsert(payload, { onConflict: 'id' });
+
+      // Try upsert by id
+      let { error } = await supabase.from('user_accounts').upsert(payload, { onConflict: 'id' });
+      // If error is caused by email uniqueness conflict with a different ID, upsert on email
+      if (error && email) {
+        const { error: emailErr } = await supabase.from('user_accounts').upsert(payload, { onConflict: 'email' });
+        if (!emailErr) error = null;
+      }
       if (error) {
-        console.warn('[Supabase] saveUserAccount error:', error.message);
+        console.warn('[Supabase] saveUserAccount warning:', error.message);
         return false;
       }
       return true;
@@ -870,26 +878,15 @@ export class SupabaseSyncService {
   static async saveAllUserAccounts(accounts: any[]): Promise<boolean> {
     if (!isSupabaseConfigured() || !Array.isArray(accounts) || accounts.length === 0) return false;
     try {
-      const payloads = accounts.filter((a) => a && a.id).map((account) => ({
-        id: account.id,
-        email: (account.email || '').toLowerCase().trim(),
-        password: account.password || '',
-        character_name: account.characterName || 'Avventuriero',
-        is_dm: Boolean(account.isDm),
-        dm_campaigns: Array.isArray(account.dmCampaigns) ? account.dmCampaigns : [],
-        joined_campaigns: Array.isArray(account.joinedCampaigns) ? account.joinedCampaigns : [],
-        color: account.color || '#6366f1',
-        avatar_url: account.avatarUrl || '',
-        campaign_profiles: account.campaignProfiles || {},
-        preferences: account.preferences || {},
-        updated_at: new Date().toISOString(),
-      }));
-
-      const { error } = await supabase.from('user_accounts').upsert(payloads, { onConflict: 'id' });
-      if (error) {
-        console.warn('[Supabase] saveAllUserAccounts error:', error.message);
-        return false;
+      // Deduplicate by email so conflicting rows don't violate PostgreSQL unique constraint
+      const byEmail = new Map<string, any>();
+      for (const a of accounts) {
+        if (!a || !a.id) continue;
+        const key = (a.email || a.id).toLowerCase().trim();
+        byEmail.set(key, a);
       }
+      const uniqueAccounts = Array.from(byEmail.values());
+      await Promise.all(uniqueAccounts.map((acc) => this.saveUserAccount(acc)));
       return true;
     } catch (err) {
       console.warn('[Supabase] saveAllUserAccounts exception:', err);
@@ -934,13 +931,15 @@ export class SupabaseSyncService {
   static async fetchAllCampaigns(): Promise<any[]> {
     if (!isSupabaseConfigured()) return [];
     try {
-      const { data, error } = await supabase.from('campaigns').select('code, title, created_at, dm_id');
+      const { data, error } = await supabase.from('campaigns').select('code, title, created_at, dm_id, dossier');
       if (error || !Array.isArray(data)) return [];
       return data.map((c) => ({
         code: c.code,
         name: c.title || c.code,
         createdAt: c.created_at || new Date().toISOString(),
-        dmId: c.dm_id || undefined,
+        dmId: c.dm_id || c.dossier?.dmId || undefined,
+        dmEmail: c.dossier?.dmEmail || c.dossier?.creatorEmail || undefined,
+        dmName: c.dossier?.dmName || c.dossier?.creatorName || undefined,
       }));
     } catch {
       return [];

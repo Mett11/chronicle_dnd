@@ -158,6 +158,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         refreshPlayers();
         ApiKeyManager.preloadAllKeys(firebaseUser.uid);
         if (matched) {
+          SupabaseSyncService.saveUserAccount(matched).catch(() => {});
           let activeCode = CampaignManager.getActiveCampaignCode();
           if (!activeCode) {
             const defaultCode =
@@ -331,6 +332,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
       setAccount(result.account);
       refreshPlayers();
+      SupabaseSyncService.saveUserAccount(result.account).catch(() => {});
       UserProfileSyncService.syncUserProfile(result.account, user.uid);
       return { success: true };
     } catch (err: any) {

@@ -140,11 +140,29 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
 
   const isDmOf = (camp: CampaignMeta) => {
     if (!account) return false;
+    const userEmail = (account.email || '').toLowerCase().trim();
+    const campDmEmail = (camp.dmEmail || '').toLowerCase().trim();
     return Boolean(
-      account.dmCampaigns?.includes(camp.code) ||
+      account.dmCampaigns?.some((code) => code.toUpperCase() === camp.code.toUpperCase()) ||
       camp.dmId === account.id ||
-      (camp.dmEmail && camp.dmEmail.toLowerCase() === account.email.toLowerCase())
+      (campDmEmail && userEmail && campDmEmail === userEmail) ||
+      account.isDm
     );
+  };
+
+  const handleClaimDm = async (e: React.MouseEvent, camp: CampaignMeta) => {
+    e.stopPropagation();
+    if (!account) return;
+    CampaignManager.makeDmOfCampaign(account.id, camp.code);
+    await SupabaseSyncService.saveCampaign(camp.code, {
+      dmId: account.id,
+      dmName: account.characterName || account.email?.split('@')[0] || 'Dungeon Master',
+      dmEmail: account.email,
+    });
+    const curr = CampaignManager.getCurrentAccount() || account;
+    await SupabaseSyncService.saveUserAccount(curr);
+    refreshAccount();
+    reloadCampaignList();
   };
 
   const getProfileForCampaign = (code: string): CampaignProfile | null => {
@@ -522,6 +540,17 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
                               className="p-1 text-content-3 hover:text-primary hover:bg-content-1/5 rounded transition-colors"
                             >
                               <Edit3 size={11} />
+                            </button>
+
+                            {/* Claim DM Button */}
+                            <button
+                              type="button"
+                              onClick={(e) => handleClaimDm(e, camp)}
+                              title="Sei il Dungeon Master? Clicca per impostare te stesso come DM di questa campagna"
+                              className="px-2 py-0.5 text-[10px] text-primary hover:bg-primary/10 rounded-md border border-primary/30 flex items-center gap-1 transition-colors cursor-pointer"
+                            >
+                              <Crown size={10} />
+                              <span>Imposta DM</span>
                             </button>
                           </div>
                         )}
