@@ -547,26 +547,44 @@ export class CloudSyncService {
     }
   }
 
+  private static globalAccountsFetchInFlight: Promise<void> | null = null;
+  private static lastGlobalAccountsFetchTime = 0;
+
   /**
    * Immediate synchronous/async fetch for user accounts and global campaigns from Supabase
    */
-  static async fetchGlobalAccountsNow() {
+  static async fetchGlobalAccountsNow(force = false): Promise<void> {
     if (!isSupabaseConfigured()) return;
-    try {
-      const [remoteAccounts, remoteCampaigns] = await Promise.all([
-        SupabaseSyncService.fetchAllUserAccounts(),
-        SupabaseSyncService.fetchAllCampaigns(),
-      ]);
-
-      if (Array.isArray(remoteAccounts) && remoteAccounts.length > 0) {
-        this.mergeRemoteAccounts(remoteAccounts);
-      }
-      if (Array.isArray(remoteCampaigns) && remoteCampaigns.length > 0) {
-        this.mergeRemoteCampaigns(remoteCampaigns);
-      }
-    } catch (e) {
-      console.warn('[CloudSync] Global accounts fetch warn:', e);
+    const now = Date.now();
+    if (!force && now - this.lastGlobalAccountsFetchTime < 3000) {
+      return;
     }
+    if (this.globalAccountsFetchInFlight) {
+      return this.globalAccountsFetchInFlight;
+    }
+
+    this.lastGlobalAccountsFetchTime = now;
+    this.globalAccountsFetchInFlight = (async () => {
+      try {
+        const [remoteAccounts, remoteCampaigns] = await Promise.all([
+          SupabaseSyncService.fetchAllUserAccounts(),
+          SupabaseSyncService.fetchAllCampaigns(),
+        ]);
+
+        if (Array.isArray(remoteAccounts) && remoteAccounts.length > 0) {
+          this.mergeRemoteAccounts(remoteAccounts);
+        }
+        if (Array.isArray(remoteCampaigns) && remoteCampaigns.length > 0) {
+          this.mergeRemoteCampaigns(remoteCampaigns);
+        }
+      } catch (e) {
+        console.warn('[CloudSync] Global accounts fetch warn:', e);
+      } finally {
+        this.globalAccountsFetchInFlight = null;
+      }
+    })();
+
+    return this.globalAccountsFetchInFlight;
   }
 
   /**
@@ -735,14 +753,20 @@ export class CloudSyncService {
     const rawAccounts = Array.from(mergedMap.values());
     const { accounts: finalAccounts, modified } = CampaignManager.deduplicateAccounts(rawAccounts);
 
-    CampaignManager.saveAccountsLocalOnly(finalAccounts);
-    if (modified || finalAccounts.length < rawAccounts.length) {
-      // Sync the deduplicated list back to cloud to fix duplicates in Firestore
-      this.syncAccountsToCloud(finalAccounts);
-    }
+    const prevAccountsJson = localStorage.getItem('chronicle_global_user_accounts');
+    const newAccountsJson = JSON.stringify(finalAccounts);
+    const hasAccountChanges = prevAccountsJson !== newAccountsJson;
 
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('chronicle_accounts_updated'));
+    if (hasAccountChanges) {
+      CampaignManager.saveAccountsLocalOnly(finalAccounts);
+      if (modified || finalAccounts.length < rawAccounts.length) {
+        // Sync the deduplicated list back to cloud to fix duplicates in Firestore
+        this.syncAccountsToCloud(finalAccounts);
+      }
+
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('chronicle_accounts_updated'));
+      }
     }
   }
 
@@ -778,9 +802,15 @@ export class CloudSyncService {
     });
 
     const finalCampaigns = Array.from(map.values());
-    CampaignManager.saveCampaignsLocalOnly(finalCampaigns);
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('chronicle_campaigns_updated'));
+    const prevCampJson = localStorage.getItem('chronicle_campaigns_list');
+    const newCampJson = JSON.stringify(finalCampaigns);
+    const hasCampChanges = prevCampJson !== newCampJson;
+
+    if (hasCampChanges) {
+      CampaignManager.saveCampaignsLocalOnly(finalCampaigns);
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('chronicle_campaigns_updated'));
+      }
     }
   }
 

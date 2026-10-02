@@ -138,11 +138,6 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
 
   useEffect(() => {
     reloadCampaignList();
-    if (isSupabaseConfigured()) {
-      import('../lib/cloudSync').then(({ CloudSyncService }) => {
-        CloudSyncService.fetchGlobalAccountsNow();
-      });
-    }
 
     // Check if URL or localStorage has a pending join invite
     try {
@@ -174,7 +169,7 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
       window.removeEventListener('chronicle_accounts_updated', handleUpdate);
       window.removeEventListener('chronicle_data_updated', handleUpdate);
     };
-  }, [account]);
+  }, [account?.id]);
 
   const isDmOf = (camp: CampaignMeta) => {
     if (!account) return false;
@@ -360,8 +355,8 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
 
     if (isSupabaseConfigured()) {
       try {
-        const existingRemote = await SupabaseSyncService.fetchCampaignData(cleanCode);
-        if (existingRemote) {
+        const alreadyExistsOnCloud = await SupabaseSyncService.hasCampaign(cleanCode);
+        if (alreadyExistsOnCloud) {
           setCreateError('Questo codice è già in uso da un altro tavolo su Cloud. Clicca su "Rigenera" per ottenerne uno nuovo.');
           return;
         }

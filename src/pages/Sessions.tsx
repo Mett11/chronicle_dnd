@@ -91,6 +91,7 @@ export function Sessions() {
   const [selectedChapterFilter, setSelectedChapterFilter] = useState<string>('all');
   const [sessionSearchQuery, setSessionSearchQuery] = useState('');
   const [sessionSortOrder, setSessionSortOrder] = useState<'desc' | 'asc'>('desc');
+  const [onlyMySessions, setOnlyMySessions] = useState(false);
   const [inspectingEntity, setInspectingEntity] = useState<Entity | null>(null);
   const [selectedSession, setSelectedSession] = useState<Session | null>(() => {
     const all = CampaignManager.getAccessibleSessions(player);
@@ -333,6 +334,13 @@ export function Sessions() {
         if (!matchesTitle && !matchesRecap && !matchesNumber) return false;
       }
 
+      // Only my sessions filter (attended by current player)
+      if (onlyMySessions && player && !player.isDm) {
+        if (s.excludedPlayerIds && s.excludedPlayerIds.includes(player._id)) {
+          return false;
+        }
+      }
+
       return true;
     });
 
@@ -341,7 +349,7 @@ export function Sessions() {
         ? b.number - a.number
         : a.number - b.number;
     });
-  }, [sessions, selectedChapterFilter, sessionSearchQuery, sessionSortOrder]);
+  }, [sessions, selectedChapterFilter, sessionSearchQuery, sessionSortOrder, onlyMySessions, player]);
 
   const totalPages = Math.max(1, Math.ceil(filteredSessions.length / pageSize));
   const currentSessions = useMemo(() => {
@@ -575,44 +583,29 @@ export function Sessions() {
   };
 
   // Active Top-Level Tab: 'chapters' (arcs entry view) | 'chronicles' (master-detail) | 'events' (all events registry) | 'party' (players roster)
-  const [mainTab, setMainTab] = useState<'chronicles' | 'events' | 'chapters' | 'party'>(() => {
-    return selectParam ? 'chronicles' : 'chapters';
-  });
+  const [mainTab, setMainTab] = useState<'chronicles' | 'events' | 'chapters' | 'party'>('chronicles');
 
   return (
     <div className="flex-1 h-full min-h-0 flex flex-col overflow-hidden bg-surface-0 font-body">
-      {/* Top Header Banner (Only visible inside Chapter / Session view when not in reader mode) */}
-      {mainTab !== 'chapters' && chronicleView !== 'reader' && (
+      {/* Top Header Banner (Only visible when not in full reader mode) */}
+      {chronicleView !== 'reader' && (
         <header className="bg-surface-1 border-b border-surface-2 px-3 sm:px-6 py-2.5 sm:py-3 shrink-0">
           <div className="flex items-center justify-between gap-2 sm:gap-3">
             <div className="flex items-center gap-2 sm:gap-3 min-w-0">
-              <button
-                type="button"
-                onClick={() => {
-                  setSelectedChapterFilter('all');
-                  setMainTab('chapters');
-                }}
-                className="p-1.5 sm:px-2.5 sm:py-1 rounded bg-surface-2 hover:bg-surface-3 text-content-2 hover:text-content-1 text-xs font-mono flex items-center gap-1 transition-colors cursor-pointer shrink-0 border border-surface-2"
-                title="Torna alla vista dei Tomi"
-              >
-                <ChevronLeft size={15} />
-                <span className="hidden sm:inline">Torna ai Tomi</span>
-              </button>
-
               <div className="flex items-center gap-2 min-w-0">
-                {activeChapterObj && (
+                {activeChapterObj && selectedChapterFilter !== 'all' && (
                   <span
                     className="w-2.5 h-2.5 rounded-full shrink-0 shadow-xs ring-1 ring-white/10"
                     style={{ backgroundColor: activeChapterObj.color || '#6366f1' }}
                   />
                 )}
                 <h1 className="font-serif font-bold text-sm sm:text-base md:text-lg text-content-1 tracking-tight truncate">
-                  {activeChapterObj ? activeChapterObj.name : 'Tutte le Sessioni'}
+                  {selectedChapterFilter !== 'all' && activeChapterObj ? activeChapterObj.name : 'Tomo delle Sessioni'}
                 </h1>
                 <span className="text-[10px] font-mono text-content-3 shrink-0">
-                  ({filteredSessions.length})
+                  ({filteredSessions.length} {filteredSessions.length === 1 ? 'sessione' : 'sessioni'})
                 </span>
-                {activeChapterObj && player?.isDm && (
+                {selectedChapterFilter !== 'all' && activeChapterObj && player?.isDm && (
                   <button
                     type="button"
                     onClick={() => {
@@ -650,11 +643,14 @@ export function Sessions() {
             </div>
           </div>
 
-          {/* Primary Navigation Tabs Inside Chapter View */}
+          {/* Primary Navigation Tabs */}
           <div className="flex items-center gap-4 sm:gap-6 mt-2.5 sm:mt-3 -mb-2.5 sm:-mb-3.5 border-t border-surface-2/60 pt-1 text-xs font-mono overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
             <button
               type="button"
-              onClick={() => setMainTab('chronicles')}
+              onClick={() => {
+                setMainTab('chronicles');
+                setChronicleView('index');
+              }}
               className={`py-2 sm:py-2.5 -mb-px border-b-2 transition-colors flex items-center gap-1.5 uppercase tracking-wider whitespace-nowrap cursor-pointer ${
                 mainTab === 'chronicles'
                   ? 'border-primary text-content-1 font-semibold'
@@ -663,6 +659,19 @@ export function Sessions() {
             >
               <Scroll size={13} className={mainTab === 'chronicles' ? 'text-primary' : ''} />
               <span>Cronache &amp; Indice ({filteredSessions.length})</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setMainTab('chapters')}
+              className={`py-2 sm:py-2.5 -mb-px border-b-2 transition-colors flex items-center gap-1.5 uppercase tracking-wider whitespace-nowrap cursor-pointer ${
+                mainTab === 'chapters'
+                  ? 'border-primary text-content-1 font-semibold'
+                  : 'border-transparent text-content-3 hover:text-content-1'
+              }`}
+            >
+              <BookMarked size={13} className={mainTab === 'chapters' ? 'text-primary' : ''} />
+              <span>Tomi &amp; Capitoli ({chapters.length})</span>
             </button>
 
             <button
@@ -765,6 +774,26 @@ export function Sessions() {
                         <SlidersHorizontal size={12} className="text-primary" />
                         <span>{sessionSortOrder === 'desc' ? 'Sess. # Decrescente (N → 1)' : 'Sess. # Crescente (1 → N)'}</span>
                       </button>
+
+                      {/* Player Participation Filter Button */}
+                      {player && !player.isDm && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setOnlyMySessions((prev) => !prev);
+                            setCurrentPage(1);
+                          }}
+                          className={`border rounded-lg px-2.5 py-2 text-xs outline-none cursor-pointer flex items-center gap-1.5 font-mono transition-colors shrink-0 ${
+                            onlyMySessions
+                              ? 'bg-primary/15 border-primary text-primary font-semibold'
+                              : 'bg-surface-2/60 hover:bg-surface-2 border-surface-3 text-content-2'
+                          }`}
+                          title={onlyMySessions ? 'Mostra tutte le sessioni' : 'Mostra solo le sessioni a cui ho partecipato'}
+                        >
+                          <Users size={12} className={onlyMySessions ? 'text-primary' : 'text-content-3'} />
+                          <span>{onlyMySessions ? 'Solo Mie Presenze (Attivo)' : 'Solo Mie Presenze'}</span>
+                        </button>
+                      )}
                     </div>
                   </div>
 

@@ -84,6 +84,29 @@ function sanitizeHeavyPayload<T>(obj: T): T {
 
 export class SupabaseSyncService {
   /**
+   * Checks if a campaign code is already registered in Supabase
+   */
+  static async hasCampaign(campaignCode: string): Promise<boolean> {
+    if (!isSupabaseConfigured() || !campaignCode) return false;
+    try {
+      const cleanCode = campaignCode.trim().toUpperCase();
+      const rawCode = campaignCode.trim();
+      const { data, error } = await supabase
+        .from('campaigns')
+        .select('code')
+        .or(`code.eq.${cleanCode},code.eq.${rawCode}`)
+        .maybeSingle();
+
+      if (error && error.code !== 'PGRST116') {
+        console.warn('[Supabase] Warning checking campaign existence:', error.message);
+      }
+      return Boolean(data && data.code);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * Fetches all campaign relational data from Supabase in parallel
    */
   static async fetchCampaignData(campaignCode: string): Promise<Record<string, any> | null> {
@@ -162,11 +185,29 @@ export class SupabaseSyncService {
           .then(res => res, () => ({ data: [] })),
       ]);
 
-      if (campaignRes.error) {
+      if (campaignRes.error && campaignRes.error.code !== 'PGRST116') {
         console.warn('[Supabase] Warning reading campaigns table:', campaignRes.error.message);
       }
       if (sessionsRes.error) {
         console.warn('[Supabase] Warning reading sessions table:', sessionsRes.error.message);
+      }
+
+      const hasAnyData = Boolean(
+        campaignRes.data ||
+        (chaptersRes.data && chaptersRes.data.length > 0) ||
+        (sessionsRes.data && sessionsRes.data.length > 0) ||
+        (entitiesRes.data && entitiesRes.data.length > 0) ||
+        (notesRes.data && notesRes.data.length > 0) ||
+        (mapsRes.data && mapsRes.data.length > 0) ||
+        (scrapbookRes.data && scrapbookRes.data.length > 0) ||
+        (audioRes.data && audioRes.data.length > 0) ||
+        (characterBiosRes.data && characterBiosRes.data.length > 0) ||
+        (familyRelationsRes.data && familyRelationsRes.data.length > 0) ||
+        (worldLoreArticlesRes.data && worldLoreArticlesRes.data.length > 0)
+      );
+
+      if (!hasAnyData) {
+        return null;
       }
 
       const campRow = campaignRes.data || {};
