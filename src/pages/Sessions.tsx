@@ -86,14 +86,14 @@ export function Sessions() {
   const { id: paramId } = useParams<{ id?: string }>();
   const selectParam = searchParams.get('select') || paramId;
 
-  const [sessions, setSessions] = useState<Session[]>(() => CampaignManager.getSessions());
+  const [sessions, setSessions] = useState<Session[]>(() => CampaignManager.getAccessibleSessions(player));
   const [chapters, setChapters] = useState<CampaignChapter[]>(() => CampaignManager.getChapters());
   const [selectedChapterFilter, setSelectedChapterFilter] = useState<string>('all');
   const [sessionSearchQuery, setSessionSearchQuery] = useState('');
   const [sessionSortOrder, setSessionSortOrder] = useState<'desc' | 'asc'>('desc');
   const [inspectingEntity, setInspectingEntity] = useState<Entity | null>(null);
   const [selectedSession, setSelectedSession] = useState<Session | null>(() => {
-    const all = CampaignManager.getSessions();
+    const all = CampaignManager.getAccessibleSessions(player);
     if (selectParam) {
       const match = all.find((s) => s._id === selectParam || s.number.toString() === selectParam);
       if (match) return match;
@@ -268,7 +268,7 @@ export function Sessions() {
   }, [allPlayers]);
 
   const refreshSessions = () => {
-    const updated = CampaignManager.getSessions();
+    const updated = CampaignManager.getAccessibleSessions(player);
     const updatedChaps = CampaignManager.getChapters();
     setSessions(updated);
     setChapters(updatedChaps);
@@ -285,6 +285,10 @@ export function Sessions() {
       setChronicleView('index');
     }
   };
+
+  useEffect(() => {
+    refreshSessions();
+  }, [player]);
 
   useEffect(() => {
     const handleUpdate = () => {
@@ -307,7 +311,7 @@ export function Sessions() {
       window.removeEventListener('chronicle_accounts_updated', handleAccountsUpdate);
       window.removeEventListener('storage', handleUpdate);
     };
-  }, [selectedSession]);
+  }, [selectedSession, player]);
 
   const filteredSessions = useMemo(() => {
     const list = sessions.filter((s) => {
@@ -608,7 +612,7 @@ export function Sessions() {
                 <span className="text-[10px] font-mono text-content-3 shrink-0">
                   ({filteredSessions.length})
                 </span>
-                {activeChapterObj && (
+                {activeChapterObj && player?.isDm && (
                   <button
                     type="button"
                     onClick={() => {
@@ -630,17 +634,19 @@ export function Sessions() {
 
             {/* Action Controls */}
             <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-              <button
-                id="btn-create-new-session"
-                type="button"
-                onClick={handleOpenCreateModal}
-                className="px-2.5 sm:px-3.5 py-1.5 rounded-[2px] font-medium text-xs bg-primary text-surface-0 hover:bg-primary-hover transition-colors shadow-xs flex items-center gap-1 cursor-pointer shrink-0"
-                title="Nuova Sessione"
-              >
-                <Plus size={14} className="stroke-[2.5]" />
-                <span className="sm:hidden font-mono font-bold">+</span>
-                <span className="hidden sm:inline">Nuova Sessione</span>
-              </button>
+              {player?.isDm && (
+                <button
+                  id="btn-create-new-session"
+                  type="button"
+                  onClick={handleOpenCreateModal}
+                  className="px-2.5 sm:px-3.5 py-1.5 rounded-[2px] font-medium text-xs bg-primary text-surface-0 hover:bg-primary-hover transition-colors shadow-xs flex items-center gap-1 cursor-pointer shrink-0"
+                  title="Nuova Sessione"
+                >
+                  <Plus size={14} className="stroke-[2.5]" />
+                  <span className="sm:hidden font-mono font-bold">+</span>
+                  <span className="hidden sm:inline">Nuova Sessione</span>
+                </button>
+              )}
             </div>
           </div>
 
@@ -763,14 +769,16 @@ export function Sessions() {
                   </div>
 
                   <div className="flex items-center justify-between sm:justify-end gap-3 text-xs">
-                    <button
-                      type="button"
-                      onClick={() => setIsChapterModalOpen(true)}
-                      className="text-primary hover:underline flex items-center gap-1 cursor-pointer font-mono"
-                    >
-                      <FolderPlus size={13} />
-                      <span>Gestisci Capitoli</span>
-                    </button>
+                    {player?.isDm && (
+                      <button
+                        type="button"
+                        onClick={() => setIsChapterModalOpen(true)}
+                        className="text-primary hover:underline flex items-center gap-1 cursor-pointer font-mono"
+                      >
+                        <FolderPlus size={13} />
+                        <span>Gestisci Capitoli</span>
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
@@ -796,13 +804,15 @@ export function Sessions() {
                           Azzera ricerca
                         </button>
                       )}
-                      <button
-                        type="button"
-                        onClick={handleOpenCreateModal}
-                        className="px-3 py-1.5 rounded bg-primary text-surface-0 text-xs font-mono font-semibold cursor-pointer hover:bg-primary-hover transition-colors"
-                      >
-                        + Registra Nuova Sessione
-                      </button>
+                      {player?.isDm && (
+                        <button
+                          type="button"
+                          onClick={handleOpenCreateModal}
+                          className="px-3 py-1.5 rounded bg-primary text-surface-0 text-xs font-mono font-semibold cursor-pointer hover:bg-primary-hover transition-colors"
+                        >
+                          + Registra Nuova Sessione
+                        </button>
+                      )}
                     </div>
                   </div>
                 ) : (
@@ -1266,61 +1276,68 @@ export function Sessions() {
                   </section>
 
                   {/* SECTION 2: Snodi Narrativi (if present) */}
-                  {selectedSession.events && selectedSession.events.length > 0 && (
-                    <section className="space-y-3 pt-4 border-t border-surface-2">
-                      <div className="flex items-center justify-between">
-                        <h3 className="font-serif font-bold text-sm sm:text-base text-content-1 flex items-center gap-2">
-                          <Sparkles size={14} className="text-primary" />
-                          <span>Snodi ed Eventi Chiave ({selectedSession.events.length})</span>
-                        </h3>
-                      </div>
-                      <div className="divide-y divide-surface-2 border border-surface-2 rounded-xl bg-surface-1 overflow-hidden">
-                        {selectedSession.events.map((evt) => (
-                          <div
-                            key={evt.id}
-                            className={`p-3.5 space-y-1.5 ${
-                              evt.impact === 'major' ? 'border-l-2 border-primary bg-primary/5' : ''
-                            }`}
-                          >
-                            <div className="flex items-center justify-between gap-2">
-                              <h4 className="font-serif font-semibold text-xs sm:text-sm text-content-1">
-                                <EntityMentionText text={evt.title} onEntityClick={setInspectingEntity} />
-                              </h4>
-                              <div className="flex items-center gap-2 font-mono text-[10px]">
-                                {evt.impact === 'major' && (
-                                  <span className="px-1.5 py-0.5 rounded-[2px] font-semibold text-primary bg-primary/10">
-                                    [CRUCIALE]
+                  {(() => {
+                    const accessibleEvents = (selectedSession.events || []).filter((evt) =>
+                      CampaignManager.isSessionEventAccessible(evt, player)
+                    );
+                    if (accessibleEvents.length === 0) return null;
+
+                    return (
+                      <section className="space-y-3 pt-4 border-t border-surface-2">
+                        <div className="flex items-center justify-between">
+                          <h3 className="font-serif font-bold text-sm sm:text-base text-content-1 flex items-center gap-2">
+                            <Sparkles size={14} className="text-primary" />
+                            <span>Snodi ed Eventi Chiave ({accessibleEvents.length})</span>
+                          </h3>
+                        </div>
+                        <div className="divide-y divide-surface-2 border border-surface-2 rounded-xl bg-surface-1 overflow-hidden">
+                          {accessibleEvents.map((evt) => (
+                            <div
+                              key={evt.id}
+                              className={`p-3.5 space-y-1.5 ${
+                                evt.impact === 'major' ? 'border-l-2 border-primary bg-primary/5' : ''
+                              }`}
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <h4 className="font-serif font-semibold text-xs sm:text-sm text-content-1">
+                                  <EntityMentionText text={evt.title} onEntityClick={setInspectingEntity} />
+                                </h4>
+                                <div className="flex items-center gap-2 font-mono text-[10px]">
+                                  {evt.impact === 'major' && (
+                                    <span className="px-1.5 py-0.5 rounded-[2px] font-semibold text-primary bg-primary/10">
+                                      [CRUCIALE]
+                                    </span>
+                                  )}
+                                  {evt.impact === 'secret' && (
+                                    <span className="px-1.5 py-0.5 rounded-[2px] font-semibold text-purple-400 bg-purple-500/10 flex items-center gap-1">
+                                      <ShieldAlert size={10} /> [SEGRETO DM]
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                              {evt.description && (
+                                <p className="text-xs text-content-2 leading-relaxed font-sans">
+                                  <EntityMentionText text={evt.description} onEntityClick={setInspectingEntity} />
+                                </p>
+                              )}
+                              <div className="flex flex-wrap items-center gap-3 pt-1 text-[10px] text-content-3 font-mono">
+                                {evt.loreDate && (
+                                  <span className="flex items-center gap-1">
+                                    <Clock size={11} className="text-primary" /> {evt.loreDate}
                                   </span>
                                 )}
-                                {evt.impact === 'secret' && (
-                                  <span className="px-1.5 py-0.5 rounded-[2px] font-semibold text-purple-400 bg-purple-500/10 flex items-center gap-1">
-                                    <ShieldAlert size={10} /> [SEGRETO DM]
+                                {evt.location && (
+                                  <span className="flex items-center gap-1">
+                                    <MapPin size={11} className="text-emerald-400" /> {evt.location}
                                   </span>
                                 )}
                               </div>
                             </div>
-                            {evt.description && (
-                              <p className="text-xs text-content-2 leading-relaxed font-sans">
-                                <EntityMentionText text={evt.description} onEntityClick={setInspectingEntity} />
-                              </p>
-                            )}
-                            <div className="flex flex-wrap items-center gap-3 pt-1 text-[10px] text-content-3 font-mono">
-                              {evt.loreDate && (
-                                <span className="flex items-center gap-1">
-                                  <Clock size={11} className="text-primary" /> {evt.loreDate}
-                                </span>
-                              )}
-                              {evt.location && (
-                                <span className="flex items-center gap-1">
-                                  <MapPin size={11} className="text-emerald-400" /> {evt.location}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </section>
-                  )}
+                          ))}
+                        </div>
+                      </section>
+                    );
+                  })()}
 
                   {/* SECTION 3: Mappe & Illustrazioni (if present) */}
                   {selectedSession.images && selectedSession.images.length > 0 && (
@@ -1607,32 +1624,7 @@ export function Sessions() {
                 Seleziona un capitolo per accedere direttamente alla trascrizione della cronaca di gioco.
               </p>
             </div>
-            <button
-              type="button"
-              onClick={() => {
-                setEditingChapter(null);
-                setNewChapName('');
-                setNewChapDesc('');
-                setNewChapColor('#6366f1');
-                setNewChapCoverUrl('');
-                setIsChapterModalOpen(true);
-              }}
-              className="px-4 py-2.5 rounded-[2px] bg-primary text-surface-0 hover:bg-primary-hover text-xs font-mono font-semibold flex items-center gap-2 transition-all cursor-pointer shadow-md self-start sm:self-auto hover:shadow-lg shrink-0"
-            >
-              <FolderPlus size={16} />
-              <span>+ Nuovo Capitolo</span>
-            </button>
-          </div>
-
-          {chapters.length === 0 ? (
-            <div className="p-16 border border-surface-2 rounded-2xl bg-surface-1 text-center text-content-3 space-y-4 shadow-sm">
-              <Bookmark size={48} className="mx-auto text-primary opacity-30" />
-              <div className="space-y-1 max-w-md mx-auto">
-                <h3 className="text-base font-serif font-bold text-content-1">Nessun capitolo creato finora</h3>
-                <p className="text-xs text-content-3">
-                  Crea il tuo primo capitolo per organizzare le sessioni di gioco e associare splendide immagini di copertina.
-                </p>
-              </div>
+            {player?.isDm && (
               <button
                 type="button"
                 onClick={() => {
@@ -1643,11 +1635,42 @@ export function Sessions() {
                   setNewChapCoverUrl('');
                   setIsChapterModalOpen(true);
                 }}
-                className="mt-2 px-5 py-2.5 bg-primary text-surface-0 text-xs font-mono rounded-[2px] cursor-pointer inline-flex items-center gap-2 shadow-sm font-semibold"
+                className="px-4 py-2.5 rounded-[2px] bg-primary text-surface-0 hover:bg-primary-hover text-xs font-mono font-semibold flex items-center gap-2 transition-all cursor-pointer shadow-md self-start sm:self-auto hover:shadow-lg shrink-0"
               >
-                <FolderPlus size={15} />
-                <span>Crea Primo Capitolo</span>
+                <FolderPlus size={16} />
+                <span>+ Nuovo Capitolo</span>
               </button>
+            )}
+          </div>
+
+          {chapters.length === 0 ? (
+            <div className="p-16 border border-surface-2 rounded-2xl bg-surface-1 text-center text-content-3 space-y-4 shadow-sm">
+              <Bookmark size={48} className="mx-auto text-primary opacity-30" />
+              <div className="space-y-1 max-w-md mx-auto">
+                <h3 className="text-base font-serif font-bold text-content-1">Nessun capitolo creato finora</h3>
+                <p className="text-xs text-content-3">
+                  {player?.isDm
+                    ? 'Crea il tuo primo capitolo per organizzare le sessioni di gioco e associare splendide immagini di copertina.'
+                    : 'Il Dungeon Master non ha ancora strutturato i capitoli narrativi per questa campagna.'}
+                </p>
+              </div>
+              {player?.isDm && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingChapter(null);
+                    setNewChapName('');
+                    setNewChapDesc('');
+                    setNewChapColor('#6366f1');
+                    setNewChapCoverUrl('');
+                    setIsChapterModalOpen(true);
+                  }}
+                  className="mt-2 px-5 py-2.5 bg-primary text-surface-0 text-xs font-mono rounded-[2px] cursor-pointer inline-flex items-center gap-2 shadow-sm font-semibold"
+                >
+                  <FolderPlus size={15} />
+                  <span>Crea Primo Capitolo</span>
+                </button>
+              )}
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8 sm:gap-10">
@@ -1676,9 +1699,17 @@ export function Sessions() {
                         <div className="w-full h-full bg-gradient-to-b from-surface-2 to-surface-1 flex flex-col items-center justify-center p-8 text-center relative">
                           <BookOpen size={52} className="text-content-3 opacity-30 mb-3" />
                           <span className="text-xs font-mono text-content-3 font-semibold uppercase tracking-wider">Nessuna Copertina</span>
-                          <span className="text-xs font-mono text-primary hover:underline mt-3 flex items-center gap-1 font-semibold">
-                            <ImageIcon size={14} /> + Imposta Copertina
-                          </span>
+                          {player?.isDm && (
+                            <span
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setEditingCoverChapter(chap);
+                              }}
+                              className="text-xs font-mono text-primary hover:underline mt-3 flex items-center gap-1 font-semibold cursor-pointer"
+                            >
+                              <ImageIcon size={14} /> + Imposta Copertina
+                            </span>
+                          )}
                         </div>
                       )}
 
@@ -1692,39 +1723,41 @@ export function Sessions() {
                           <span>{sessionCount} {sessionCount === 1 ? 'SESSIONE' : 'SESSIONI'}</span>
                         </span>
 
-                        <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
-                          <button
-                            type="button"
-                            onClick={() => setEditingCoverChapter(chap)}
-                            className="p-2 rounded-[2px] bg-black/80 hover:bg-black text-white/90 hover:text-white backdrop-blur-md transition-colors cursor-pointer border border-white/10 shadow-sm"
-                            title="Modifica copertina capitolo"
-                          >
-                            <ImageIcon size={14} />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setEditingChapter(chap);
-                              setNewChapName(chap.name);
-                              setNewChapDesc(chap.description || '');
-                              setNewChapColor(chap.color || '#6366f1');
-                              setNewChapCoverUrl(chap.coverImageUrl || '');
-                              setIsChapterModalOpen(true);
-                            }}
-                            className="p-2 rounded-[2px] bg-black/80 hover:bg-black text-white/90 hover:text-white backdrop-blur-md transition-colors cursor-pointer border border-white/10 shadow-sm"
-                            title="Modifica dettagli capitolo"
-                          >
-                            <Edit3 size={14} />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setChapterToDelete(chap.id)}
-                            className="p-2 rounded-[2px] bg-black/80 hover:bg-black text-white/90 hover:text-rose-400 backdrop-blur-md transition-colors cursor-pointer border border-white/10 shadow-sm"
-                            title="Elimina capitolo"
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        </div>
+                        {player?.isDm && (
+                          <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                            <button
+                              type="button"
+                              onClick={() => setEditingCoverChapter(chap)}
+                              className="p-2 rounded-[2px] bg-black/80 hover:bg-black text-white/90 hover:text-white backdrop-blur-md transition-colors cursor-pointer border border-white/10 shadow-sm"
+                              title="Modifica copertina capitolo"
+                            >
+                              <ImageIcon size={14} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingChapter(chap);
+                                setNewChapName(chap.name);
+                                setNewChapDesc(chap.description || '');
+                                setNewChapColor(chap.color || '#6366f1');
+                                setNewChapCoverUrl(chap.coverImageUrl || '');
+                                setIsChapterModalOpen(true);
+                              }}
+                              className="p-2 rounded-[2px] bg-black/80 hover:bg-black text-white/90 hover:text-white backdrop-blur-md transition-colors cursor-pointer border border-white/10 shadow-sm"
+                              title="Modifica dettagli capitolo"
+                            >
+                              <Edit3 size={14} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setChapterToDelete(chap.id)}
+                              className="p-2 rounded-[2px] bg-black/80 hover:bg-black text-white/90 hover:text-rose-400 backdrop-blur-md transition-colors cursor-pointer border border-white/10 shadow-sm"
+                              title="Elimina capitolo"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        )}
                       </div>
                     </div>
 
@@ -2471,54 +2504,58 @@ export function Sessions() {
                 </span>
               </button>
 
-              {/* Modifica Sessione */}
-              <button
-                type="button"
-                onClick={() => {
-                  setIsActionsModalOpen(false);
-                  handleOpenEditModal(selectedSession);
-                }}
-                className="w-full text-left p-3 rounded-[2px] bg-surface-2/50 hover:bg-surface-2 border border-surface-2 hover:border-surface-3 transition-colors flex items-center justify-between gap-3 group cursor-pointer"
-              >
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="p-2 rounded-[2px] bg-surface-3 text-content-2 shrink-0 group-hover:scale-105 transition-transform">
-                    <Edit3 size={16} />
-                  </div>
-                  <div className="min-w-0">
-                    <div className="text-xs font-semibold text-content-1 group-hover:text-primary transition-colors">
-                      Modifica Cronaca & Dati
-                    </div>
-                    <div className="text-[11px] text-content-3 leading-tight">
-                      Modifica titolo, capitolo, data lore, recap ed eventi
-                    </div>
-                  </div>
-                </div>
-                <span className="text-[9px] font-mono uppercase text-content-3 bg-surface-2 px-1.5 py-0.5 rounded border border-surface-3 shrink-0">
-                  Editor
-                </span>
-              </button>
-
-              {/* Separatore per Elimina */}
-              <div className="pt-1 border-t border-surface-2/60">
+              {/* Modifica Sessione (Only DM) */}
+              {player?.isDm && (
                 <button
                   type="button"
                   onClick={() => {
                     setIsActionsModalOpen(false);
-                    setSessionToDelete(selectedSession._id);
+                    handleOpenEditModal(selectedSession);
                   }}
-                  className="w-full text-left p-2.5 rounded-[2px] bg-rose-500/5 hover:bg-rose-500/15 border border-rose-500/20 hover:border-rose-500/40 text-rose-300 transition-colors flex items-center justify-between gap-3 group cursor-pointer"
+                  className="w-full text-left p-3 rounded-[2px] bg-surface-2/50 hover:bg-surface-2 border border-surface-2 hover:border-surface-3 transition-colors flex items-center justify-between gap-3 group cursor-pointer"
                 >
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <div className="p-1.5 rounded-[2px] bg-rose-500/10 text-rose-400 shrink-0">
-                      <Trash2 size={14} />
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="p-2 rounded-[2px] bg-surface-3 text-content-2 shrink-0 group-hover:scale-105 transition-transform">
+                      <Edit3 size={16} />
                     </div>
-                    <span className="text-xs font-medium text-rose-300">Elimina questa sessione</span>
+                    <div className="min-w-0">
+                      <div className="text-xs font-semibold text-content-1 group-hover:text-primary transition-colors">
+                        Modifica Cronaca & Dati
+                      </div>
+                      <div className="text-[11px] text-content-3 leading-tight">
+                        Modifica titolo, capitolo, data lore, recap ed eventi
+                      </div>
+                    </div>
                   </div>
-                  <span className="text-[9px] font-mono uppercase text-rose-400 bg-rose-500/10 px-1.5 py-0.5 rounded border border-rose-500/20">
-                    Elimina
+                  <span className="text-[9px] font-mono uppercase text-content-3 bg-surface-2 px-1.5 py-0.5 rounded border border-surface-3 shrink-0">
+                    Editor
                   </span>
                 </button>
-              </div>
+              )}
+
+              {/* Separatore per Elimina (Only DM) */}
+              {player?.isDm && (
+                <div className="pt-1 border-t border-surface-2/60">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsActionsModalOpen(false);
+                      setSessionToDelete(selectedSession._id);
+                    }}
+                    className="w-full text-left p-2.5 rounded-[2px] bg-rose-500/5 hover:bg-rose-500/15 border border-rose-500/20 hover:border-rose-500/40 text-rose-300 transition-colors flex items-center justify-between gap-3 group cursor-pointer"
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="p-1.5 rounded-[2px] bg-rose-500/10 text-rose-400 shrink-0">
+                        <Trash2 size={14} />
+                      </div>
+                      <span className="text-xs font-medium text-rose-300">Elimina questa sessione</span>
+                    </div>
+                    <span className="text-[9px] font-mono uppercase text-rose-400 bg-rose-500/10 px-1.5 py-0.5 rounded border border-rose-500/20">
+                      Elimina
+                    </span>
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>
