@@ -784,7 +784,7 @@ export class SupabaseSyncService {
   }
 
   /**
-   * Persists active party members / user accounts into campaign row in Supabase
+   * Non-destructive merge of active party members / user accounts into campaign row and user_accounts table in Supabase
    */
   static async saveActivePlayers(campaignCode: string, accounts: any[]): Promise<boolean> {
     if (!isSupabaseConfigured() || !campaignCode) return false;
@@ -792,15 +792,34 @@ export class SupabaseSyncService {
       const code = campaignCode.trim();
       const sanitized = Array.isArray(accounts) ? accounts.filter((a) => a && a.id) : [];
 
-      // Also get existing dossier to safely mirror activePlayers
-      const { data: camp } = await supabase.from('campaigns').select('dossier').eq('code', code).maybeSingle();
+      // 1. Sync each account to the dedicated public.user_accounts table
+      for (const acc of sanitized) {
+        this.saveUserAccount(acc).catch(() => {});
+      }
+
+      // 2. Fetch existing active_players from campaigns to avoid wiping out fellow party members
+      const { data: camp } = await supabase.from('campaigns').select('active_players, dossier').eq('code', code).maybeSingle();
+      const existingPlayers: any[] = Array.isArray(camp?.active_players) ? camp.active_players : [];
+
+      // Non-destructive merge
+      const playerMap = new Map<string, any>();
+      existingPlayers.forEach((p) => {
+        if (p && p.id) playerMap.set(p.id, p);
+      });
+      sanitized.forEach((p) => {
+        if (p && p.id) {
+          const current = playerMap.get(p.id) || {};
+          playerMap.set(p.id, { ...current, ...p });
+        }
+      });
+      const mergedPlayers = Array.from(playerMap.values());
       const dossier = camp?.dossier || {};
 
       const { error } = await supabase.from('campaigns').update({
-        active_players: sanitized,
+        active_players: mergedPlayers,
         dossier: {
           ...dossier,
-          activePlayers: sanitized,
+          activePlayers: mergedPlayers,
         },
         updated_at: new Date().toISOString(),
       }).eq('code', code);
@@ -810,6 +829,121 @@ export class SupabaseSyncService {
     } catch (err) {
       console.error('[Supabase] Failed to save active players:', err);
       return false;
+    }
+  }
+
+  /**
+   * Saves or updates a user account in the central public.user_accounts table
+   */
+  static async saveUserAccount(account: any): Promise<boolean> {
+    if (!isSupabaseConfigured() || !account || !account.id) return false;
+    try {
+      const payload = {
+        id: account.id,
+        email: (account.email || '').toLowerCase().trim(),
+        password: account.password || '',
+        character_name: account.characterName || 'Avventuriero',
+        is_dm: Boolean(account.isDm),
+        dm_campaigns: Array.isArray(account.dmCampaigns) ? account.dmCampaigns : [],
+        joined_campaigns: Array.isArray(account.joinedCampaigns) ? account.joinedCampaigns : [],
+        color: account.color || '#6366f1',
+        avatar_url: account.avatarUrl || '',
+        campaign_profiles: account.campaignProfiles || {},
+        preferences: account.preferences || {},
+        updated_at: new Date().toISOString(),
+      };
+      const { error } = await supabase.from('user_accounts').upsert(payload, { onConflict: 'id' });
+      if (error) {
+        console.warn('[Supabase] saveUserAccount error:', error.message);
+        return false;
+      }
+      return true;
+    } catch (err) {
+      console.warn('[Supabase] saveUserAccount exception:', err);
+      return false;
+    }
+  }
+
+  /**
+   * Bulk saves all user accounts into public.user_accounts
+   */
+  static async saveAllUserAccounts(accounts: any[]): Promise<boolean> {
+    if (!isSupabaseConfigured() || !Array.isArray(accounts) || accounts.length === 0) return false;
+    try {
+      const payloads = accounts.filter((a) => a && a.id).map((account) => ({
+        id: account.id,
+        email: (account.email || '').toLowerCase().trim(),
+        password: account.password || '',
+        character_name: account.characterName || 'Avventuriero',
+        is_dm: Boolean(account.isDm),
+        dm_campaigns: Array.isArray(account.dmCampaigns) ? account.dmCampaigns : [],
+        joined_campaigns: Array.isArray(account.joinedCampaigns) ? account.joinedCampaigns : [],
+        color: account.color || '#6366f1',
+        avatar_url: account.avatarUrl || '',
+        campaign_profiles: account.campaignProfiles || {},
+        preferences: account.preferences || {},
+        updated_at: new Date().toISOString(),
+      }));
+
+      const { error } = await supabase.from('user_accounts').upsert(payloads, { onConflict: 'id' });
+      if (error) {
+        console.warn('[Supabase] saveAllUserAccounts error:', error.message);
+        return false;
+      }
+      return true;
+    } catch (err) {
+      console.warn('[Supabase] saveAllUserAccounts exception:', err);
+      return false;
+    }
+  }
+
+  /**
+   * Fetches all user accounts from the central public.user_accounts table
+   */
+  static async fetchAllUserAccounts(): Promise<any[]> {
+    if (!isSupabaseConfigured()) return [];
+    try {
+      const { data, error } = await supabase.from('user_accounts').select('*');
+      if (error || !Array.isArray(data)) {
+        console.warn('[Supabase] fetchAllUserAccounts error:', error?.message);
+        return [];
+      }
+      return data.map((row) => ({
+        id: row.id,
+        email: row.email,
+        password: row.password,
+        characterName: row.character_name,
+        isDm: Boolean(row.is_dm),
+        dmCampaigns: Array.isArray(row.dm_campaigns) ? row.dm_campaigns : [],
+        joinedCampaigns: Array.isArray(row.joined_campaigns) ? row.joined_campaigns : [],
+        color: row.color || '#6366f1',
+        avatarUrl: row.avatar_url || '',
+        campaignProfiles: row.campaign_profiles || {},
+        preferences: row.preferences || {},
+        createdAt: row.created_at || new Date().toISOString(),
+      }));
+    } catch (err) {
+      console.warn('[Supabase] fetchAllUserAccounts exception:', err);
+      return [];
+    }
+  }
+
+  /**
+   * Fetches all campaigns from Supabase for the global campaign list
+   */
+  static async fetchAllCampaigns(): Promise<any[]> {
+    if (!isSupabaseConfigured()) return [];
+    try {
+      const { data, error } = await supabase.from('campaigns').select('code, title, created_at, dm_id');
+      if (error || !Array.isArray(data)) return [];
+      return data.map((c) => ({
+        code: c.code,
+        name: c.title || c.code,
+        createdAt: c.created_at || new Date().toISOString(),
+        dmId: c.dm_id || undefined,
+      }));
+    } catch {
+      return [];
     }
   }
 

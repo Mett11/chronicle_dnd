@@ -481,6 +481,10 @@ export class CloudSyncService {
    * Directly syncs accounts array to Supabase
    */
   static async syncAccountsToCloud(accounts: UserAccount[]) {
+    if (!isSupabaseConfigured() || !Array.isArray(accounts)) return;
+    // Always persist to central public.user_accounts table
+    SupabaseSyncService.saveAllUserAccounts(accounts).catch(() => {});
+
     const activeCode = CampaignManager.getActiveCampaignCode();
     if (activeCode && activeCode !== '__NONE__') {
       SupabaseSyncService.saveActivePlayers(activeCode, accounts).catch(() => {});
@@ -525,17 +529,33 @@ export class CloudSyncService {
   }
 
   /**
-   * Immediate synchronous/async fetch for user accounts
+   * Immediate synchronous/async fetch for user accounts and global campaigns from Supabase
    */
   static async fetchGlobalAccountsNow() {
-    // Supabase handles account profile hydration
+    if (!isSupabaseConfigured()) return;
+    try {
+      const [remoteAccounts, remoteCampaigns] = await Promise.all([
+        SupabaseSyncService.fetchAllUserAccounts(),
+        SupabaseSyncService.fetchAllCampaigns(),
+      ]);
+
+      if (Array.isArray(remoteAccounts) && remoteAccounts.length > 0) {
+        this.mergeRemoteAccounts(remoteAccounts);
+      }
+      if (Array.isArray(remoteCampaigns) && remoteCampaigns.length > 0) {
+        this.mergeRemoteCampaigns(remoteCampaigns);
+      }
+    } catch (e) {
+      console.warn('[CloudSync] Global accounts fetch warn:', e);
+    }
   }
 
   /**
    * Initializes real-time listener for global accounts & campaigns
    */
   static initGlobalSync() {
-    // Supabase handles global sync
+    if (!isSupabaseConfigured()) return;
+    this.fetchGlobalAccountsNow();
   }
 
   private static mergeRemoteAccounts(remoteAccounts: UserAccount[], remoteDeletedIds: string[] = []) {
@@ -1090,9 +1110,6 @@ export class CloudSyncService {
                 console.warn('[CloudSync] AI keys hydration warn:', e);
               }
             }
-
-            // 0.1 Attach live Supabase Realtime WebSockets listener for seamless multi-user live sync
-            this.setupSupabaseRealtime(activeCode);
 
             this.isCampaignHydrated = true;
             if (typeof window !== 'undefined') {

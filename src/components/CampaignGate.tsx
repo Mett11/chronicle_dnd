@@ -120,6 +120,11 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
 
   useEffect(() => {
     reloadCampaignList();
+    if (isSupabaseConfigured()) {
+      import('../lib/cloudSync').then(({ CloudSyncService }) => {
+        CloudSyncService.fetchGlobalAccountsNow();
+      });
+    }
     const handleUpdate = () => {
       reloadCampaignList();
     };
@@ -198,13 +203,8 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
       if (!existing && isSupabaseConfigured()) {
         try {
           const supaData = await SupabaseSyncService.fetchCampaignData(cleanCode);
-          if (
-            supaData &&
-            ((supaData.sessions && supaData.sessions.length > 0) ||
-              (supaData.notes && supaData.notes.length > 0) ||
-              (supaData.entities && supaData.entities.length > 0))
-          ) {
-            existing = CampaignManager.createCampaign(cleanCode, `Campagna ${cleanCode}`);
+          if (supaData) {
+            existing = CampaignManager.createCampaign(cleanCode, supaData.title || `Campagna ${cleanCode}`);
           }
         } catch (supaErr) {
           console.warn('Errore verifica supabase campagna:', supaErr);
