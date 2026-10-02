@@ -135,13 +135,29 @@ export class SupabaseSyncService {
       const sessionsMeta = dossier.sessionsMeta || {};
       const mapFolders = Array.isArray(dossier.mapFolders) ? dossier.mapFolders : [];
 
-      const chapters: CampaignChapter[] = (chaptersRes.data || []).map((row) => ({
-        id: row.id,
-        name: row.title || 'Capitolo',
-        description: row.synopsis || '',
-        order: row.order_index ?? row.number ?? 0,
-        coverImageUrl: chaptersMeta[row.id]?.coverImageUrl || (row as any).cover_image_url || (row as any).image_url || undefined,
-      }));
+      const chapters: CampaignChapter[] = (chaptersRes.data || []).map((row) => {
+        const title = row.title || 'Capitolo';
+        const metaCover = chaptersMeta[row.id]?.coverImageUrl ||
+          chaptersMeta[row.id]?.imageUrl ||
+          chaptersMeta[title]?.coverImageUrl ||
+          chaptersMeta[title]?.imageUrl;
+
+        const rowCover = (row as any).cover_image_url ||
+          (row as any).image_url ||
+          (row as any).cover_image ||
+          (row as any).coverUrl ||
+          (row as any).imageUrl ||
+          (row as any).thumbnail_url ||
+          undefined;
+
+        return {
+          id: row.id,
+          name: title,
+          description: row.synopsis || '',
+          order: row.order_index ?? row.number ?? 0,
+          coverImageUrl: metaCover || rowCover || undefined,
+        };
+      });
 
       const sessions: Session[] = (sessionsRes.data || []).map((row) => {
         // Support both recap array or summary markdown string
