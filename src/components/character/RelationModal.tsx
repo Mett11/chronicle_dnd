@@ -19,6 +19,8 @@ import {
   ChevronDown,
   Eye,
   Lock,
+  BookOpen,
+  Plus,
 } from 'lucide-react';
 import {
   CharacterRelationship,
@@ -42,6 +44,7 @@ interface RelationModalProps {
   playerId: string;
   currentPlayerName?: string;
   existingRelations?: CharacterRelationship[];
+  defaultMode?: 'family' | 'party' | 'npc';
 }
 
 export interface DetailedRoleOption {
@@ -473,6 +476,7 @@ export function RelationModal({
   playerId,
   currentPlayerName,
   existingRelations = [],
+  defaultMode = 'family',
 }: RelationModalProps) {
   const [name, setName] = useState('');
   const [titleOrRole, setTitleOrRole] = useState('');
@@ -491,6 +495,7 @@ export function RelationModal({
   const [sharedWithParty, setSharedWithParty] = useState<boolean>(true);
   const [attitude, setAttitude] = useState<'friendly' | 'helpful' | 'neutral' | 'suspicious' | 'hostile' | 'devoted' | 'rival'>('neutral');
   const [trustLevel, setTrustLevel] = useState<number>(5);
+  const [createInCodex, setCreateInCodex] = useState<boolean>(false);
   const [entities, setEntities] = useState<Entity[]>([]);
   const [players, setPlayers] = useState<Player[]>([]);
   const [linkSource, setLinkSource] = useState<'custom' | 'npc' | 'player'>('custom');
@@ -570,8 +575,10 @@ export function RelationModal({
             roleMatch = 'rival';
           } else if (initialData.relationshipType === 'enemy') {
             roleMatch = 'enemy';
+          } else if (initialData.linkedEntityId) {
+            roleMatch = 'ally';
           } else {
-            roleMatch = 'father';
+            roleMatch = 'custom';
           }
         }
 
@@ -591,6 +598,7 @@ export function RelationModal({
         } else {
           setLinkSource('custom');
         }
+        setCreateInCodex(false);
       } else {
         setName('');
         setTitleOrRole('');
@@ -609,8 +617,10 @@ export function RelationModal({
           } else if (initialGenerationTier === 'descendants') {
             targetRole = 'grandchild';
           } else {
-            targetRole = 'mentor';
+            targetRole = 'ally';
           }
+        } else if (!targetRole) {
+          targetRole = defaultMode === 'npc' ? 'ally' : defaultMode === 'party' ? 'companion' : 'father';
         }
 
         if (targetRole === 'child' || targetRole === 'son' || targetRole === 'daughter') {
@@ -626,7 +636,10 @@ export function RelationModal({
           setOtherParentName('');
         }
 
-        const foundOpt = DETAILED_ROLE_OPTIONS.find((o) => o.role === targetRole) || DETAILED_ROLE_OPTIONS[0];
+        const foundOpt =
+          DETAILED_ROLE_OPTIONS.find((o) => o.role === targetRole) ||
+          (defaultMode === 'npc' ? DETAILED_ROLE_OPTIONS.find((o) => o.role === 'ally') : DETAILED_ROLE_OPTIONS[0]) ||
+          DETAILED_ROLE_OPTIONS[0];
 
         setSelectedDetailedRole(foundOpt.role);
         setRelationshipType(foundOpt.type);
@@ -641,9 +654,10 @@ export function RelationModal({
         setLinkSource('custom');
         setAttitude('neutral');
         setTrustLevel(5);
+        setCreateInCodex(defaultMode === 'npc');
       }
     }
-  }, [isOpen, initialData, initialGenerationTier, initialGenealogyRole, initialSideOfFamily, playerId]);
+  }, [isOpen, initialData, initialGenerationTier, initialGenealogyRole, initialSideOfFamily, playerId, defaultMode]);
 
   if (!isOpen) return null;
 
@@ -699,6 +713,46 @@ export function RelationModal({
     const opt = DETAILED_ROLE_OPTIONS.find((o) => o.role === selectedDetailedRole);
     const genRole = opt?.role as GenealogyRole | undefined;
 
+    let finalLinkedEntityId = linkSource === 'npc' ? linkedEntityId || undefined : undefined;
+
+    // Auto-create in Codex if requested and not already linked
+    if (createInCodex && !finalLinkedEntityId) {
+      try {
+        const cleanName = name.trim();
+        const existing = entities.find(
+          (e) => e.name.trim().toLowerCase() === cleanName.toLowerCase()
+        );
+        if (existing) {
+          finalLinkedEntityId = existing._id;
+        } else {
+          const isFamRole =
+            opt?.group === 'paternal' ||
+            opt?.group === 'maternal' ||
+            opt?.group === 'parents' ||
+            opt?.group === 'children' ||
+            opt?.group === 'descendants';
+          const newEntity = CampaignManager.addEntity({
+            name: cleanName,
+            type: 'npc',
+            status: status === 'deceased' ? 'dead' : status === 'missing' ? 'unknown' : 'alive',
+            images: avatarUrl.trim() ? [avatarUrl.trim()] : [],
+            aliases: [
+              isFamRole ? 'Famiglia' : 'PNG',
+              opt?.label || undefined,
+              titleOrRole.trim() || undefined,
+              customRelationshipLabel.trim() || undefined,
+            ].filter(Boolean) as string[],
+            progressNote: bio.trim() || `Legame con ${currentPlayerName || 'il PG'}: ${customRelationshipLabel.trim() || titleOrRole.trim() || opt?.label || 'Relazione'}`,
+          });
+          if (newEntity?._id) {
+            finalLinkedEntityId = newEntity._id;
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to auto-create entity in Codex:', err);
+      }
+    }
+
     const relation: CharacterRelationship = {
       id: initialData?.id || `rel_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
       playerId,
@@ -714,7 +768,7 @@ export function RelationModal({
       bio: bio.trim() || undefined,
       secondParentId: secondParentId || undefined,
       otherParentName: otherParentName.trim() || undefined,
-      linkedEntityId: linkSource === 'npc' ? linkedEntityId || undefined : undefined,
+      linkedEntityId: finalLinkedEntityId,
       linkedPlayerId: linkSource === 'player' ? linkedPlayerId || undefined : undefined,
       sharedWithParty,
       attitude,
@@ -811,6 +865,52 @@ export function RelationModal({
                 Collega PG del Party
               </button>
             </div>
+
+            {linkSource === 'custom' && (
+              <div className="pt-2">
+                <div
+                  onClick={() => setCreateInCodex(!createInCodex)}
+                  className={`flex items-center justify-between p-3 rounded-xl border transition-all cursor-pointer select-none ${
+                    createInCodex
+                      ? 'bg-primary/10 border-primary/40'
+                      : 'bg-surface-1 border-surface-2 hover:border-surface-3'
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5 min-w-0 pr-3">
+                    <div
+                      className={`p-1.5 rounded-lg shrink-0 transition-colors ${
+                        createInCodex ? 'bg-primary text-surface-0' : 'bg-surface-2 text-content-3'
+                      }`}
+                    >
+                      <BookOpen size={15} />
+                    </div>
+                    <div className="space-y-0.5">
+                      <span className="font-bold text-xs text-content-1 block">
+                        Crea anche come Scheda PNG nel Codex
+                      </span>
+                      <span className="text-[11px] text-content-3 block leading-tight">
+                        {createInCodex
+                          ? '✓ Verrà generata automaticamente la scheda nell\'Enciclopedia della Campagna.'
+                          : 'Solo legame nel profilo (non comparirà tra le schede generali del Codex).'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Switch Toggle */}
+                  <div
+                    className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors duration-200 ease-in-out ${
+                      createInCodex ? 'bg-primary' : 'bg-surface-3'
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform duration-200 ease-in-out ${
+                        createInCodex ? 'translate-x-4.5' : 'translate-x-0.5'
+                      }`}
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
 
             {linkSource === 'npc' && (
               <div className="pt-2">

@@ -1812,14 +1812,6 @@ export function CharacterProfile() {
               exit={{ opacity: 0, y: -6 }}
               className="space-y-6"
             >
-              <CharacterBackgroundTab
-                key={`party_rel_${targetPlayer._id}`}
-                player={targetPlayer}
-                activeSectionMode="party"
-                isOtherPlayerView={effectiveIsOtherPlayerView}
-                onBioUpdated={(updated) => setCharacterBio(updated)}
-              />
-
               <CharacterFamilyTreeTab
                 key={targetPlayer._id}
                 player={targetPlayer}

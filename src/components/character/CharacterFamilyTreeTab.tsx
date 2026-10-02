@@ -18,9 +18,13 @@ import {
   Globe,
   Eye,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Check,
   Compass,
   Flame,
+  BookOpen,
+  Loader2,
 } from 'lucide-react';
 import {
   CharacterRelationship,
@@ -136,6 +140,9 @@ export function CharacterFamilyTreeTab({
 
   // Modal states for RelationModal
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [relationModalMode, setRelationModalMode] = useState<'family' | 'party' | 'npc'>('family');
+  const [createdToast, setCreatedToast] = useState<{ name: string; entityId: string } | null>(null);
+  const [creatingCodexIds, setCreatingCodexIds] = useState<string[]>([]);
   const [selectedRelationForEdit, setSelectedRelationForEdit] = useState<CharacterRelationship | null>(null);
   const [initialGenerationTier, setInitialGenerationTier] = useState<GenerationCategory | null>(null);
   const [initialGenealogyRole, setInitialGenealogyRole] = useState<GenealogyRole | null>(null);
@@ -277,14 +284,112 @@ export function CharacterFamilyTreeTab({
     }
   };
 
+  const handleCreateInCodex = async (card: UnifiedCardItem) => {
+    if (!card.rawRelation) return;
+    if (creatingCodexIds.includes(card.id)) return;
+
+    // Check if an entity already exists with the same name or linked ID
+    const cleanName = card.name.trim();
+    const existingEnt = entities.find(
+      (e) => (card.linkedEntityId && e._id === card.linkedEntityId) ||
+             (e.name.trim().toLowerCase() === cleanName.toLowerCase())
+    );
+
+    setCreatingCodexIds((prev) => [...prev, card.id]);
+    setIsSaving(true);
+    try {
+      let targetEntityId = existingEnt?._id;
+
+      if (!targetEntityId) {
+        const isFam = card.isFamily;
+        const cleanBond = card.bondLabel.replace('👑', '').trim();
+        const newEnt = CampaignManager.addEntity({
+          name: cleanName,
+          type: 'npc',
+          status: card.status === 'deceased' ? 'dead' : card.status === 'missing' ? 'unknown' : 'alive',
+          images: card.avatarUrl ? [card.avatarUrl] : [],
+          aliases: [
+            isFam ? 'Famiglia' : 'PNG',
+            cleanBond,
+            card.subtitle || undefined,
+          ].filter(Boolean) as string[],
+          progressNote: card.notes || `Legame con ${player.characterName}: ${cleanBond}`,
+        });
+        targetEntityId = newEnt._id;
+      }
+
+      if (targetEntityId) {
+        const updatedRel: CharacterRelationship = {
+          ...card.rawRelation,
+          linkedEntityId: targetEntityId,
+        };
+        await CampaignManager.updateFamilyRelation(updatedRel);
+        setCreatedToast({ name: card.name, entityId: targetEntityId });
+        loadData();
+        setTimeout(() => setCreatedToast(null), 6000);
+      }
+    } catch (err: any) {
+      console.error('Failed to create/link entity in Codex:', err);
+    } finally {
+      setIsSaving(false);
+      setCreatingCodexIds((prev) => prev.filter((id) => id !== card.id));
+    }
+  };
+
   const isFamilyRelation = (rel?: CharacterRelationship | null) => {
     if (!rel) return false;
+
+    // Explicit non-family types
+    const nonFamTypes = ['companion', 'mentor', 'ally', 'rival', 'enemy', 'custom'];
+    if (nonFamTypes.includes(rel.relationshipType)) {
+      return false;
+    }
+
+    // Non-family titles or roles (e.g. supervisore, mandante, referente, capitano, oste, ecc.)
+    const titleLower = `${rel.customRelationshipLabel || ''} ${rel.titleOrRole || ''} ${rel.name || ''}`.toLowerCase();
+    const nonFamKeywords = [
+      'mandante', 'supervisore', 'capitano', 'maestro', 'mentore', 'contatto',
+      'referente', 'alleato', 'nemico', 'rivale', 'datore', 'committente',
+      'informatore', 'oste', 'locandiere', 'guardia', 'mercenario'
+    ];
+    if (nonFamKeywords.some((k) => titleLower.includes(k))) {
+      return false;
+    }
+
+    // If it's linked to an entity in Codex and has no explicit family relationshipType
     const famTypes = ['parent', 'child', 'sibling', 'spouse', 'ancestor', 'descendant', 'relative'];
-    if (famTypes.includes(rel.relationshipType)) return true;
-    if (rel.generationCategory) return true;
-    if (rel.genealogyRole || rel.sideOfFamily) return true;
-    const label = (rel.customRelationshipLabel || rel.titleOrRole || '').toLowerCase();
-    return ['padre', 'madre', 'figlio', 'figlia', 'fratello', 'sorella', 'coniuge', 'marito', 'moglie', 'nonno', 'nonna', 'antenato', 'avo', 'zio', 'zia', 'cugino', 'cugina', 'nipote', 'parente'].some(k => label.includes(k));
+    if (rel.linkedEntityId && !famTypes.includes(rel.relationshipType)) {
+      return false;
+    }
+
+    // Explicit family relationship types
+    if (famTypes.includes(rel.relationshipType)) {
+      return true;
+    }
+
+    // Explicit genealogical roles
+    const explicitFamRoles = [
+      'paternal_grandfather', 'paternal_grandmother', 'paternal_uncle', 'paternal_aunt',
+      'paternal_uncle_in_law', 'paternal_aunt_in_law', 'paternal_cousin', 'paternal_ancestor',
+      'maternal_grandfather', 'maternal_grandmother', 'maternal_uncle', 'maternal_aunt',
+      'maternal_uncle_in_law', 'maternal_aunt_in_law', 'maternal_cousin', 'maternal_ancestor',
+      'father', 'mother', 'guardian', 'stepfather', 'stepmother', 'father_in_law', 'mother_in_law',
+      'sibling', 'brother', 'sister', 'half_brother', 'half_sister', 'brother_in_law', 'sister_in_law',
+      'spouse', 'husband', 'wife', 'fiance', 'ex_spouse',
+      'child', 'son', 'daughter', 'stepson', 'stepdaughter', 'son_in_law', 'daughter_in_law',
+      'nephew', 'grandchild', 'descendant', 'grandson', 'granddaughter',
+    ];
+    if (rel.genealogyRole && explicitFamRoles.includes(rel.genealogyRole)) {
+      return true;
+    }
+
+    // Italian family keywords
+    const famKeywords = [
+      'padre', 'madre', 'figlio', 'figlia', 'fratello', 'sorella', 'coniuge',
+      'marito', 'moglie', 'nonno', 'nonna', 'antenato', 'avo', 'zio', 'zia',
+      'cugino', 'cugina', 'nipote', 'parente'
+    ];
+    return famKeywords.some((k) => titleLower.includes(k));
   };
 
   const getRelationshipBadge = (rel: CharacterRelationship) => {
@@ -520,6 +625,23 @@ export function CharacterFamilyTreeTab({
     });
   }, [unifiedCards, activeFilter, searchQuery]);
 
+  // Pagination states & calculations
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(8);
+
+  // Reset to page 1 on filter, search or page size change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [activeFilter, searchQuery, pageSize]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredCards.length / pageSize));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+
+  const paginatedCards = useMemo(() => {
+    const startIndex = (safeCurrentPage - 1) * pageSize;
+    return filteredCards.slice(startIndex, startIndex + pageSize);
+  }, [filteredCards, safeCurrentPage, pageSize]);
+
   // Open Edit Action for a Card
   const handleOpenEdit = (item: UnifiedCardItem) => {
     if (isReadOnly) return;
@@ -690,6 +812,7 @@ export function CharacterFamilyTreeTab({
                   onClick={() => {
                     setIsAddMenuOpen(false);
                     setSelectedRelationForEdit(null);
+                    setRelationModalMode('family');
                     setInitialGenerationTier('parents');
                     setInitialGenealogyRole('father');
                     setInitialSideOfFamily('direct');
@@ -711,6 +834,7 @@ export function CharacterFamilyTreeTab({
                   onClick={() => {
                     setIsAddMenuOpen(false);
                     setSelectedRelationForEdit(null);
+                    setRelationModalMode('party');
                     setInitialGenerationTier('peers');
                     setInitialGenealogyRole(null);
                     setInitialSideOfFamily(null);
@@ -732,6 +856,7 @@ export function CharacterFamilyTreeTab({
                   onClick={() => {
                     setIsAddMenuOpen(false);
                     setSelectedRelationForEdit(null);
+                    setRelationModalMode('npc');
                     setInitialGenerationTier(null);
                     setInitialGenealogyRole(null);
                     setInitialSideOfFamily(null);
@@ -752,6 +877,25 @@ export function CharacterFamilyTreeTab({
           </div>
         )}
       </div>
+
+      {/* TOAST FEEDBACK FOR CODEX CREATION */}
+      {createdToast && (
+        <div className="bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 p-3 rounded-2xl text-xs flex items-center justify-between gap-3 animate-in fade-in duration-200">
+          <div className="flex items-center gap-2">
+            <Check size={16} className="text-emerald-400 shrink-0" />
+            <span>
+              Scheda di <strong>{createdToast.name}</strong> creata con successo nel Codex!
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => navigate(`/entities?select=${createdToast.entityId}`)}
+            className="px-3 py-1 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 border border-emerald-500/40 rounded-xl text-xs font-bold transition-colors cursor-pointer shrink-0"
+          >
+            Apri nel Codex &rarr;
+          </button>
+        </div>
+      )}
 
       {/* FILTER CHIPS & SEARCH */}
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-surface-1 border border-surface-2 p-3 sm:p-4 rounded-2xl">
@@ -886,12 +1030,13 @@ export function CharacterFamilyTreeTab({
           )}
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {filteredCards.map((card) => (
-            <div
-              key={card.id}
-              className="bg-surface-1/90 border border-surface-2 hover:border-surface-3 rounded-2xl p-4 sm:p-5 shadow-xs transition-all flex flex-col justify-between space-y-3.5 group"
-            >
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {paginatedCards.map((card) => (
+              <div
+                key={card.id}
+                className="bg-surface-1/90 border border-surface-2 hover:border-surface-3 rounded-2xl p-4 sm:p-5 shadow-xs transition-all flex flex-col justify-between space-y-3.5 group"
+              >
               {/* TOP: Avatar, Name & Attitude badge */}
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-3 min-w-0">
@@ -992,6 +1137,23 @@ export function CharacterFamilyTreeTab({
                 )}
 
                 <div className="flex items-center gap-1">
+                  {!isReadOnly && !card.linkedEntityId && !card.isPg && card.rawRelation && (
+                    <button
+                      type="button"
+                      disabled={creatingCodexIds.includes(card.id) || isSaving}
+                      onClick={() => handleCreateInCodex(card)}
+                      className="px-2 py-1 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded-lg text-[11px] font-semibold flex items-center gap-1 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                      title="Crea una scheda dedicata a questo personaggio nel Codex"
+                    >
+                      {creatingCodexIds.includes(card.id) ? (
+                        <Loader2 size={11} className="animate-spin" />
+                      ) : (
+                        <BookOpen size={11} />
+                      )}
+                      <span>{creatingCodexIds.includes(card.id) ? 'Creazione...' : '+ Codex'}</span>
+                    </button>
+                  )}
+
                   {card.rawRelation && (
                     <button
                       type="button"
@@ -1039,6 +1201,83 @@ export function CharacterFamilyTreeTab({
             </div>
           ))}
         </div>
+
+        {/* PAGINATION CONTROLS BAR */}
+        {filteredCards.length > 0 && (
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-surface-1 border border-surface-2 p-3 sm:p-4 rounded-2xl">
+            <div className="flex items-center gap-2.5 text-xs text-content-3 font-medium flex-wrap">
+              <span>
+                Mostrando <strong className="text-content-1">{(safeCurrentPage - 1) * pageSize + 1}</strong> -{' '}
+                <strong className="text-content-1">
+                  {Math.min(safeCurrentPage * pageSize, filteredCards.length)}
+                </strong>{' '}
+                di <strong className="text-content-1">{filteredCards.length}</strong> figure
+              </span>
+              <span className="text-surface-3">|</span>
+              <div className="flex items-center gap-1.5">
+                <span>Per pagina:</span>
+                <select
+                  value={pageSize}
+                  onChange={(e) => setPageSize(Number(e.target.value))}
+                  className="bg-surface-2 border border-surface-3 rounded-lg px-2 py-0.5 text-xs text-content-1 outline-none cursor-pointer"
+                >
+                  <option value={6}>6</option>
+                  <option value={8}>8</option>
+                  <option value={12}>12</option>
+                  <option value={20}>20</option>
+                </select>
+              </div>
+            </div>
+
+            {totalPages > 1 && (
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  disabled={safeCurrentPage === 1}
+                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                  className="px-2.5 py-1.5 rounded-xl border border-surface-3 bg-surface-2 hover:bg-surface-3 text-content-1 disabled:opacity-30 disabled:cursor-not-allowed text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+                >
+                  <ChevronLeft size={14} />
+                  <span className="hidden sm:inline">Precedente</span>
+                </button>
+
+                <div className="flex items-center gap-1">
+                  {Array.from({ length: totalPages }, (_, i) => i + 1)
+                    .filter((p) => p === 1 || p === totalPages || Math.abs(p - safeCurrentPage) <= 1)
+                    .map((p, idx, arr) => (
+                      <React.Fragment key={p}>
+                        {idx > 0 && arr[idx - 1] !== p - 1 && (
+                          <span className="px-1 text-content-3 text-xs">...</span>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => setCurrentPage(p)}
+                          className={`w-7 h-7 sm:w-8 sm:h-8 rounded-xl text-xs font-bold transition-colors cursor-pointer ${
+                            safeCurrentPage === p
+                              ? 'bg-primary text-surface-0 shadow-xs'
+                              : 'bg-surface-2 hover:bg-surface-3 text-content-2'
+                          }`}
+                        >
+                          {p}
+                        </button>
+                      </React.Fragment>
+                    ))}
+                </div>
+
+                <button
+                  type="button"
+                  disabled={safeCurrentPage === totalPages}
+                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                  className="px-2.5 py-1.5 rounded-xl border border-surface-3 bg-surface-2 hover:bg-surface-3 text-content-1 disabled:opacity-30 disabled:cursor-not-allowed text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+                >
+                  <span className="hidden sm:inline">Successiva</span>
+                  <ChevronRight size={14} />
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
       )}
 
       {/* DETAIL MODAL */}
@@ -1062,6 +1301,7 @@ export function CharacterFamilyTreeTab({
         playerId={player._id}
         currentPlayerName={player.characterName}
         existingRelations={relations}
+        defaultMode={relationModalMode}
       />
 
       {/* PARTY BOND EDIT MODAL */}
