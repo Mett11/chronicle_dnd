@@ -132,8 +132,14 @@ export function Home() {
     // Filter notes based on player visibility permissions
     const accessibleNotes = allNotes.filter((n) => {
       const authorId = n.author?._id || (n.author as any)?.id;
+      const authorName = (n.author?.characterName || '').trim().toLowerCase();
       const myId = player?._id || (player as any)?.id;
-      const isAuthor = authorId && myId && authorId === myId;
+      const myName = (player?.characterName || '').trim().toLowerCase();
+      const isAuthor = Boolean(
+        (authorId && myId && authorId === myId) ||
+        (authorName && myName && authorName === myName) ||
+        (n.author?.email && player?.email && n.author.email.toLowerCase() === player.email.toLowerCase())
+      );
 
       if (isAuthor) return true;
       // Privacy Fix Applied: Personal notes strictly isolated unless shared with DM
@@ -153,10 +159,14 @@ export function Home() {
     const handleDataUpdate = () => refreshData();
     window.addEventListener('chronicle_data_updated', handleDataUpdate);
     window.addEventListener('chronicle_notes_updated', handleDataUpdate);
+    window.addEventListener('chronicle_calendar_updated', handleDataUpdate);
+    window.addEventListener('chronicle_sessions_updated', handleDataUpdate);
     window.addEventListener('storage', handleDataUpdate);
     return () => {
       window.removeEventListener('chronicle_data_updated', handleDataUpdate);
       window.removeEventListener('chronicle_notes_updated', handleDataUpdate);
+      window.removeEventListener('chronicle_calendar_updated', handleDataUpdate);
+      window.removeEventListener('chronicle_sessions_updated', handleDataUpdate);
       window.removeEventListener('storage', handleDataUpdate);
     };
   }, [player]);
@@ -173,8 +183,14 @@ export function Home() {
   const filteredNotes = useMemo(() => {
     return notes.filter((n) => {
       const authorId = n.author?._id || (n.author as any)?.id;
+      const authorName = (n.author?.characterName || '').trim().toLowerCase();
       const myId = player?._id || (player as any)?.id;
-      const isAuthor = authorId && myId && authorId === myId;
+      const myName = (player?.characterName || '').trim().toLowerCase();
+      const isAuthor = Boolean(
+        (authorId && myId && authorId === myId) ||
+        (authorName && myName && authorName === myName) ||
+        (n.author?.email && player?.email && n.author.email.toLowerCase() === player.email.toLowerCase())
+      );
 
       // Scope Filter
       if (noteFilter === 'pinned' && !n.pinned) return false;

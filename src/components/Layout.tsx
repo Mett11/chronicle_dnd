@@ -75,12 +75,26 @@ export function Layout() {
     return subscribePwa(updatePwa);
   }, []);
 
-  const calendar = CampaignManager.getCalendar();
+  const [calendar, setCalendar] = useState(() => CampaignManager.getCalendar());
 
   const isIOS = typeof window !== 'undefined' && typeof navigator !== 'undefined' && (
     /iPad|iPhone|iPod/.test(navigator.userAgent) ||
     (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
   );
+
+  useEffect(() => {
+    const handleCalendarUpdate = () => {
+      setCalendar(CampaignManager.getCalendar());
+    };
+    window.addEventListener('chronicle_calendar_updated', handleCalendarUpdate);
+    window.addEventListener('chronicle_data_updated', handleCalendarUpdate);
+    window.addEventListener('chronicle_campaign_changed', handleCalendarUpdate);
+    return () => {
+      window.removeEventListener('chronicle_calendar_updated', handleCalendarUpdate);
+      window.removeEventListener('chronicle_data_updated', handleCalendarUpdate);
+      window.removeEventListener('chronicle_campaign_changed', handleCalendarUpdate);
+    };
+  }, []);
 
   useEffect(() => {
     const handleCampaignUpdate = () => {

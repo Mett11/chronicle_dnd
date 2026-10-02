@@ -237,7 +237,16 @@ export function Search() {
 
   // Data from Campaign Store
   const notes = CampaignManager.getNotes().filter((n) => {
-    const isAuthor = n.author._id === player?._id;
+    const authorId = n.author?._id || (n.author as any)?.id;
+    const authorName = (n.author?.characterName || '').trim().toLowerCase();
+    const myId = player?._id || (player as any)?.id;
+    const myName = (player?.characterName || '').trim().toLowerCase();
+    const isAuthor = Boolean(
+      (authorId && myId && authorId === myId) ||
+      (authorName && myName && authorName === myName) ||
+      (n.author?.email && player?.email && n.author.email.toLowerCase() === player.email.toLowerCase())
+    );
+
     if (isAuthor) return true;
     // Privacy Fix Applied: Personal notes isolation
     if (n.visibility === 'personal') {

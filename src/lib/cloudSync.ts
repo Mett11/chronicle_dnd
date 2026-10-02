@@ -477,18 +477,27 @@ export class CloudSyncService {
     return Array.from(map.values()).sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
   }
 
+  private static accountsSyncDebounceTimer: any = null;
+
   /**
-   * Directly syncs accounts array to Supabase
+   * Directly syncs accounts array to Supabase with debounce
    */
   static async syncAccountsToCloud(accounts: UserAccount[]) {
-    if (!isSupabaseConfigured() || !Array.isArray(accounts)) return;
-    // Always persist to central public.user_accounts table
-    SupabaseSyncService.saveAllUserAccounts(accounts).catch(() => {});
+    if (!isSupabaseConfigured() || !Array.isArray(accounts) || accounts.length === 0) return;
 
-    const activeCode = CampaignManager.getActiveCampaignCode();
-    if (activeCode && activeCode !== '__NONE__') {
-      SupabaseSyncService.saveActivePlayers(activeCode, accounts).catch(() => {});
+    if (this.accountsSyncDebounceTimer) {
+      clearTimeout(this.accountsSyncDebounceTimer);
     }
+
+    this.accountsSyncDebounceTimer = setTimeout(() => {
+      // Always persist to central public.user_accounts table
+      SupabaseSyncService.saveAllUserAccounts(accounts).catch(() => {});
+
+      const activeCode = CampaignManager.getActiveCampaignCode();
+      if (activeCode && activeCode !== '__NONE__') {
+        SupabaseSyncService.saveActivePlayers(activeCode, accounts).catch(() => {});
+      }
+    }, 400);
   }
 
   /**

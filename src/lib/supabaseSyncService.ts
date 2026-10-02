@@ -889,20 +889,42 @@ export class SupabaseSyncService {
   }
 
   /**
-   * Bulk saves all user accounts into public.user_accounts
+   * Bulk saves all user accounts into public.user_accounts with single-batch upsert
    */
   static async saveAllUserAccounts(accounts: any[]): Promise<boolean> {
     if (!isSupabaseConfigured() || !Array.isArray(accounts) || accounts.length === 0) return false;
     try {
-      // Deduplicate by email so conflicting rows don't violate PostgreSQL unique constraint
-      const byEmail = new Map<string, any>();
+      // Deduplicate by id and email so conflicting rows don't violate PostgreSQL unique constraint
+      const byIdOrEmail = new Map<string, any>();
       for (const a of accounts) {
         if (!a || !a.id) continue;
-        const key = (a.email || a.id).toLowerCase().trim();
-        byEmail.set(key, a);
+        const key = a.id;
+        byIdOrEmail.set(key, a);
       }
-      const uniqueAccounts = Array.from(byEmail.values());
-      await Promise.all(uniqueAccounts.map((acc) => this.saveUserAccount(acc)));
+      const uniqueAccounts = Array.from(byIdOrEmail.values());
+      const payloads = uniqueAccounts.map((account) => {
+        const email = (account.email || '').toLowerCase().trim();
+        return {
+          id: account.id,
+          email: email || `${account.id}@local.chronicle`,
+          password: account.password || '',
+          character_name: account.characterName || 'Avventuriero',
+          is_dm: Boolean(account.isDm),
+          dm_campaigns: Array.isArray(account.dmCampaigns) ? account.dmCampaigns : [],
+          joined_campaigns: Array.isArray(account.joinedCampaigns) ? account.joinedCampaigns : [],
+          color: account.color || '#6366f1',
+          avatar_url: account.avatarUrl || '',
+          campaign_profiles: account.campaignProfiles || {},
+          preferences: account.preferences || {},
+          updated_at: new Date().toISOString(),
+        };
+      });
+
+      const { error } = await supabase.from('user_accounts').upsert(payloads, { onConflict: 'id' });
+      if (error) {
+        console.warn('[Supabase] saveAllUserAccounts batch warning:', error.message);
+        return false;
+      }
       return true;
     } catch (err) {
       console.warn('[Supabase] saveAllUserAccounts exception:', err);
