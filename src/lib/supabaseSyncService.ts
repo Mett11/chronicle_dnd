@@ -320,6 +320,21 @@ export class SupabaseSyncService {
           timelineMemories: Array.isArray(row.timeline_memories) ? row.timeline_memories : [],
           evolvingBeliefs: Array.isArray(row.evolving_beliefs) ? row.evolving_beliefs : [],
           interPartyRelations: row.inter_party_relations && typeof row.inter_party_relations === 'object' ? row.inter_party_relations : {},
+          characterRace: row.character_race || row.extra_data?.characterRace || '',
+          characterTitle: row.character_title || row.extra_data?.characterTitle || '',
+          deityOrPatron: row.deity_or_patron || row.extra_data?.deityOrPatron || '',
+          hometown: row.hometown || row.extra_data?.hometown || '',
+          birthDateFormatted: row.birth_date_formatted || row.extra_data?.birthDateFormatted || '',
+          birthStartDay: row.birth_start_day || row.extra_data?.birthStartDay || 1,
+          birthMonth: row.birth_month || row.extra_data?.birthMonth || '',
+          birthYear: row.birth_year || row.extra_data?.birthYear || 1492,
+          secrets: row.secrets || row.extra_data?.secrets || '',
+          appearanceDescription: row.appearance_description || row.extra_data?.appearanceDescription || '',
+          currentStatus: row.current_status || row.extra_data?.currentStatus || '',
+          knownLoreBites: Array.isArray(row.known_lore_bites)
+            ? row.known_lore_bites
+            : (Array.isArray(row.extra_data?.knownLoreBites) ? row.extra_data.knownLoreBites : []),
+          privacySettings: row.privacy_settings || row.extra_data?.privacySettings || {},
           updatedAt: row.updated_at || new Date().toISOString(),
         }));
       } else if (Array.isArray(dossier.characterBios) && dossier.characterBios.length > 0) {
@@ -337,6 +352,19 @@ export class SupabaseSyncService {
           relationshipType: row.relationship_type,
           bio: row.description || '',
           sharedWithParty: !row.is_secret,
+          name: row.name || '',
+          avatarUrl: row.avatar_url || '',
+          customRelationshipLabel: row.custom_relationship_label || '',
+          titleOrRole: row.title_or_role || '',
+          generationCategory: row.generation_category || 'same_generation',
+          genealogyRole: row.genealogy_role || '',
+          sideOfFamily: row.side_of_family || 'unspecified',
+          status: row.status || 'alive',
+          secondParentId: row.second_parent_id || '',
+          otherParentName: row.other_parent_name || '',
+          linkedPlayerId: row.linked_player_id || '',
+          tags: Array.isArray(row.tags) ? row.tags : [],
+          order: row.order_index || 0,
           updatedAt: row.updated_at || new Date().toISOString(),
         }));
       } else if (Array.isArray(dossier.familyRelations) && dossier.familyRelations.length > 0) {
@@ -351,10 +379,18 @@ export class SupabaseSyncService {
           _id: row.id,
           _createdAt: row.updated_at || new Date().toISOString(),
           title: row.title || 'Senza Titolo',
+          subtitle: row.subtitle || '',
+          summary: row.summary || '',
           fullContentMarkdown: row.content || '',
           category: row.category_id || 'general',
           images: Array.isArray(row.images) ? row.images : [],
           dmOnly: Boolean(row.is_draft),
+          bites: Array.isArray(row.bites) ? row.bites : [],
+          authorPlayerId: row.author_player_id || '',
+          authorName: row.author_name || '',
+          tags: Array.isArray(row.tags) ? row.tags : [],
+          relatedEntityIds: Array.isArray(row.related_entity_ids) ? row.related_entity_ids : [],
+          order: row.order_index || 0,
         }));
       } else if (Array.isArray(dossier.worldLoreArticles) && dossier.worldLoreArticles.length > 0) {
         console.log('[Supabase Migration] Migrating legacy world lore articles...');
@@ -857,6 +893,34 @@ export class SupabaseSyncService {
           timeline_memories: bio.timelineMemories || [],
           evolving_beliefs: bio.evolvingBeliefs || [],
           inter_party_relations: bio.interPartyRelations || {},
+          character_race: bio.characterRace || '',
+          character_title: bio.characterTitle || '',
+          deity_or_patron: bio.deityOrPatron || '',
+          hometown: bio.hometown || '',
+          birth_date_formatted: bio.birthDateFormatted || '',
+          birth_start_day: bio.birthStartDay || 1,
+          birth_month: bio.birthMonth || '',
+          birth_year: bio.birthYear || 1492,
+          secrets: bio.secrets || '',
+          appearance_description: bio.appearanceDescription || '',
+          current_status: bio.currentStatus || '',
+          known_lore_bites: bio.knownLoreBites || [],
+          privacy_settings: bio.privacySettings || {},
+          extra_data: {
+            characterRace: bio.characterRace,
+            characterTitle: bio.characterTitle,
+            deityOrPatron: bio.deityOrPatron,
+            hometown: bio.hometown,
+            birthDateFormatted: bio.birthDateFormatted,
+            birthStartDay: bio.birthStartDay,
+            birthMonth: bio.birthMonth,
+            birthYear: bio.birthYear,
+            secrets: bio.secrets,
+            appearanceDescription: bio.appearanceDescription,
+            currentStatus: bio.currentStatus,
+            knownLoreBites: bio.knownLoreBites,
+            privacySettings: bio.privacySettings,
+          },
           updated_at: new Date().toISOString(),
         };
         return supabase.from('character_bios').upsert(payload, { onConflict: 'player_id' });
@@ -873,6 +937,31 @@ export class SupabaseSyncService {
       return true;
     } catch (err) {
       console.error('[Supabase] Failed to save character bios:', err);
+      return false;
+    }
+  }
+
+  /**
+   * Deletes a single character bio from Supabase
+   */
+  static async deleteCharacterBio(playerId: string, campaignCode?: string): Promise<boolean> {
+    if (!isSupabaseConfigured() || !playerId) return false;
+    try {
+      const { error } = await supabase.from('character_bios').delete().eq('player_id', playerId);
+      if (campaignCode) {
+        const code = campaignCode.trim();
+        const { data: camp } = await supabase.from('campaigns').select('dossier').eq('code', code).maybeSingle();
+        const dossier = camp?.dossier || {};
+        if (Array.isArray(dossier.characterBios)) {
+          const updated = dossier.characterBios.filter((b: any) => b.playerId !== playerId);
+          await supabase.from('campaigns').update({
+            dossier: { ...dossier, characterBios: updated },
+            updated_at: new Date().toISOString(),
+          }).eq('code', code);
+        }
+      }
+      return !error;
+    } catch {
       return false;
     }
   }
@@ -896,6 +985,19 @@ export class SupabaseSyncService {
           relationship_type: rel.relationshipType || 'companion',
           description: rel.bio || '',
           is_secret: Boolean(rel.sharedWithParty === false),
+          name: rel.name || '',
+          avatar_url: rel.avatarUrl || '',
+          custom_relationship_label: rel.customRelationshipLabel || '',
+          title_or_role: rel.titleOrRole || '',
+          generation_category: rel.generationCategory || 'same_generation',
+          genealogy_role: rel.genealogyRole || '',
+          side_of_family: rel.sideOfFamily || 'unspecified',
+          status: rel.status || 'alive',
+          second_parent_id: rel.secondParentId || '',
+          other_parent_name: rel.otherParentName || '',
+          linked_player_id: rel.linkedPlayerId || '',
+          tags: rel.tags || [],
+          order_index: rel.order || 0,
           updated_at: new Date().toISOString(),
         };
         return supabase.from('family_relations').upsert(payload, { onConflict: 'id' });
@@ -917,6 +1019,31 @@ export class SupabaseSyncService {
   }
 
   /**
+   * Atomically deletes a single family relation from Supabase to prevent zombie resurrections
+   */
+  static async deleteFamilyRelation(relationId: string, campaignCode?: string): Promise<boolean> {
+    if (!isSupabaseConfigured() || !relationId) return false;
+    try {
+      const { error } = await supabase.from('family_relations').delete().eq('id', relationId);
+      if (campaignCode) {
+        const code = campaignCode.trim();
+        const { data: camp } = await supabase.from('campaigns').select('dossier').eq('code', code).maybeSingle();
+        const dossier = camp?.dossier || {};
+        if (Array.isArray(dossier.familyRelations)) {
+          const updated = dossier.familyRelations.filter((r: any) => r.id !== relationId);
+          await supabase.from('campaigns').update({
+            dossier: { ...dossier, familyRelations: updated },
+            updated_at: new Date().toISOString(),
+          }).eq('code', code);
+        }
+      }
+      return !error;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * Persists world lore articles into campaign dossier and world_lore_articles table
    */
   static async saveWorldLoreArticles(campaignCode: string, articles: any[]): Promise<boolean> {
@@ -931,10 +1058,18 @@ export class SupabaseSyncService {
           id: art._id,
           campaign_code: code,
           title: art.title || 'Senza Titolo',
+          subtitle: art.subtitle || '',
+          summary: art.summary || '',
           content: art.fullContentMarkdown || '',
           category_id: art.category || 'general',
           images: art.images || [],
           is_draft: Boolean(art.dmOnly),
+          bites: art.bites || [],
+          author_player_id: art.authorPlayerId || '',
+          author_name: art.authorName || '',
+          tags: art.tags || [],
+          related_entity_ids: art.relatedEntityIds || [],
+          order_index: art.order || 0,
           updated_at: new Date().toISOString(),
         };
         return supabase.from('world_lore_articles').upsert(payload, { onConflict: 'id' });
@@ -951,6 +1086,156 @@ export class SupabaseSyncService {
       return true;
     } catch (err) {
       console.error('[Supabase] Failed to save world lore articles:', err);
+      return false;
+    }
+  }
+
+  /**
+   * Atomically deletes a single world lore article from Supabase
+   */
+  static async deleteWorldLoreArticle(articleId: string, campaignCode?: string): Promise<boolean> {
+    if (!isSupabaseConfigured() || !articleId) return false;
+    try {
+      const { error } = await supabase.from('world_lore_articles').delete().eq('id', articleId);
+      if (campaignCode) {
+        const code = campaignCode.trim();
+        const { data: camp } = await supabase.from('campaigns').select('dossier').eq('code', code).maybeSingle();
+        const dossier = camp?.dossier || {};
+        if (Array.isArray(dossier.worldLoreArticles)) {
+          const updated = dossier.worldLoreArticles.filter((a: any) => a._id !== articleId);
+          await supabase.from('campaigns').update({
+            dossier: { ...dossier, worldLoreArticles: updated },
+            updated_at: new Date().toISOString(),
+          }).eq('code', code);
+        }
+      }
+      return !error;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Persists calendar system and lore date state into campaigns table in Supabase
+   */
+  static async saveCalendar(campaignCode: string, calendar: any): Promise<boolean> {
+    if (!isSupabaseConfigured() || !campaignCode || !calendar) return false;
+    try {
+      const code = campaignCode.trim();
+      const { error } = await supabase.from('campaigns').update({
+        calendar_system: calendar,
+        updated_at: new Date().toISOString(),
+      }).eq('code', code);
+
+      if (error) console.error('[Supabase] Error saving calendar:', error);
+      return !error;
+    } catch (err) {
+      console.error('[Supabase] Failed to save calendar:', err);
+      return false;
+    }
+  }
+
+  /**
+   * Fetches user preferences from Supabase public.user_preferences table
+   */
+  static async fetchUserPreferences(userId: string): Promise<Record<string, any> | null> {
+    if (!isSupabaseConfigured() || !userId) return null;
+    try {
+      const { data, error } = await supabase
+        .from('user_preferences')
+        .select('*')
+        .eq('user_id', userId.trim())
+        .maybeSingle();
+
+      if (error) {
+        console.warn('[Supabase] Warning fetching user preferences:', error.message);
+        return null;
+      }
+      return data || null;
+    } catch (err) {
+      console.warn('[Supabase] Error fetching user preferences:', err);
+      return null;
+    }
+  }
+
+  /**
+   * Saves user preferences into Supabase public.user_preferences table
+   */
+  static async saveUserPreferences(userId: string, prefs: {
+    theme?: any;
+    ai?: any;
+    reading?: any;
+    notifications?: any;
+  }): Promise<boolean> {
+    if (!isSupabaseConfigured() || !userId) return false;
+    try {
+      const cleanId = userId.trim();
+      const payload = {
+        user_id: cleanId,
+        theme: prefs.theme || {},
+        ai: prefs.ai || {},
+        reading: prefs.reading || {},
+        notifications: prefs.notifications || {},
+        updated_at: new Date().toISOString(),
+      };
+      const { error } = await supabase.from('user_preferences').upsert(payload, { onConflict: 'user_id' });
+      if (error) console.warn('[Supabase] Warning saving user preferences:', error.message);
+      return !error;
+    } catch (err) {
+      console.warn('[Supabase] Error saving user preferences:', err);
+      return false;
+    }
+  }
+
+  /**
+   * Fetches Oracle chat history from Supabase public.oracle_chats table
+   */
+  static async fetchOracleChat(campaignCode: string, userId: string): Promise<any[] | null> {
+    if (!isSupabaseConfigured() || !campaignCode || !userId) return null;
+    try {
+      const cleanCode = campaignCode.trim().toUpperCase();
+      const cleanUser = userId.trim();
+      const chatId = `chat_${cleanCode}_${cleanUser}`;
+
+      const { data, error } = await supabase
+        .from('oracle_chats')
+        .select('messages')
+        .eq('id', chatId)
+        .maybeSingle();
+
+      if (error) {
+        console.warn('[Supabase] Warning fetching oracle chat:', error.message);
+        return null;
+      }
+      return Array.isArray(data?.messages) ? data.messages : null;
+    } catch (err) {
+      console.warn('[Supabase] Error fetching oracle chat:', err);
+      return null;
+    }
+  }
+
+  /**
+   * Saves Oracle chat history into Supabase public.oracle_chats table
+   */
+  static async saveOracleChat(campaignCode: string, userId: string, messages: any[]): Promise<boolean> {
+    if (!isSupabaseConfigured() || !campaignCode || !userId) return false;
+    try {
+      const cleanCode = campaignCode.trim().toUpperCase();
+      const cleanUser = userId.trim();
+      const chatId = `chat_${cleanCode}_${cleanUser}`;
+      const payload = {
+        id: chatId,
+        campaign_code: cleanCode,
+        user_id: cleanUser,
+        messages: Array.isArray(messages) ? messages : [],
+        updated_at: new Date().toISOString(),
+      };
+
+      const { error } = await supabase.from('oracle_chats').upsert(payload, { onConflict: 'id' });
+      if (error) console.warn('[Supabase] Warning saving oracle chat:', error.message);
+      return !error;
+    } catch (err) {
+      console.warn('[Supabase] Error saving oracle chat:', err);
       return false;
     }
   }
@@ -1546,5 +1831,109 @@ export class SupabaseSyncService {
       errors,
       stats,
     };
+  }
+
+  private static activeRealtimeChannel: any = null;
+
+  /**
+   * Subscribes to live changes via Supabase Realtime WebSockets for the active campaign
+   */
+  static subscribeCampaignRealtime(
+    campaignCode: string,
+    callbacks: {
+      onSessionsChange?: (payload: any) => void;
+      onNotesChange?: (payload: any) => void;
+      onEntitiesChange?: (payload: any) => void;
+      onBiosChange?: (payload: any) => void;
+      onRelationsChange?: (payload: any) => void;
+      onLoreChange?: (payload: any) => void;
+      onCampaignChange?: (payload: any) => void;
+    }
+  ): () => void {
+    if (!isSupabaseConfigured() || !campaignCode || campaignCode === '__NONE__') {
+      return () => {};
+    }
+
+    const code = campaignCode.trim();
+
+    // Clean up previous channel if any
+    if (this.activeRealtimeChannel) {
+      try {
+        supabase.removeChannel(this.activeRealtimeChannel);
+      } catch {}
+      this.activeRealtimeChannel = null;
+    }
+
+    try {
+      const channel = supabase.channel(`chronicle_live_${code}`)
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'sessions', filter: `campaign_code=eq.${code}` },
+          (payload) => {
+            if (callbacks.onSessionsChange) callbacks.onSessionsChange(payload);
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'notes', filter: `campaign_code=eq.${code}` },
+          (payload) => {
+            if (callbacks.onNotesChange) callbacks.onNotesChange(payload);
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'entities', filter: `campaign_code=eq.${code}` },
+          (payload) => {
+            if (callbacks.onEntitiesChange) callbacks.onEntitiesChange(payload);
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'character_bios', filter: `campaign_code=eq.${code}` },
+          (payload) => {
+            if (callbacks.onBiosChange) callbacks.onBiosChange(payload);
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'family_relations', filter: `campaign_code=eq.${code}` },
+          (payload) => {
+            if (callbacks.onRelationsChange) callbacks.onRelationsChange(payload);
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'world_lore_articles', filter: `campaign_code=eq.${code}` },
+          (payload) => {
+            if (callbacks.onLoreChange) callbacks.onLoreChange(payload);
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: 'UPDATE', schema: 'public', table: 'campaigns', filter: `code=eq.${code}` },
+          (payload) => {
+            if (callbacks.onCampaignChange) callbacks.onCampaignChange(payload);
+          }
+        )
+        .subscribe((status) => {
+          if (status === 'SUBSCRIBED') {
+            console.log(`[Supabase Realtime] Connected to live channel for campaign: ${code}`);
+          }
+        });
+
+      this.activeRealtimeChannel = channel;
+
+      return () => {
+        try {
+          supabase.removeChannel(channel);
+        } catch {}
+        if (this.activeRealtimeChannel === channel) {
+          this.activeRealtimeChannel = null;
+        }
+      };
+    } catch (e) {
+      console.warn('[Supabase Realtime] Setup error:', e);
+      return () => {};
+    }
   }
 }

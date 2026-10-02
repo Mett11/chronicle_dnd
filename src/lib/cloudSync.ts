@@ -490,19 +490,38 @@ export class CloudSyncService {
   /**
    * Directly syncs global campaigns
    */
-  static async syncCampaignsToCloud(_campaigns: CampaignMeta[]) {
-    // Supabase handles campaign persistence
+  static async syncCampaignsToCloud(campaigns: CampaignMeta[]) {
+    if (!Array.isArray(campaigns) || campaigns.length === 0) return;
+    try {
+      campaigns.forEach((camp) => {
+        if (camp && camp.code) {
+          SupabaseSyncService.saveCampaign(camp.code, {
+            title: camp.name || camp.code,
+            dmId: camp.dmId || '',
+          }).catch(() => {});
+        }
+      });
+    } catch (e) {
+      console.warn('[CloudSync] Failed to sync campaigns to Supabase:', e);
+    }
   }
 
   /**
    * Deletes a campaign and syncs updated state
    */
   static async deleteCampaignFromCloud(
-    _campaignCode: string,
+    campaignCode: string,
     _updatedCampaigns: CampaignMeta[],
     _updatedAccounts: UserAccount[]
   ) {
-    // Supabase handles campaign deletion
+    if (!campaignCode) return;
+    try {
+      const code = campaignCode.trim();
+      const { supabase } = await import('./supabase');
+      await supabase.from('campaigns').delete().eq('code', code);
+    } catch (e) {
+      console.warn('[CloudSync] Failed to delete campaign from Supabase:', e);
+    }
   }
 
   /**
@@ -1027,6 +1046,43 @@ export class CloudSyncService {
               try { this.mergeRemoteAccounts(supaData.activePlayers); } catch (e) { console.warn(e); }
             }
 
+            // Hydrate lore calendar from Supabase
+            if (supaData.calendarSystem && typeof supaData.calendarSystem === 'object' && Object.keys(supaData.calendarSystem).length > 0) {
+              try {
+                CampaignManager.saveCalendarLocalOnly(supaData.calendarSystem);
+              } catch (e) {
+                console.warn('[CloudSync] Calendar hydration warn:', e);
+              }
+            }
+
+            // Self-heal legacy base64 scrapbook items to Supabase Storage
+            try {
+              const currentItems = CampaignManager.getScrapbookItems();
+              const base64Items = currentItems.filter((i) => i.imageUrl && i.imageUrl.startsWith('data:'));
+              if (base64Items.length > 0) {
+                setTimeout(async () => {
+                  const { FirebaseStorageService } = await import('./firebaseStorageService');
+                  let updatedAny = false;
+                  const newItems = [...CampaignManager.getScrapbookItems()];
+                  for (const bItem of base64Items) {
+                    try {
+                      const pubUrl = await FirebaseStorageService.uploadMedia(activeCode, 'scrapbook', `${bItem.id}.webp`, bItem.imageUrl);
+                      if (pubUrl && pubUrl.startsWith('http')) {
+                        const targetIdx = newItems.findIndex((it) => it.id === bItem.id);
+                        if (targetIdx !== -1) {
+                          newItems[targetIdx] = { ...newItems[targetIdx], imageUrl: pubUrl };
+                          updatedAny = true;
+                        }
+                      }
+                    } catch {}
+                  }
+                  if (updatedAny) {
+                    CampaignManager.saveScrapbookItems(newItems);
+                  }
+                }, 3000);
+              }
+            } catch {}
+
             if (supaData.dossier?.aiKeys || supaData.aiConfig?.aiKeys) {
               try {
                 ApiKeyManager.hydrateCampaignKeysFromRemote(activeCode, supaData.dossier?.aiKeys || supaData.aiConfig?.aiKeys);
@@ -1034,6 +1090,9 @@ export class CloudSyncService {
                 console.warn('[CloudSync] AI keys hydration warn:', e);
               }
             }
+
+            // 0.1 Attach live Supabase Realtime WebSockets listener for seamless multi-user live sync
+            this.setupSupabaseRealtime(activeCode);
 
             this.isCampaignHydrated = true;
             if (typeof window !== 'undefined') {
@@ -1062,6 +1121,267 @@ export class CloudSyncService {
       this.isCampaignHydrated = true;
       console.warn('Could not initialize Cloud Sync:', e);
     }
+  }
+
+  private static realtimeUnsubscribe: (() => void) | null = null;
+
+  /**
+   * Connects to Supabase Realtime WebSockets to apply live changes across party members without refreshing
+   */
+  private static setupSupabaseRealtime(activeCode: string) {
+    if (this.realtimeUnsubscribe) {
+      try { this.realtimeUnsubscribe(); } catch {}
+      this.realtimeUnsubscribe = null;
+    }
+
+    this.realtimeUnsubscribe = SupabaseSyncService.subscribeCampaignRealtime(activeCode, {
+      onSessionsChange: (payload) => {
+        try {
+          const sessions = CampaignManager.getSessions();
+          if (payload.eventType === 'DELETE') {
+            const delId = payload.old?.id;
+            if (delId) {
+              const updated = sessions.filter((s) => s._id !== delId);
+              CampaignManager.saveSessionsLocalOnly(updated);
+            }
+          } else if (payload.new) {
+            const row = payload.new;
+            const cleanSess: any = {
+              _id: row.id,
+              sessionNumber: row.session_number,
+              title: row.title || `Sessione ${row.session_number}`,
+              date: row.played_at || new Date().toISOString(),
+              summary: row.summary || '',
+              tags: row.tags || [],
+              characters: row.characters || [],
+              location: row.location || '',
+              chapterId: row.chapter_id || undefined,
+              loreYear: row.lore_year,
+              loreMonth: row.lore_month,
+              loreStartDay: row.lore_start_day,
+              loreEndDay: row.lore_end_day,
+              updatedAt: row.updated_at || new Date().toISOString(),
+            };
+            const idx = sessions.findIndex((s) => s._id === cleanSess._id);
+            const updated = idx !== -1 ? sessions.map((s) => s._id === cleanSess._id ? cleanSess : s) : [cleanSess, ...sessions];
+            CampaignManager.saveSessionsLocalOnly(updated);
+          }
+        } catch (e) {
+          console.warn('[Realtime] Session update error:', e);
+        }
+      },
+      onNotesChange: (payload) => {
+        try {
+          const notes = CampaignManager.getNotes();
+          if (payload.eventType === 'DELETE') {
+            const delId = payload.old?.id;
+            if (delId) {
+              const updated = notes.filter((n) => n._id !== delId);
+              CampaignManager.saveNotesLocalOnly(updated);
+            }
+          } else if (payload.new) {
+            const row = payload.new;
+            const cleanNote: any = {
+              _id: row.id,
+              title: row.title || 'Senza Titolo',
+              content: row.content || '',
+              category: row.category || 'general',
+              tags: row.tags || [],
+              images: row.images || [],
+              dmOnly: Boolean(row.is_secret),
+              authorPlayerId: row.author_player_id || undefined,
+              authorName: row.author_name || undefined,
+              pinned: Boolean(row.is_pinned),
+              updatedAt: row.updated_at || new Date().toISOString(),
+            };
+            const idx = notes.findIndex((n) => n._id === cleanNote._id);
+            const updated = idx !== -1 ? notes.map((n) => n._id === cleanNote._id ? cleanNote : n) : [cleanNote, ...notes];
+            CampaignManager.saveNotesLocalOnly(updated);
+          }
+        } catch (e) {
+          console.warn('[Realtime] Note update error:', e);
+        }
+      },
+      onEntitiesChange: (payload) => {
+        try {
+          const entities = CampaignManager.getEntities();
+          if (payload.eventType === 'DELETE') {
+            const delId = payload.old?.id;
+            if (delId) {
+              const updated = entities.filter((e) => e._id !== delId);
+              CampaignManager.saveEntitiesLocalOnly(updated);
+            }
+          } else if (payload.new) {
+            const row = payload.new;
+            const cleanEnt: any = {
+              _id: row.id,
+              name: row.name || 'Entità Sconosciuta',
+              type: row.entity_type || 'npc',
+              description: row.description || '',
+              summary: row.summary || '',
+              tags: row.tags || [],
+              images: row.images || [],
+              dmOnly: Boolean(row.is_secret),
+              status: row.status || 'unknown',
+              location: row.location || '',
+              aiConfig: row.ai_config || undefined,
+              updatedAt: row.updated_at || new Date().toISOString(),
+            };
+            const idx = entities.findIndex((e) => e._id === cleanEnt._id);
+            const updated = idx !== -1 ? entities.map((e) => e._id === cleanEnt._id ? cleanEnt : e) : [cleanEnt, ...entities];
+            CampaignManager.saveEntitiesLocalOnly(updated);
+          }
+        } catch (e) {
+          console.warn('[Realtime] Entity update error:', e);
+        }
+      },
+      onBiosChange: (payload) => {
+        try {
+          const bios = CampaignManager.getAllCharacterBios();
+          if (payload.eventType === 'DELETE') {
+            const delId = payload.old?.player_id;
+            if (delId) {
+              const updated = bios.filter((b) => b.playerId !== delId);
+              CampaignManager.saveAllCharacterBiosLocalOnly(updated);
+            }
+          } else if (payload.new) {
+            const row = payload.new;
+            const cleanBio: any = {
+              playerId: row.player_id,
+              campaignCode: row.campaign_code,
+              characterName: row.name || '',
+              name: row.name || '',
+              avatarUrl: row.avatar_url || '',
+              color: row.color || '#6366f1',
+              characterClass: row.class_level || '',
+              characterAlignment: row.alignment || '',
+              backstoryMarkdown: row.background || '',
+              personalityTraits: row.personality ? row.personality.split(', ') : [],
+              ideals: row.ideals || '',
+              bonds: row.bonds || '',
+              flaws: row.flaws || '',
+              timelineMemories: row.timeline_memories || [],
+              evolvingBeliefs: row.evolving_beliefs || [],
+              interPartyRelations: row.inter_party_relations || {},
+              characterRace: row.character_race || row.extra_data?.characterRace || '',
+              characterTitle: row.character_title || row.extra_data?.characterTitle || '',
+              deityOrPatron: row.deity_or_patron || row.extra_data?.deityOrPatron || '',
+              hometown: row.hometown || row.extra_data?.hometown || '',
+              birthDateFormatted: row.birth_date_formatted || row.extra_data?.birthDateFormatted || '',
+              birthStartDay: row.birth_start_day || row.extra_data?.birthStartDay || 1,
+              birthMonth: row.birth_month || row.extra_data?.birthMonth || '',
+              birthYear: row.birth_year || row.extra_data?.birthYear || 1492,
+              secrets: row.secrets || row.extra_data?.secrets || '',
+              appearanceDescription: row.appearance_description || row.extra_data?.appearanceDescription || '',
+              currentStatus: row.current_status || row.extra_data?.currentStatus || '',
+              knownLoreBites: row.known_lore_bites || row.extra_data?.knownLoreBites || [],
+              privacySettings: row.privacy_settings || row.extra_data?.privacySettings || {},
+              updatedAt: row.updated_at || new Date().toISOString(),
+            };
+            const idx = bios.findIndex((b) => b.playerId === cleanBio.playerId);
+            const updated = idx !== -1 ? bios.map((b) => b.playerId === cleanBio.playerId ? cleanBio : b) : [cleanBio, ...bios];
+            CampaignManager.saveAllCharacterBiosLocalOnly(updated);
+          }
+        } catch (e) {
+          console.warn('[Realtime] Bio update error:', e);
+        }
+      },
+      onRelationsChange: (payload) => {
+        try {
+          const rels = CampaignManager.getAllFamilyRelations();
+          if (payload.eventType === 'DELETE') {
+            const delId = payload.old?.id;
+            if (delId) {
+              const updated = rels.filter((r) => r.id !== delId);
+              CampaignManager.saveAllFamilyRelationsLocalOnly(updated);
+            }
+          } else if (payload.new) {
+            const row = payload.new;
+            const cleanRel: any = {
+              id: row.id,
+              playerId: row.source_entity_id,
+              linkedEntityId: row.target_entity_id,
+              relationshipType: row.relationship_type,
+              bio: row.description || '',
+              sharedWithParty: !row.is_secret,
+              name: row.name || '',
+              avatarUrl: row.avatar_url || '',
+              customRelationshipLabel: row.custom_relationship_label || '',
+              titleOrRole: row.title_or_role || '',
+              generationCategory: row.generation_category || 'same_generation',
+              genealogyRole: row.genealogy_role || '',
+              sideOfFamily: row.side_of_family || 'unspecified',
+              status: row.status || 'alive',
+              secondParentId: row.second_parent_id || '',
+              otherParentName: row.other_parent_name || '',
+              linkedPlayerId: row.linked_player_id || '',
+              tags: row.tags || [],
+              order: row.order_index || 0,
+              updatedAt: row.updated_at || new Date().toISOString(),
+            };
+            const idx = rels.findIndex((r) => r.id === cleanRel.id);
+            const updated = idx !== -1 ? rels.map((r) => r.id === cleanRel.id ? cleanRel : r) : [cleanRel, ...rels];
+            CampaignManager.saveAllFamilyRelationsLocalOnly(updated);
+          }
+        } catch (e) {
+          console.warn('[Realtime] Relation update error:', e);
+        }
+      },
+      onLoreChange: (payload) => {
+        try {
+          const arts = CampaignManager.getWorldLoreArticles();
+          if (payload.eventType === 'DELETE') {
+            const delId = payload.old?.id;
+            if (delId) {
+              const updated = arts.filter((a) => a._id !== delId);
+              CampaignManager.saveAllWorldLoreArticlesLocalOnly(updated);
+            }
+          } else if (payload.new) {
+            const row = payload.new;
+            const cleanArt: any = {
+              _id: row.id,
+              _createdAt: row.updated_at || new Date().toISOString(),
+              title: row.title || 'Senza Titolo',
+              subtitle: row.subtitle || '',
+              summary: row.summary || '',
+              fullContentMarkdown: row.content || '',
+              category: row.category_id || 'general',
+              images: row.images || [],
+              dmOnly: Boolean(row.is_draft),
+              bites: row.bites || [],
+              authorPlayerId: row.author_player_id || '',
+              authorName: row.author_name || '',
+              tags: row.tags || [],
+              relatedEntityIds: row.related_entity_ids || [],
+              order: row.order_index || 0,
+            };
+            const idx = arts.findIndex((a) => a._id === cleanArt._id);
+            const updated = idx !== -1 ? arts.map((a) => a._id === cleanArt._id ? cleanArt : a) : [cleanArt, ...arts];
+            CampaignManager.saveAllWorldLoreArticlesLocalOnly(updated);
+          }
+        } catch (e) {
+          console.warn('[Realtime] Lore update error:', e);
+        }
+      },
+      onCampaignChange: (payload) => {
+        try {
+          const row = payload.new;
+          if (row) {
+            if (row.calendar_system && typeof row.calendar_system === 'object') {
+              CampaignManager.saveCalendarLocalOnly(row.calendar_system);
+            }
+            if (row.title) {
+              CampaignManager.updateCampaignMeta(activeCode, {
+                name: row.title,
+                dmId: row.dm_id || undefined,
+              });
+            }
+          }
+        } catch (e) {
+          console.warn('[Realtime] Campaign update error:', e);
+        }
+      },
+    });
   }
 
   /**
@@ -1815,14 +2135,25 @@ export class CloudSyncService {
   /**
    * Fetches Oracle AI chat history
    */
-  static async fetchOracleChatFromCloud(_campaignCode: string, _userId: string): Promise<any[]> {
-    return [];
+  static async fetchOracleChatFromCloud(campaignCode: string, userId: string): Promise<any[]> {
+    if (!campaignCode || !userId) return [];
+    try {
+      const msgs = await SupabaseSyncService.fetchOracleChat(campaignCode, userId);
+      return Array.isArray(msgs) ? msgs : [];
+    } catch {
+      return [];
+    }
   }
 
   /**
    * Saves Oracle AI chat history
    */
-  static async saveOracleChatToCloud(_campaignCode: string, _userId: string, _messages: any[]): Promise<void> {
-    // Supabase / local handles chat
+  static async saveOracleChatToCloud(campaignCode: string, userId: string, messages: any[]): Promise<void> {
+    if (!campaignCode || !userId) return;
+    try {
+      await SupabaseSyncService.saveOracleChat(campaignCode, userId, messages);
+    } catch (e) {
+      console.warn('[CloudSync] Failed to save oracle chat to Supabase:', e);
+    }
   }
 }

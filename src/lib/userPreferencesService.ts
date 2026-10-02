@@ -1,5 +1,6 @@
 import { auth } from './firebase';
 import { UserPreferences } from '../types';
+import { SupabaseSyncService } from './supabaseSyncService';
 
 export const DEFAULT_USER_PREFERENCES: UserPreferences = {
   theme: {
@@ -157,10 +158,22 @@ export class UserPreferencesService {
       console.warn('[UserPreferencesService] LocalStorage save failed:', e);
     }
 
-    // 2. Apply theme to DOM
+    // 2. Sync to Supabase user_preferences table asynchronously
+    if (norm && norm !== 'guest') {
+      SupabaseSyncService.saveUserPreferences(norm, {
+        theme: merged.theme,
+        ai: merged.ai,
+        reading: merged.reading,
+        notifications: merged.notifications,
+      }).catch((err) => {
+        console.warn('[UserPreferencesService] Supabase cloud sync failed:', err);
+      });
+    }
+
+    // 3. Apply theme to DOM
     this.applyThemeToDOM(merged.theme);
 
-    // 3. Dispatch event
+    // 4. Dispatch event
     if (typeof window !== 'undefined') {
       window.dispatchEvent(
         new CustomEvent('chronicle_user_preferences_updated', {
@@ -270,6 +283,32 @@ export class UserPreferencesService {
     const initialLocal = this.getLocalPreferences(norm);
     this.applyThemeToDOM(initialLocal.theme);
     onUpdate(initialLocal);
+
+    // Asynchronously fetch preferences from Supabase to stay updated across devices
+    SupabaseSyncService.fetchUserPreferences(norm).then((remoteData) => {
+      if (remoteData) {
+        const mergedFromRemote: UserPreferences = {
+          ...DEFAULT_USER_PREFERENCES,
+          theme: { ...DEFAULT_USER_PREFERENCES.theme, ...(initialLocal.theme || {}), ...(remoteData.theme || {}) },
+          ai: { ...DEFAULT_USER_PREFERENCES.ai, ...(initialLocal.ai || {}), ...(remoteData.ai || {}) },
+          reading: { ...DEFAULT_USER_PREFERENCES.reading, ...(initialLocal.reading || {}), ...(remoteData.reading || {}) },
+          notifications: {
+            dismissedByCampaign: {
+              ...(initialLocal.notifications?.dismissedByCampaign || {}),
+              ...(remoteData.notifications?.dismissedByCampaign || {}),
+            },
+          },
+          updatedAt: remoteData.updated_at || new Date().toISOString(),
+        };
+
+        try {
+          localStorage.setItem(getStorageKey(norm), JSON.stringify(mergedFromRemote));
+        } catch {}
+
+        this.applyThemeToDOM(mergedFromRemote.theme);
+        onUpdate(mergedFromRemote);
+      }
+    }).catch(() => {});
 
     const handler = (e: Event) => {
       const customEvent = e as CustomEvent;

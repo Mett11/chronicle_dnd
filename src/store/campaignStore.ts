@@ -2299,7 +2299,31 @@ export class CampaignManager {
     };
     setCached(key, sanitizedCalendar);
     safeLocalStorageSetItem(key, JSON.stringify(sanitizedCalendar));
+    if (isSupabaseConfigured()) {
+      const code = this.getActiveCampaignCode();
+      if (code && code !== '__NONE__') {
+        SupabaseSyncService.saveCalendar(code, sanitizedCalendar).catch(() => {});
+      }
+    }
     CloudSyncService.triggerCloudSave();
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(
+        new CustomEvent("chronicle_calendar_updated", { detail: sanitizedCalendar }),
+      );
+      window.dispatchEvent(new CustomEvent("chronicle_data_updated"));
+    }
+  }
+
+  static saveCalendarLocalOnly(calendar: CampaignCalendar) {
+    const key = this.getStorageKey("calendar");
+    const sanitizedCalendar: CampaignCalendar = {
+      ...calendar,
+      currentYear: typeof calendar.currentYear === "number" ? calendar.currentYear : 1492,
+      currentDay: typeof calendar.currentDay === "number" ? calendar.currentDay : 1,
+      currentMonthIndex: typeof calendar.currentMonthIndex === "number" ? calendar.currentMonthIndex : 0,
+    };
+    setCached(key, sanitizedCalendar);
+    safeLocalStorageSetItem(key, JSON.stringify(sanitizedCalendar));
     if (typeof window !== "undefined") {
       window.dispatchEvent(
         new CustomEvent("chronicle_calendar_updated", { detail: sanitizedCalendar }),
@@ -4481,6 +4505,21 @@ export class CampaignManager {
     };
     const updated = [newItem, ...items];
     this.saveScrapbookItems(updated);
+
+    // Auto-convert Base64 data URL to Supabase Storage public URL
+    if (newItem.imageUrl && newItem.imageUrl.startsWith('data:')) {
+      const activeCode = this.getActiveCampaignCode() || 'default';
+      FirebaseStorageService.uploadMedia(activeCode, 'scrapbook', `${newItem.id}.webp`, newItem.imageUrl)
+        .then((publicUrl) => {
+          if (publicUrl && publicUrl.startsWith('http')) {
+            const currentItems = this.getScrapbookItems();
+            const withPublicUrl = currentItems.map((s) => s.id === newItem.id ? { ...s, imageUrl: publicUrl } : s);
+            this.saveScrapbookItems(withPublicUrl);
+          }
+        })
+        .catch(() => {});
+    }
+
     return newItem;
   }
 
@@ -4805,6 +4844,9 @@ export class CampaignManager {
     const all = this.getAllFamilyRelations();
     const targetRel = all.find((r) => r.id === relationId);
     const updated = all.filter((r) => r.id !== relationId);
+    if (isSupabaseConfigured() && relationId) {
+      SupabaseSyncService.deleteFamilyRelation(relationId, this.getActiveCampaignCode()).catch(() => {});
+    }
     const res = await this.saveAllFamilyRelations(updated);
 
     // If this relationship was linked to a Codex entity or matches an entity, remove that relationship from the entity's partyRelations
@@ -5132,6 +5174,9 @@ export class CampaignManager {
     const articles = this.getWorldLoreArticles();
     const targetArticle = articles.find((a) => a._id === articleId);
     const updated = articles.filter((a) => a._id !== articleId);
+    if (isSupabaseConfigured() && articleId) {
+      SupabaseSyncService.deleteWorldLoreArticle(articleId, this.getActiveCampaignCode()).catch(() => {});
+    }
     this.saveAllWorldLoreArticles(updated);
 
     // Also remove any references from character bios
