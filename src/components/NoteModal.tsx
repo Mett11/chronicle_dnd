@@ -122,30 +122,22 @@ export function NoteModal({
       let savedNote: Note;
 
       if (isEditing && initialNote) {
-        const allNotes = CampaignManager.getNotes();
-        const updatedNotes = allNotes.map((n) => {
-          if (n._id === initialNote._id) {
-            const updated: Note = {
-              ...n,
-              title: title.trim(),
-              content: content.trim() || undefined,
-              category: selectedCategory,
-              session: selectedSession,
-              visibility: visibility,
-              dmOnly: dmOnly,
-              askDm: askDm,
-              canonState: canonState,
-              images: images,
-              loreDate: loreDate.trim() || undefined,
-            };
-            savedNote = updated;
-            return updated;
-          }
-          return n;
+        const updated = CampaignManager.updateNote(initialNote._id, {
+          title: title.trim(),
+          content: content.trim() || undefined,
+          category: selectedCategory,
+          session: selectedSession,
+          visibility: visibility,
+          dmOnly: dmOnly,
+          askDm: askDm,
+          canonState: canonState,
+          images: images,
+          loreDate: loreDate.trim() || undefined,
         });
 
-        CampaignManager.saveNotes(updatedNotes);
-        if (!savedNote!) {
+        if (updated) {
+          savedNote = updated;
+        } else {
           // If note wasn't in array, create it
           savedNote = CampaignManager.addNote(
             {

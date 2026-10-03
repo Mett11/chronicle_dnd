@@ -601,25 +601,20 @@ export function CharacterProfile() {
   };
 
   const handleToggleQuestStatus = (quest: Entity, newStatus: Entity['status']) => {
-    const all = CampaignManager.getEntities();
-    const updated = all.map((q) => (q._id === quest._id ? { ...q, status: newStatus } : q));
-    CampaignManager.saveEntities(updated);
+    CampaignManager.updateEntityStatus(quest._id, newStatus);
+    const updated = CampaignManager.getEntities();
     setQuests(updated.filter((e) => e.type === 'quest' && (e.questScope === 'personal' || e.assigneePlayerId === player._id)));
   };
 
   const handleDeleteNote = (noteId: string) => {
-    const all = CampaignManager.getNotes();
-    const updated = all.filter((n) => n._id !== noteId);
-    CampaignManager.saveNotes(updated);
+    CampaignManager.deleteNote(noteId);
     setNotes((prev) => prev.filter((n) => n._id !== noteId));
     setNoteToDelete(null);
     if (selectedNote?._id === noteId) setSelectedNote(null);
   };
 
   const handleDeleteQuest = (questId: string) => {
-    const all = CampaignManager.getEntities();
-    const updated = all.filter((q) => q._id !== questId);
-    CampaignManager.saveEntities(updated);
+    CampaignManager.deleteEntity(questId);
     setQuests((prev) => prev.filter((q) => q._id !== questId));
     setQuestToDelete(null);
   };
@@ -633,20 +628,24 @@ export function CharacterProfile() {
 
   const handleSendDmReply = (note: Note) => {
     if (!dmReplyText.trim()) return;
-    const responseObj: DmResponse = {
-      text: dmReplyText.trim(),
-      answeredAt: new Date().toISOString(),
-      answeredBy: player.characterName || 'Dungeon Master',
-      isResolved: true,
-    };
-
-    const all = CampaignManager.getNotes();
-    const updated = all.map((n) => (n._id === note._id ? { ...n, dmResponse: responseObj } : n));
-    CampaignManager.saveNotes(updated);
+    CampaignManager.replyToDmClarification(
+      note._id,
+      dmReplyText.trim(),
+      player.characterName || 'Dungeon Master',
+      true
+    );
     setDmReplyText('');
     loadData();
     if (selectedNote?._id === note._id) {
-      setSelectedNote({ ...selectedNote, dmResponse: responseObj });
+      setSelectedNote({
+        ...selectedNote,
+        dmResponse: {
+          text: dmReplyText.trim(),
+          answeredAt: new Date().toISOString(),
+          answeredBy: player.characterName || 'Dungeon Master',
+          isResolved: true,
+        },
+      });
     }
   };
 
@@ -957,27 +956,19 @@ export function CharacterProfile() {
 
     if (existingEnt) {
       // Update existing entity
-      const allEnts = CampaignManager.getEntities();
-      const updatedEnts: Entity[] = allEnts.map((e) => {
-        if (e._id === existingEnt._id) {
-          return {
-            ...e,
-            name: charName,
-            aliases,
-            color: targetPlayer.color || e.color,
-            images: targetPlayer.avatarUrl ? [targetPlayer.avatarUrl] : e.images,
-            status: entityStatus,
-            progressNote,
-            aiConfig: {
-              ...e.aiConfig,
-              ...aiConfig,
-            },
-          };
-        }
-        return e;
+      const updated = CampaignManager.updateEntity(existingEnt._id, {
+        name: charName,
+        aliases,
+        color: targetPlayer.color || existingEnt.color,
+        images: targetPlayer.avatarUrl ? [targetPlayer.avatarUrl] : existingEnt.images,
+        status: entityStatus,
+        progressNote,
+        aiConfig: {
+          ...existingEnt.aiConfig,
+          ...aiConfig,
+        },
       });
-      CampaignManager.saveEntities(updatedEnts);
-      setEntities(updatedEnts);
+      setEntities(CampaignManager.getEntities());
       setSyncStatusMsg(
         `Scheda di "${charName}" allineata nel Codex con memoria completa (${timelineMemories.length} ricordi, ${evolvingBeliefs.length} credenze, ${openQuests.length} obiettivi) e Persona IA!`
       );

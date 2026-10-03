@@ -1259,9 +1259,7 @@ export function Home() {
                       <button
                         type="button"
                         onClick={() => {
-                          const all = CampaignManager.getEntities();
-                          const updated = all.map((q) => (q._id === quest._id ? { ...q, status: 'completed' as const } : q));
-                          CampaignManager.saveEntities(updated);
+                          CampaignManager.updateEntityStatus(quest._id, 'completed');
                           refreshData();
                           showToast('Missione segnata come completata!');
                         }}
@@ -1344,9 +1342,7 @@ export function Home() {
         confirmLabel="Elimina Definitivamente"
         onConfirm={() => {
           if (!questToDelete) return;
-          const all = CampaignManager.getEntities();
-          const updated = all.filter((q) => q._id !== questToDelete);
-          CampaignManager.saveEntities(updated);
+          CampaignManager.deleteEntity(questToDelete);
           setQuestToDelete(null);
           refreshData();
           showToast('Missione rimossa dal registro.');

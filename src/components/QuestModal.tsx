@@ -108,9 +108,7 @@ export function QuestModal({
 
       if (initialQuest) {
         // Edit existing quest
-        const allEntities = CampaignManager.getEntities();
-        const updated: Entity = {
-          ...initialQuest,
+        const updated = CampaignManager.updateEntity(initialQuest._id, {
           name: name.trim(),
           progressNote: progressNote.trim() || undefined,
           questScope: questScope,
@@ -120,11 +118,9 @@ export function QuestModal({
           sharedWithDm: questScope === 'personal' && questPrivacy === 'private' ? sharedWithDm : undefined,
           status: status,
           images: images.length > 0 ? images : undefined,
-        };
+        });
 
-        const newEntities = allEntities.map((ent) => (ent._id === initialQuest._id ? updated : ent));
-        CampaignManager.saveEntities(newEntities);
-        savedQuest = updated;
+        savedQuest = updated || initialQuest;
       } else {
         // Create new quest
         savedQuest = CampaignManager.addEntity({

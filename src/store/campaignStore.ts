@@ -2603,7 +2603,11 @@ export class CampaignManager {
       return n;
     });
     if (updatedNote) {
-      this.saveNotes(updated);
+      this.saveNotesLocalOnly(updated);
+      if (isSupabaseConfigured()) {
+        const code = this.getActiveCampaignCode() || 'default';
+        SupabaseSyncService.saveNote(code, updatedNote);
+      }
       this.addCampaignNotification({
         category: 'clarification',
         title: 'Risposta dal Dungeon Master',
@@ -2619,9 +2623,10 @@ export class CampaignManager {
 
   static toggleDmClarificationResolved(noteId: string, isResolved?: boolean) {
     const notes = this.getNotes();
+    let targetNote: Note | null = null;
     const updated = notes.map((n) => {
       if (n._id === noteId && n.dmResponse) {
-        return {
+        targetNote = {
           ...n,
           dmResponse: {
             ...n.dmResponse,
@@ -2629,28 +2634,50 @@ export class CampaignManager {
               isResolved !== undefined ? isResolved : !n.dmResponse.isResolved,
           },
         };
+        return targetNote;
       }
       return n;
     });
-    this.saveNotes(updated);
+    this.saveNotesLocalOnly(updated);
+    if (isSupabaseConfigured() && targetNote) {
+      const code = this.getActiveCampaignCode() || 'default';
+      SupabaseSyncService.saveNote(code, targetNote);
+    }
   }
 
   static setNoteAskDm(noteId: string, askDm: boolean) {
     const notes = this.getNotes();
-    const updated = notes.map((n) => (n._id === noteId ? { ...n, askDm } : n));
-    this.saveNotes(updated);
+    let targetNote: Note | null = null;
+    const updated = notes.map((n) => {
+      if (n._id === noteId) {
+        targetNote = { ...n, askDm };
+        return targetNote;
+      }
+      return n;
+    });
+    this.saveNotesLocalOnly(updated);
+    if (isSupabaseConfigured() && targetNote) {
+      const code = this.getActiveCampaignCode() || 'default';
+      SupabaseSyncService.saveNote(code, targetNote);
+    }
   }
 
   // === CLARIFICATION LIFECYCLE (DM & PLAYER INDEPENDENT DISMISSAL / REMOVAL) ===
   static removeClarificationForDm(noteId: string) {
     const notes = this.getNotes();
+    let targetNote: Note | null = null;
     const updated = notes.map((n) => {
       if (n._id === noteId) {
-        return { ...n, hiddenForDm: true, _updatedAt: new Date().toISOString() };
+        targetNote = { ...n, hiddenForDm: true, _updatedAt: new Date().toISOString() };
+        return targetNote;
       }
       return n;
     });
-    this.saveNotes(updated);
+    this.saveNotesLocalOnly(updated);
+    if (isSupabaseConfigured() && targetNote) {
+      const code = this.getActiveCampaignCode() || 'default';
+      SupabaseSyncService.saveNote(code, targetNote);
+    }
     this.dismissNotification(noteId);
     this.deleteCampaignNotification(noteId);
     if (typeof window !== "undefined") {
@@ -2662,18 +2689,24 @@ export class CampaignManager {
   static removeClarificationForPlayer(noteId: string, playerId: string) {
     if (!playerId) return;
     const notes = this.getNotes();
+    let targetNote: Note | null = null;
     const updated = notes.map((n) => {
       if (n._id === noteId) {
         const currentHidden = Array.isArray(n.hiddenForPlayerIds) ? n.hiddenForPlayerIds : [];
-        return {
+        targetNote = {
           ...n,
           hiddenForPlayerIds: Array.from(new Set([...currentHidden, playerId])),
           _updatedAt: new Date().toISOString(),
         };
+        return targetNote;
       }
       return n;
     });
-    this.saveNotes(updated);
+    this.saveNotesLocalOnly(updated);
+    if (isSupabaseConfigured() && targetNote) {
+      const code = this.getActiveCampaignCode() || 'default';
+      SupabaseSyncService.saveNote(code, targetNote);
+    }
     this.dismissNotification(noteId, playerId);
     this.deleteCampaignNotification(noteId);
     if (typeof window !== "undefined") {
@@ -2684,13 +2717,19 @@ export class CampaignManager {
 
   static deleteDmReply(noteId: string) {
     const notes = this.getNotes();
+    let targetNote: Note | null = null;
     const updated = notes.map((n) => {
       if (n._id === noteId) {
-        return { ...n, dmResponse: undefined, _updatedAt: new Date().toISOString() };
+        targetNote = { ...n, dmResponse: undefined, _updatedAt: new Date().toISOString() };
+        return targetNote;
       }
       return n;
     });
-    this.saveNotes(updated);
+    this.saveNotesLocalOnly(updated);
+    if (isSupabaseConfigured() && targetNote) {
+      const code = this.getActiveCampaignCode() || 'default';
+      SupabaseSyncService.saveNote(code, targetNote);
+    }
     if (typeof window !== "undefined") {
       window.dispatchEvent(new CustomEvent("chronicle_notifications_updated"));
       window.dispatchEvent(new CustomEvent("chronicle_notes_updated"));
@@ -2699,13 +2738,19 @@ export class CampaignManager {
 
   static deleteClarificationRequest(noteId: string) {
     const notes = this.getNotes();
+    let targetNote: Note | null = null;
     const updated = notes.map((n) => {
       if (n._id === noteId) {
-        return { ...n, askDm: false, dmResponse: undefined, _updatedAt: new Date().toISOString() };
+        targetNote = { ...n, askDm: false, dmResponse: undefined, _updatedAt: new Date().toISOString() };
+        return targetNote;
       }
       return n;
     });
-    this.saveNotes(updated);
+    this.saveNotesLocalOnly(updated);
+    if (isSupabaseConfigured() && targetNote) {
+      const code = this.getActiveCampaignCode() || 'default';
+      SupabaseSyncService.saveNote(code, targetNote);
+    }
     this.deleteCampaignNotification(noteId);
     if (typeof window !== "undefined") {
       window.dispatchEvent(new CustomEvent("chronicle_notifications_updated"));
@@ -3013,87 +3058,7 @@ export class CampaignManager {
           const raw: Session[] = JSON.parse(saved);
           const parsed = sanitizeArray<Session>(raw);
           if (Array.isArray(parsed)) {
-            const cal = this.getCalendar();
-            let hasRepairs = false;
-
-            const dateRepaired = parsed.map((s) => {
-              // If session already has both structured metadata and loreDate, keep it
-              if (s.loreMonth && s.loreStartDay !== undefined && s.loreDate) {
-                return s;
-              }
-
-              // Try parsing existing loreDate or title or fallback to active campaign date
-              const parsedDate = parseLoreDateString(
-                s.loreDate || s.title,
-                cal.months,
-                cal.currentYear,
-                cal.yearSuffix,
-              );
-
-              if (parsedDate) {
-                hasRepairs = true;
-                return {
-                  ...s,
-                  loreDate: s.loreDate || parsedDate.formatted,
-                  loreStartDay:
-                    s.loreStartDay !== undefined
-                      ? s.loreStartDay
-                      : parsedDate.startDay,
-                  loreEndDay:
-                    s.loreEndDay !== undefined
-                      ? s.loreEndDay
-                      : parsedDate.endDay,
-                  loreMonth: s.loreMonth || parsedDate.monthName,
-                  loreEndMonth: s.loreEndMonth || parsedDate.endMonthName,
-                  loreYear: s.loreYear || parsedDate.year,
-                  loreEndYear: s.loreEndYear || parsedDate.endYear,
-                };
-              }
-
-              // Fallback: If session had no lore date at all, associate with current campaign calendar state
-              const curMonth =
-                cal.months[cal.currentMonthIndex] || cal.months[0];
-              const defaultFormatted = formatLoreDate(
-                cal.currentDay || 15,
-                undefined,
-                curMonth.name,
-                cal.currentYear || 1492,
-                cal.yearSuffix || "CV",
-              );
-
-              hasRepairs = true;
-              return {
-                ...s,
-                loreDate: s.loreDate || defaultFormatted,
-                loreStartDay:
-                  s.loreStartDay !== undefined
-                    ? s.loreStartDay
-                    : cal.currentDay || 15,
-                loreMonth: s.loreMonth || curMonth.name,
-                loreYear: s.loreYear || cal.currentYear,
-              };
-            });
-
-            // Reconcile with chapters in-memory
-            const chaptersKey = this.getStorageKey("chapters");
-            const storedChapters = localStorage.getItem(chaptersKey);
-            let chaptersList: CampaignChapter[] = [];
-            if (storedChapters) {
-              try {
-                chaptersList = JSON.parse(storedChapters);
-              } catch {}
-            }
-
-            const { sessions: reconciled, hasSessionChanges } = this.reconcileSessionsAndChapters(
-              dateRepaired,
-              chaptersList
-            );
-
-            if (hasRepairs || hasSessionChanges) {
-              localStorage.setItem(key, JSON.stringify(reconciled));
-            }
-
-            return reconciled;
+            return parsed;
           }
         } catch {}
       }
@@ -3464,7 +3429,11 @@ export class CampaignManager {
 
     const currentEvents = sessions[index].events || [];
     sessions[index].events = [...currentEvents, newEvt];
-    this.saveSessions(sessions);
+    this.saveSessionsLocalOnly(sessions);
+    if (isSupabaseConfigured()) {
+      const code = this.getActiveCampaignCode() || 'default';
+      SupabaseSyncService.saveSession(code, sessions[index]);
+    }
 
     if (event.impact === 'major' || !event.impact || event.impact === 'normal') {
       this.addCampaignNotification({
@@ -3497,7 +3466,11 @@ export class CampaignManager {
         if (updates.images) {
           session.images = updates.images;
           sessions[sessionIndex] = { ...session };
-          this.saveSessions(sessions);
+          this.saveSessionsLocalOnly(sessions);
+          if (isSupabaseConfigured()) {
+            const code = this.getActiveCampaignCode() || 'default';
+            SupabaseSyncService.saveSession(code, sessions[sessionIndex]);
+          }
         }
       }
       return null;
@@ -3507,7 +3480,11 @@ export class CampaignManager {
     events[eventIndex] = updatedEvt;
     session.events = [...events];
     sessions[sessionIndex] = { ...session };
-    this.saveSessions(sessions);
+    this.saveSessionsLocalOnly(sessions);
+    if (isSupabaseConfigured()) {
+      const code = this.getActiveCampaignCode() || 'default';
+      SupabaseSyncService.saveSession(code, sessions[sessionIndex]);
+    }
     return updatedEvt;
   }
 
@@ -3523,7 +3500,11 @@ export class CampaignManager {
     const events = session.events || [];
     session.events = events.filter((e) => e.id !== eventId);
     sessions[sessionIndex] = { ...session };
-    this.saveSessions(sessions);
+    this.saveSessionsLocalOnly(sessions);
+    if (isSupabaseConfigured()) {
+      const code = this.getActiveCampaignCode() || 'default';
+      SupabaseSyncService.saveSession(code, sessions[sessionIndex]);
+    }
     return true;
   }
 
@@ -3754,7 +3735,11 @@ export class CampaignManager {
       e._id === id ? { ...e, status } : e,
     );
     const target = entities.find((e) => e._id === id);
-    this.saveEntities(entities);
+    this.saveEntitiesLocalOnly(entities);
+    if (isSupabaseConfigured() && target) {
+      const code = this.getActiveCampaignCode() || 'default';
+      SupabaseSyncService.saveEntity(code, target);
+    }
 
     if (target) {
       const statusLabels: Record<string, string> = {
@@ -3805,7 +3790,11 @@ export class CampaignManager {
       },
     };
 
-    this.saveEntities(entities.map((e) => (e._id === entityId ? updatedEnt : e)));
+    this.saveEntitiesLocalOnly(entities.map((e) => (e._id === entityId ? updatedEnt : e)));
+    if (isSupabaseConfigured()) {
+      const code = this.getActiveCampaignCode() || 'default';
+      SupabaseSyncService.saveEntity(code, updatedEnt);
+    }
 
     this.addCampaignNotification({
       category: 'codex',
@@ -3848,7 +3837,11 @@ export class CampaignManager {
       },
     };
 
-    this.saveEntities(entities.map((e) => (e._id === entityId ? updatedEnt : e)));
+    this.saveEntitiesLocalOnly(entities.map((e) => (e._id === entityId ? updatedEnt : e)));
+    if (isSupabaseConfigured()) {
+      const code = this.getActiveCampaignCode() || 'default';
+      SupabaseSyncService.saveEntity(code, updatedEnt);
+    }
     return true;
   }
 
@@ -4191,18 +4184,7 @@ export class CampaignManager {
   }
 
   static saveMaps(maps: WorldMap[]) {
-    const key = this.getStorageKey("maps");
-    const sanitized = sanitizeArray<WorldMap>(maps);
-    setCached(key, sanitized);
-    safeLocalStorageSetItem(key, JSON.stringify(sanitized));
-    CloudSyncService.triggerCloudSave();
-    if (isSupabaseConfigured()) {
-      const code = this.getActiveCampaignCode() || 'default';
-      sanitized.forEach((m) => SupabaseSyncService.saveMap(code, m));
-    }
-    try {
-      window.dispatchEvent(new CustomEvent('chronicle_maps_updated', { detail: { maps: sanitized } }));
-    } catch {}
+    this.saveMapsLocalOnly(maps);
   }
 
   static saveMapsLocalOnly(maps: WorldMap[]) {
@@ -4293,7 +4275,11 @@ export class CampaignManager {
       createdAt: new Date().toISOString(),
     };
     const updated = [...maps, newMap];
-    this.saveMaps(updated);
+    this.saveMapsLocalOnly(updated);
+    if (isSupabaseConfigured()) {
+      const code = this.getActiveCampaignCode() || 'default';
+      SupabaseSyncService.saveMap(code, newMap);
+    }
     return newMap;
   }
 
@@ -4303,7 +4289,11 @@ export class CampaignManager {
     if (idx === -1) return null;
     const oldMap = maps[idx];
     maps[idx] = { ...oldMap, ...updates };
-    this.saveMaps(maps);
+    this.saveMapsLocalOnly(maps);
+    if (isSupabaseConfigured()) {
+      const code = this.getActiveCampaignCode() || 'default';
+      SupabaseSyncService.saveMap(code, maps[idx]);
+    }
 
     // Bi-directional sync: Update corresponding Codex Place Entity
     const entityIdToUpdate = updates.entityId !== undefined ? updates.entityId : oldMap.entityId;
@@ -4343,7 +4333,7 @@ export class CampaignManager {
       FirebaseStorageService.deleteMedia(map.imageUrl).catch(() => {});
     }
     const maps = this.getMaps().filter((m) => m.id !== id);
-    this.saveMaps(maps);
+    this.saveMapsLocalOnly(maps);
     if (isSupabaseConfigured()) {
       const code = this.getActiveCampaignCode() || 'default';
       SupabaseSyncService.deleteMap(id, code);
@@ -4439,7 +4429,11 @@ export class CampaignManager {
       entityType: pin.entityType || "place",
     };
     maps[idx].pins = [...(maps[idx].pins || []), newPin];
-    this.saveMaps(maps);
+    this.saveMapsLocalOnly(maps);
+    if (isSupabaseConfigured()) {
+      const code = this.getActiveCampaignCode() || 'default';
+      SupabaseSyncService.saveMap(code, maps[idx]);
+    }
     return newPin;
   }
 
@@ -4457,7 +4451,11 @@ export class CampaignManager {
 
     const oldPin = maps[mapIdx].pins[pinIdx];
     maps[mapIdx].pins[pinIdx] = { ...oldPin, ...updates };
-    this.saveMaps(maps);
+    this.saveMapsLocalOnly(maps);
+    if (isSupabaseConfigured()) {
+      const code = this.getActiveCampaignCode() || 'default';
+      SupabaseSyncService.saveMap(code, maps[mapIdx]);
+    }
 
     // Bi-directional sync with Codex Entity
     const entityId = updates.entityId !== undefined ? updates.entityId : oldPin.entityId;
@@ -4507,7 +4505,11 @@ export class CampaignManager {
     }
 
     maps[mapIdx].pins = maps[mapIdx].pins.filter((p) => p.id !== pinId);
-    this.saveMaps(maps);
+    this.saveMapsLocalOnly(maps);
+    if (isSupabaseConfigured()) {
+      const code = this.getActiveCampaignCode() || 'default';
+      SupabaseSyncService.saveMap(code, maps[mapIdx]);
+    }
   }
 
   // === AUDIO LOGS & MEMORY BREAKS ===
@@ -4525,14 +4527,7 @@ export class CampaignManager {
   }
 
   static saveAudioLogs(logs: AudioLog[]) {
-    const key = this.getStorageKey("audio_logs");
-    setCached(key, logs);
-    safeLocalStorageSetItem(key, JSON.stringify(logs));
-    CloudSyncService.triggerCloudSave();
-    if (isSupabaseConfigured()) {
-      const code = this.getActiveCampaignCode() || 'default';
-      logs.forEach((a) => SupabaseSyncService.saveAudioLog(code, a));
-    }
+    this.saveAudioLogsLocalOnly(logs);
   }
 
   static saveAudioLogsLocalOnly(logs: AudioLog[]) {
@@ -4549,13 +4544,17 @@ export class CampaignManager {
       createdAt: new Date().toISOString(),
     };
     const updated = [newLog, ...logs];
-    this.saveAudioLogs(updated);
+    this.saveAudioLogsLocalOnly(updated);
+    if (isSupabaseConfigured()) {
+      const code = this.getActiveCampaignCode() || 'default';
+      SupabaseSyncService.saveAudioLog(code, newLog);
+    }
     return newLog;
   }
 
   static deleteAudioLog(id: string) {
     const logs = this.getAudioLogs().filter((l) => l.id !== id);
-    this.saveAudioLogs(logs);
+    this.saveAudioLogsLocalOnly(logs);
     if (isSupabaseConfigured()) {
       SupabaseSyncService.deleteAudioLog(id);
     }
@@ -4576,18 +4575,7 @@ export class CampaignManager {
   }
 
   static saveScrapbookItems(items: ScrapbookItem[]) {
-    const key = this.getStorageKey("scrapbook");
-    setCached(key, items);
-    safeLocalStorageSetItem(key, JSON.stringify(items));
-    CloudSyncService.triggerCloudSave();
-    if (isSupabaseConfigured()) {
-      const code = this.getActiveCampaignCode() || 'default';
-      items.forEach((s) => SupabaseSyncService.saveScrapbookItem(code, s));
-    }
-    if (typeof window !== "undefined") {
-      window.dispatchEvent(new CustomEvent("chronicle_scrapbook_updated"));
-      window.dispatchEvent(new CustomEvent("chronicle_data_updated"));
-    }
+    this.saveScrapbookItemsLocalOnly(items);
   }
 
   static saveScrapbookItemsLocalOnly(items: ScrapbookItem[]) {
@@ -4610,7 +4598,11 @@ export class CampaignManager {
       createdAt: new Date().toISOString(),
     };
     const updated = [newItem, ...items];
-    this.saveScrapbookItems(updated);
+    this.saveScrapbookItemsLocalOnly(updated);
+    if (isSupabaseConfigured()) {
+      const code = this.getActiveCampaignCode() || 'default';
+      SupabaseSyncService.saveScrapbookItem(code, newItem);
+    }
 
     // Auto-convert Base64 data URL to Supabase Storage public URL
     if (newItem.imageUrl && newItem.imageUrl.startsWith('data:')) {
@@ -4620,7 +4612,10 @@ export class CampaignManager {
           if (publicUrl && publicUrl.startsWith('http')) {
             const currentItems = this.getScrapbookItems();
             const withPublicUrl = currentItems.map((s) => s.id === newItem.id ? { ...s, imageUrl: publicUrl } : s);
-            this.saveScrapbookItems(withPublicUrl);
+            this.saveScrapbookItemsLocalOnly(withPublicUrl);
+            if (isSupabaseConfigured()) {
+              SupabaseSyncService.saveScrapbookItem(activeCode, { ...newItem, imageUrl: publicUrl });
+            }
           }
         })
         .catch(() => {});
@@ -4636,7 +4631,7 @@ export class CampaignManager {
       FirebaseStorageService.deleteMedia(item.imageUrl).catch(() => {});
     }
     const items = this.getScrapbookItems().filter((i) => i.id !== id);
-    this.saveScrapbookItems(items);
+    this.saveScrapbookItemsLocalOnly(items);
     if (isSupabaseConfigured()) {
       SupabaseSyncService.deleteScrapbookItem(id);
     }
@@ -4807,7 +4802,16 @@ export class CampaignManager {
     } else {
       bios.push(updatedBio);
     }
-    return await this.saveAllCharacterBios(bios);
+    this.saveAllCharacterBiosLocalOnly(bios);
+
+    if (isSupabaseConfigured()) {
+      const code = this.getActiveCampaignCode() || 'default';
+      const ok = await SupabaseSyncService.saveCharacterBio(code, updatedBio);
+      if (!ok) {
+        return { success: false, error: "Errore di salvataggio del personaggio su Supabase." };
+      }
+    }
+    return { success: true };
   }
 
   // === CHARACTER TIMELINE MEMORIES & BELIEFS (PG) ===
@@ -4936,24 +4940,39 @@ export class CampaignManager {
     };
     const all = this.getAllFamilyRelations().filter((r) => r.id !== id);
     const updated = [newRelation, ...all];
-    const res = await this.saveAllFamilyRelations(updated);
-    return { success: res.success, relation: newRelation, error: res.error };
+    this.saveAllFamilyRelationsLocalOnly(updated);
+    if (isSupabaseConfigured()) {
+      const code = this.getActiveCampaignCode() || 'default';
+      const ok = await SupabaseSyncService.saveFamilyRelation(code, newRelation);
+      if (!ok) {
+        return { success: false, relation: newRelation, error: "Errore di salvataggio della relazione su Supabase." };
+      }
+    }
+    return { success: true, relation: newRelation };
   }
 
   static async updateFamilyRelation(relation: CharacterRelationship): Promise<{ success: boolean; error?: string }> {
     const all = this.getAllFamilyRelations();
     const updated = all.map((r) => (r.id === relation.id ? relation : r));
-    return await this.saveAllFamilyRelations(updated);
+    this.saveAllFamilyRelationsLocalOnly(updated);
+    if (isSupabaseConfigured()) {
+      const code = this.getActiveCampaignCode() || 'default';
+      const ok = await SupabaseSyncService.saveFamilyRelation(code, relation);
+      if (!ok) {
+        return { success: false, error: "Errore di salvataggio della relazione su Supabase." };
+      }
+    }
+    return { success: true };
   }
 
   static async deleteFamilyRelation(relationId: string): Promise<{ success: boolean; error?: string }> {
     const all = this.getAllFamilyRelations();
     const targetRel = all.find((r) => r.id === relationId);
     const updated = all.filter((r) => r.id !== relationId);
+    this.saveAllFamilyRelationsLocalOnly(updated);
     if (isSupabaseConfigured() && relationId) {
-      SupabaseSyncService.deleteFamilyRelation(relationId, this.getActiveCampaignCode()).catch(() => {});
+      await SupabaseSyncService.deleteFamilyRelation(relationId, this.getActiveCampaignCode());
     }
-    const res = await this.saveAllFamilyRelations(updated);
 
     // If this relationship was linked to a Codex entity or matches an entity, remove that relationship from the entity's partyRelations
     if (targetRel) {
@@ -5013,7 +5032,7 @@ export class CampaignManager {
         }
       }
     }
-    return res;
+    return { success: true };
   }
 
   private static _isReconcilingRelations = false;
@@ -5270,7 +5289,11 @@ export class CampaignManager {
       updated = [cleanArticle, ...articles];
     }
 
-    this.saveAllWorldLoreArticles(updated);
+    this.saveWorldLoreArticlesLocalOnly(updated);
+    if (isSupabaseConfigured()) {
+      const code = this.getActiveCampaignCode() || 'default';
+      SupabaseSyncService.saveWorldLoreArticle(code, cleanArticle);
+    }
     return cleanArticle;
   }
 
@@ -5280,10 +5303,10 @@ export class CampaignManager {
     const articles = this.getWorldLoreArticles();
     const targetArticle = articles.find((a) => a._id === articleId);
     const updated = articles.filter((a) => a._id !== articleId);
+    this.saveWorldLoreArticlesLocalOnly(updated);
     if (isSupabaseConfigured() && articleId) {
       SupabaseSyncService.deleteWorldLoreArticle(articleId, this.getActiveCampaignCode()).catch(() => {});
     }
-    this.saveAllWorldLoreArticles(updated);
 
     // Also remove any references from character bios
     if (targetArticle) {

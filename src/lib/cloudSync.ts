@@ -8,6 +8,13 @@ import { isSupabaseConfigured } from './supabase';
 import { generateCampaignShareToken, resolveCampaignPresentationSlug, slugifyCampaignTitle, reverseCode } from './shareToken';
 import { extractTextFromContent } from './sanitize';
 import {
+  sessionRowToModel,
+  chapterRowToModel,
+  noteRowToModel,
+  entityRowToModel,
+  characterBioRowToModel,
+} from './supabaseAdapter';
+import {
   UserAccount,
   CampaignMeta,
   Session,
@@ -1047,6 +1054,8 @@ export class CloudSyncService {
       this.realtimeUnsubscribe = null;
     }
 
+    const cleanActiveCode = activeCode.trim().toUpperCase();
+
     this.realtimeUnsubscribe = SupabaseSyncService.subscribeCampaignRealtime(activeCode, {
       onSessionsChange: (payload) => {
         try {
@@ -1059,22 +1068,8 @@ export class CloudSyncService {
             }
           } else if (payload.new) {
             const row = payload.new;
-            const cleanSess: any = {
-              _id: row.id,
-              sessionNumber: row.session_number,
-              title: row.title || `Sessione ${row.session_number}`,
-              date: row.played_at || new Date().toISOString(),
-              summary: row.summary || '',
-              tags: row.tags || [],
-              characters: row.characters || [],
-              location: row.location || '',
-              chapterId: row.chapter_id || undefined,
-              loreYear: row.lore_year,
-              loreMonth: row.lore_month,
-              loreStartDay: row.lore_start_day,
-              loreEndDay: row.lore_end_day,
-              updatedAt: row.updated_at || new Date().toISOString(),
-            };
+            if (row.campaign_code && row.campaign_code.trim().toUpperCase() !== cleanActiveCode) return;
+            const cleanSess = sessionRowToModel(row);
             const idx = sessions.findIndex((s) => s._id === cleanSess._id);
             const updated = idx !== -1 ? sessions.map((s) => s._id === cleanSess._id ? cleanSess : s) : [cleanSess, ...sessions];
             CampaignManager.saveSessionsLocalOnly(updated);
@@ -1094,17 +1089,10 @@ export class CloudSyncService {
             }
           } else if (payload.new) {
             const row = payload.new;
-            const cleanChap: CampaignChapter = {
-              id: row.id,
-              name: row.title || 'Capitolo',
-              description: row.synopsis || '',
-              order: Number(row.order_index ?? row.number ?? 1),
-              color: row.color || '#6366f1',
-              coverImageUrl: row.cover_image_url || '',
-              createdAt: row.created_at || new Date().toISOString(),
-            };
+            if (row.campaign_code && row.campaign_code.trim().toUpperCase() !== cleanActiveCode) return;
+            const cleanChap = chapterRowToModel(row);
             const idx = chaps.findIndex((c) => c.id === cleanChap.id);
-            const updated = idx !== -1 ? chaps.map((c) => c.id === cleanChap.id ? { ...c, ...cleanChap, coverImageUrl: cleanChap.coverImageUrl || c.coverImageUrl } : c) : [...chaps, cleanChap];
+            const updated = idx !== -1 ? chaps.map((c) => c.id === cleanChap.id ? cleanChap : c) : [...chaps, cleanChap];
             CampaignManager.saveChaptersLocalOnly(updated);
           }
         } catch (e) {
@@ -1122,19 +1110,8 @@ export class CloudSyncService {
             }
           } else if (payload.new) {
             const row = payload.new;
-            const cleanNote: any = {
-              _id: row.id,
-              title: row.title || 'Senza Titolo',
-              content: row.content || '',
-              category: row.category || 'general',
-              tags: row.tags || [],
-              images: row.images || [],
-              dmOnly: Boolean(row.is_secret),
-              authorPlayerId: row.author_player_id || undefined,
-              authorName: row.author_name || undefined,
-              pinned: Boolean(row.is_pinned),
-              updatedAt: row.updated_at || new Date().toISOString(),
-            };
+            if (row.campaign_code && row.campaign_code.trim().toUpperCase() !== cleanActiveCode) return;
+            const cleanNote = noteRowToModel(row);
             const idx = notes.findIndex((n) => n._id === cleanNote._id);
             const updated = idx !== -1 ? notes.map((n) => n._id === cleanNote._id ? cleanNote : n) : [cleanNote, ...notes];
             CampaignManager.saveNotesLocalOnly(updated);
@@ -1154,20 +1131,8 @@ export class CloudSyncService {
             }
           } else if (payload.new) {
             const row = payload.new;
-            const cleanEnt: any = {
-              _id: row.id,
-              name: row.name || 'Entità Sconosciuta',
-              type: row.entity_type || 'npc',
-              description: row.description || '',
-              summary: row.summary || '',
-              tags: row.tags || [],
-              images: row.images || [],
-              dmOnly: Boolean(row.is_secret),
-              status: row.status || 'unknown',
-              location: row.location || '',
-              aiConfig: row.ai_config || undefined,
-              updatedAt: row.updated_at || new Date().toISOString(),
-            };
+            if (row.campaign_code && row.campaign_code.trim().toUpperCase() !== cleanActiveCode) return;
+            const cleanEnt = entityRowToModel(row);
             const idx = entities.findIndex((e) => e._id === cleanEnt._id);
             const updated = idx !== -1 ? entities.map((e) => e._id === cleanEnt._id ? cleanEnt : e) : [cleanEnt, ...entities];
             CampaignManager.saveEntitiesLocalOnly(updated);
@@ -1187,38 +1152,8 @@ export class CloudSyncService {
             }
           } else if (payload.new) {
             const row = payload.new;
-            const cleanBio: any = {
-              playerId: row.player_id,
-              campaignCode: row.campaign_code,
-              characterName: row.name || '',
-              name: row.name || '',
-              avatarUrl: row.avatar_url || '',
-              color: row.color || '#6366f1',
-              characterClass: row.class_level || '',
-              characterAlignment: row.alignment || '',
-              backstoryMarkdown: row.background || '',
-              personalityTraits: row.personality ? row.personality.split(', ') : [],
-              ideals: row.ideals || '',
-              bonds: row.bonds || '',
-              flaws: row.flaws || '',
-              timelineMemories: row.timeline_memories || [],
-              evolvingBeliefs: row.evolving_beliefs || [],
-              interPartyRelations: row.inter_party_relations || {},
-              characterRace: row.character_race || row.extra_data?.characterRace || '',
-              characterTitle: row.character_title || row.extra_data?.characterTitle || '',
-              deityOrPatron: row.deity_or_patron || row.extra_data?.deityOrPatron || '',
-              hometown: row.hometown || row.extra_data?.hometown || '',
-              birthDateFormatted: row.birth_date_formatted || row.extra_data?.birthDateFormatted || '',
-              birthStartDay: row.birth_start_day || row.extra_data?.birthStartDay || 1,
-              birthMonth: row.birth_month || row.extra_data?.birthMonth || '',
-              birthYear: row.birth_year || row.extra_data?.birthYear || 1492,
-              secrets: row.secrets || row.extra_data?.secrets || '',
-              appearanceDescription: row.appearance_description || row.extra_data?.appearanceDescription || '',
-              currentStatus: row.current_status || row.extra_data?.currentStatus || '',
-              knownLoreBites: row.known_lore_bites || row.extra_data?.knownLoreBites || [],
-              privacySettings: row.privacy_settings || row.extra_data?.privacySettings || {},
-              updatedAt: row.updated_at || new Date().toISOString(),
-            };
+            if (row.campaign_code && row.campaign_code.trim().toUpperCase() !== cleanActiveCode) return;
+            const cleanBio = characterBioRowToModel(row);
             const idx = bios.findIndex((b) => b.playerId === cleanBio.playerId);
             const updated = idx !== -1 ? bios.map((b) => b.playerId === cleanBio.playerId ? cleanBio : b) : [cleanBio, ...bios];
             CampaignManager.saveAllCharacterBiosLocalOnly(updated);
