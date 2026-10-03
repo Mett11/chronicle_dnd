@@ -1,4 +1,5 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { auth } from './firebase';
 
 const getEnvVar = (name: string): string => {
   try {
@@ -39,12 +40,23 @@ export const isSupabaseConfigured = (): boolean => {
   );
 };
 
-// Create client or fallback dummy client if credentials are not yet set
+// Create client with Firebase Auth ID Token provider for Supabase Third-Party Auth / Custom JWT
 export const supabase: SupabaseClient = isSupabaseConfigured()
   ? createClient(supabaseUrl, supabaseAnonKey, {
       auth: {
-        persistSession: true,
-        autoRefreshToken: true,
+        persistSession: false,
+        autoRefreshToken: false,
+      },
+      accessToken: async () => {
+        try {
+          const user = auth.currentUser;
+          if (user) {
+            return await user.getIdToken();
+          }
+        } catch (err) {
+          console.warn('[Supabase] Could not fetch Firebase ID token:', err);
+        }
+        return null;
       },
     })
   : (createClient('https://placeholder.supabase.co', 'placeholder-key') as SupabaseClient);

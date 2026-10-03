@@ -903,11 +903,11 @@ export class SessionMemorySyncService {
    * Applies approved memory, belief, and relationship proposals for both
    * Party Players and Codex Entities.
    */
-  static applyApprovedProposals(
+  static async applyApprovedProposals(
     proposals: EntityMemoryProposal[],
     sessionId: string,
     playerProposals?: PlayerMemoryProposal[]
-  ): { updatedCount: number; updatedEntityNames: string[] } {
+  ): Promise<{ updatedCount: number; updatedEntityNames: string[] }> {
     let updatedCount = 0;
     const updatedEntityNames: string[] = [];
 
@@ -915,9 +915,9 @@ export class SessionMemorySyncService {
     const currentSession = CampaignManager.getSessions().find((s) => s._id === sessionId);
 
     // 1. Apply Entity proposals
-    proposals.forEach((prop) => {
+    for (const prop of proposals) {
       const entity = allEntities.find((e) => e._id === prop.entityId);
-      if (!entity) return;
+      if (!entity) continue;
 
       let changed = false;
       const currentAiConfig = { ...(entity.aiConfig || {}) };
@@ -1089,19 +1089,19 @@ export class SessionMemorySyncService {
           currentAiConfig.enabled = true;
         }
 
-        CampaignManager.updateEntity(entity._id, {
+        await CampaignManager.updateEntity(entity._id, {
           aiConfig: currentAiConfig,
         });
 
         updatedCount++;
         updatedEntityNames.push(entity.name);
       }
-    });
+    }
 
     // 2. Apply Player Character proposals (PG)
     if (Array.isArray(playerProposals)) {
-      playerProposals.forEach((pp) => {
-        if (!pp.playerId || pp.playerId.startsWith('unregistered_')) return;
+      for (const pp of playerProposals) {
+        if (!pp.playerId || pp.playerId.startsWith('unregistered_')) continue;
         const currentBio = CampaignManager.getCharacterBio(pp.playerId) || { playerId: pp.playerId };
         let bioChanged = false;
         let updatedBio = { ...currentBio };
@@ -1186,11 +1186,11 @@ export class SessionMemorySyncService {
         }
 
         if (bioChanged) {
-          CampaignManager.saveCharacterBio(updatedBio);
+          await CampaignManager.saveCharacterBio(updatedBio);
           updatedCount++;
           updatedEntityNames.push(`${pp.characterName} (Memoria PG)`);
         }
-      });
+      }
     }
 
     // 3. Reconcile unregistered relations
@@ -1201,9 +1201,9 @@ export class SessionMemorySyncService {
       }
     });
 
-    // 4. Mark this session as memory-synchronized
+    // 4. Mark this session as memory-synchronized ONLY AFTER all writes succeed
     if (sessionId) {
-      CampaignManager.updateSession(sessionId, {
+      await CampaignManager.updateSession(sessionId, {
         memorySynced: true,
         memorySyncedAt: new Date().toISOString(),
       });

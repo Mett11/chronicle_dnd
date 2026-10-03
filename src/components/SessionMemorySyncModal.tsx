@@ -347,11 +347,12 @@ export function SessionMemorySyncModal({
     );
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!session || (proposals.length === 0 && playerProposals.length === 0)) return;
     setIsSaving(true);
+    setError(null);
     try {
-      const res = SessionMemorySyncService.applyApprovedProposals(proposals, session._id, playerProposals);
+      const res = await SessionMemorySyncService.applyApprovedProposals(proposals, session._id, playerProposals);
       setSaveSuccess({
         count: res.updatedCount,
         names: res.updatedEntityNames,

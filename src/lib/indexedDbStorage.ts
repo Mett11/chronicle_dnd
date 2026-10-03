@@ -135,4 +135,53 @@ export class IndexedDbStorage {
       return {};
     }
   }
+
+  /**
+   * Clears all keys belonging to a specific campaign from IndexedDB.
+   */
+  static async clearCampaignKeys(campaignCode: string): Promise<boolean> {
+    if (!campaignCode) return false;
+    const cleanCode = campaignCode.trim().toUpperCase();
+    try {
+      const db = await getDb();
+      return new Promise((resolve) => {
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        const store = tx.objectStore(STORE_NAME);
+        const cursorReq = store.openCursor();
+        cursorReq.onsuccess = (e) => {
+          const cursor = (e.target as IDBRequest<IDBCursorWithValue>).result;
+          if (cursor) {
+            const key = String(cursor.key);
+            if (key.includes(cleanCode) || key.includes(campaignCode.toLowerCase())) {
+              cursor.delete();
+            }
+            cursor.continue();
+          } else {
+            resolve(true);
+          }
+        };
+        cursorReq.onerror = () => resolve(false);
+      });
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Completely clears the IndexedDB store.
+   */
+  static async clearAll(): Promise<boolean> {
+    try {
+      const db = await getDb();
+      return new Promise((resolve) => {
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        const store = tx.objectStore(STORE_NAME);
+        const req = store.clear();
+        req.onsuccess = () => resolve(true);
+        req.onerror = () => resolve(false);
+      });
+    } catch {
+      return false;
+    }
+  }
 }

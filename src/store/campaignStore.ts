@@ -1790,9 +1790,10 @@ export class CampaignManager {
       this.saveCampaigns(campaigns);
     }
 
-    // Clean user's active campaign storage keys
+    // Clean user's active campaign storage keys and purge campaign IndexedDB cache
     localStorage.removeItem(`chronicle_user_${accountId}_active_campaign`);
     setCached(`chronicle_user_${accountId}_active_campaign`, null);
+    IndexedDbStorage.clearCampaignKeys(cleanCode).catch(() => {});
 
     if (typeof window !== "undefined") {
       window.dispatchEvent(new CustomEvent("chronicle_campaigns_updated"));
@@ -3986,18 +3987,24 @@ export class CampaignManager {
     return false;
   }
 
-  static deleteEntity(id: string) {
+  static async deleteEntity(id: string): Promise<boolean> {
     this.addDeletedEntityId(id);
     const entity = this.getEntities().find((e) => e._id === id);
-    if (entity?.images && entity.images.length > 0) {
-      FirebaseStorageService.deleteMultipleMedia(entity.images).catch(() => {});
-    } else if ((entity as any)?.imageUrl) {
-      FirebaseStorageService.deleteMedia((entity as any).imageUrl).catch(() => {});
-    }
     const entities = this.getEntities().filter((e) => e._id !== id);
     this.saveEntitiesLocalOnly(entities);
+
+    let deleteOk = true;
     if (isSupabaseConfigured()) {
-      SupabaseSyncService.deleteEntity(id);
+      deleteOk = await SupabaseSyncService.deleteEntity(id);
+    }
+
+    // Only clean up media attachments after confirmed record deletion
+    if (deleteOk && entity) {
+      if (entity.images && entity.images.length > 0) {
+        FirebaseStorageService.deleteMultipleMedia(entity.images).catch(() => {});
+      } else if ((entity as any)?.imageUrl) {
+        FirebaseStorageService.deleteMedia((entity as any).imageUrl).catch(() => {});
+      }
     }
 
     if (entity?.type === "place") {
@@ -4327,16 +4334,17 @@ export class CampaignManager {
     return maps[idx];
   }
 
-  static deleteMap(id: string) {
+  static async deleteMap(id: string): Promise<boolean> {
     const map = this.getMaps().find((m) => m.id === id);
-    if (map?.imageUrl) {
-      FirebaseStorageService.deleteMedia(map.imageUrl).catch(() => {});
-    }
     const maps = this.getMaps().filter((m) => m.id !== id);
     this.saveMapsLocalOnly(maps);
+    let deleteOk = true;
     if (isSupabaseConfigured()) {
       const code = this.getActiveCampaignCode() || 'default';
-      SupabaseSyncService.deleteMap(id, code);
+      deleteOk = await SupabaseSyncService.deleteMap(id, code);
+    }
+    if (deleteOk && map?.imageUrl) {
+      FirebaseStorageService.deleteMedia(map.imageUrl).catch(() => {});
     }
 
     if (map) {
@@ -4624,17 +4632,19 @@ export class CampaignManager {
     return newItem;
   }
 
-  static deleteScrapbookItem(id: string) {
+  static async deleteScrapbookItem(id: string): Promise<boolean> {
     this.addDeletedScrapbookId(id);
     const item = this.getScrapbookItems().find((i) => i.id === id);
-    if (item?.imageUrl) {
-      FirebaseStorageService.deleteMedia(item.imageUrl).catch(() => {});
-    }
     const items = this.getScrapbookItems().filter((i) => i.id !== id);
     this.saveScrapbookItemsLocalOnly(items);
+    let deleteOk = true;
     if (isSupabaseConfigured()) {
-      SupabaseSyncService.deleteScrapbookItem(id);
+      deleteOk = await SupabaseSyncService.deleteScrapbookItem(id);
     }
+    if (deleteOk && item?.imageUrl) {
+      FirebaseStorageService.deleteMedia(item.imageUrl).catch(() => {});
+    }
+    return deleteOk;
   }
 
   /**
