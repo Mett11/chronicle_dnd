@@ -1813,7 +1813,7 @@ export class CampaignManager {
 
     // Match by existing account email or id
     let existingIndex = accounts.findIndex(
-      (a) => a.id === `usr_${firebaseUser.uid}` || (a.email && a.email.toLowerCase() === email)
+      (a) => a.id === firebaseUser.uid || a.id === `usr_${firebaseUser.uid}` || (a.email && a.email.toLowerCase() === email)
     );
 
     let userAcc: UserAccount;
@@ -1822,20 +1822,18 @@ export class CampaignManager {
       const existing = accounts[existingIndex];
       userAcc = {
         ...existing,
+        id: firebaseUser.uid, // Canonical Firebase UID
         email: existing.email || email,
         characterName: existing.characterName || firebaseUser.characterName || email.split('@')[0],
         avatarUrl: firebaseUser.avatarUrl !== undefined ? firebaseUser.avatarUrl : existing.avatarUrl || '',
         color: firebaseUser.color || existing.color || '#6366f1',
         authProvider: 'password',
-        // Scrub plaintext password
-        password: '',
       };
       accounts[existingIndex] = userAcc;
     } else {
       userAcc = {
-        id: `usr_${firebaseUser.uid}`,
+        id: firebaseUser.uid, // Canonical Firebase UID
         email,
-        password: '',
         characterName: firebaseUser.characterName || email.split('@')[0] || 'Giocatore',
         isDm: false,
         dmCampaigns: [],
@@ -1889,7 +1887,7 @@ export class CampaignManager {
 
     // Match by Google UID first, or by existing email address
     let existingIndex = accounts.findIndex(
-      (a) => a.id === `usr_g_${googleUser.uid}` || (a.email && a.email.toLowerCase() === email)
+      (a) => a.id === googleUser.uid || a.id === `usr_g_${googleUser.uid}` || (a.email && a.email.toLowerCase() === email)
     );
 
     let userAcc: UserAccount;
@@ -1898,19 +1896,17 @@ export class CampaignManager {
       const existing = accounts[existingIndex];
       userAcc = {
         ...existing,
+        id: googleUser.uid, // Canonical Firebase UID
         email: existing.email || email,
         characterName: existing.characterName || googleUser.displayName || 'Giocatore',
         avatarUrl: googleUser.photoURL || existing.avatarUrl || '',
         authProvider: 'google',
-        // Clear plaintext password for enhanced privacy and security
-        password: '',
       };
       accounts[existingIndex] = userAcc;
     } else {
       userAcc = {
-        id: `usr_g_${googleUser.uid}`,
+        id: googleUser.uid, // Canonical Firebase UID
         email,
-        password: '',
         characterName: googleUser.displayName || email.split('@')[0] || 'Giocatore',
         isDm: false,
         dmCampaigns: [],

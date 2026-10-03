@@ -598,9 +598,85 @@ export class SupabaseSyncService {
       if (error) {
         return handleSupabaseError('Error saving campaign', error);
       }
+
+      // Bootstrap creator / DM membership in campaign_members table
+      if (payload.dm_id) {
+        await supabase.from('campaign_members').upsert({
+          id: `${cleanCode}_${payload.dm_id}`,
+          campaign_code: cleanCode,
+          user_id: payload.dm_id,
+          role: 'dm',
+          created_at: new Date().toISOString(),
+        }, { onConflict: 'campaign_code,user_id' });
+      }
+
       return true;
     } catch (err) {
       return handleSupabaseError('Failed to save campaign', err);
+    }
+  }
+
+  /**
+   * Joins a user to campaign_members table (server-authoritative membership)
+   */
+  static async joinCampaignMember(campaignCode: string, userId: string, role: 'player' | 'dm' = 'player', characterName?: string): Promise<boolean> {
+    if (!isSupabaseConfigured() || !campaignCode || !userId) return false;
+    try {
+      const cleanCode = campaignCode.trim().toUpperCase();
+      const payload = {
+        id: `${cleanCode}_${userId}`,
+        campaign_code: cleanCode,
+        user_id: userId,
+        role,
+        character_name: characterName || null,
+        created_at: new Date().toISOString(),
+      };
+      const { error } = await supabase.from('campaign_members').upsert(payload, { onConflict: 'campaign_code,user_id' });
+      return !error;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Leaves or removes a member from campaign_members
+   */
+  static async removeCampaignMember(campaignCode: string, userId: string): Promise<boolean> {
+    if (!isSupabaseConfigured() || !campaignCode || !userId) return false;
+    try {
+      const cleanCode = campaignCode.trim().toUpperCase();
+      const { error } = await supabase
+        .from('campaign_members')
+        .delete()
+        .eq('campaign_code', cleanCode)
+        .eq('user_id', userId);
+      return !error;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Transfers DM role to another member
+   */
+  static async transferCampaignDm(campaignCode: string, newDmUserId: string): Promise<boolean> {
+    if (!isSupabaseConfigured() || !campaignCode || !newDmUserId) return false;
+    try {
+      const cleanCode = campaignCode.trim().toUpperCase();
+      // 1. Update campaigns table dm_id
+      await supabase.from('campaigns').update({ dm_id: newDmUserId, updated_at: new Date().toISOString() }).eq('code', cleanCode);
+      // 2. Demote old DM to player and promote new DM
+      await supabase.from('campaign_members').update({ role: 'player' }).eq('campaign_code', cleanCode).eq('role', 'dm');
+      await supabase.from('campaign_members').upsert({
+        id: `${cleanCode}_${newDmUserId}`,
+        campaign_code: cleanCode,
+        user_id: newDmUserId,
+        role: 'dm',
+        created_at: new Date().toISOString(),
+      }, { onConflict: 'campaign_code,user_id' });
+      return true;
+    } catch {
+      return false;
     }
   }
 
@@ -611,66 +687,26 @@ export class SupabaseSyncService {
     if (!isSupabaseConfigured() || !campaignCode || !session) return false;
 
     try {
-      const code = campaignCode.trim();
+      const code = campaignCode.trim().toUpperCase();
       const cleanSession = sanitizeHeavyPayload(session);
-      const meta = {
-        images: Array.isArray(cleanSession.images) ? cleanSession.images : [],
-        coverImage: cleanSession.coverImage || '',
-        entitiesExtracted: Boolean(cleanSession.entitiesExtracted),
-        entitiesExtractedAt: cleanSession.entitiesExtractedAt || null,
-        memorySynced: Boolean(cleanSession.memorySynced),
-        memorySyncedAt: cleanSession.memorySyncedAt || null,
-        sessionType: cleanSession.sessionType || 'mixed',
-        quotes: Array.isArray(cleanSession.quotes) ? cleanSession.quotes : [],
-        audioLogs: Array.isArray(cleanSession.audioLogs) ? cleanSession.audioLogs : [],
-        excludedPlayerIds: Array.isArray(cleanSession.excludedPlayerIds) ? cleanSession.excludedPlayerIds : [],
-        attendees: Array.isArray(cleanSession.attendees) ? cleanSession.attendees : [],
-        gazetteConfig: cleanSession.gazetteConfig || null,
-      };
-
-      const existingTags = Array.isArray((cleanSession as any).tags)
-        ? (cleanSession as any).tags.filter((t: any) => typeof t === 'string' && !t.startsWith('__meta__:'))
-        : [];
-      const tagsWithMeta = [...existingTags, '__meta__:' + JSON.stringify(meta)];
-
-      const payload = {
-        id: cleanSession._id || `sess_${Date.now()}`,
-        campaign_code: code,
-        chapter_id: cleanSession.chapterId || null,
-        number: cleanSession.number || 1,
-        title: cleanSession.title || `Sessione ${cleanSession.number}`,
-        summary: typeof cleanSession.recap === 'string' ? cleanSession.recap : '',
-        recap: cleanSession.recap || [],
-        date_str: cleanSession.date || '',
-        calendar_date: cleanSession.loreDate || {},
-        audio_url: '',
-        plot_events: cleanSession.events || [],
-        tags: tagsWithMeta,
-        updated_at: new Date().toISOString(),
-      };
+      const payload = sessionModelToRow(cleanSession, code);
 
       const { error } = await supabase.from('sessions').upsert(payload, { onConflict: 'id' });
       if (error) return handleSupabaseError('Error saving session', error);
 
-      // Redundant dual-layer storage in dossier.sessionsMeta
-      this.saveSessionMeta(code, cleanSession._id, meta).catch(() => {});
-
-      return !error;
+      return true;
     } catch (err) {
       return handleSupabaseError('Failed to save session', err);
     }
   }
 
   /**
-   * Delete a single session and clean up dossier.sessionsMeta
+   * Delete a single session
    */
   static async deleteSession(sessionId: string, campaignCode?: string): Promise<boolean> {
     if (!isSupabaseConfigured() || !sessionId) return false;
     try {
       const { error } = await supabase.from('sessions').delete().eq('id', sessionId);
-      if (campaignCode) {
-        this.removeSessionMeta(campaignCode, sessionId).catch(() => {});
-      }
       return !error;
     } catch {
       return false;
@@ -684,49 +720,25 @@ export class SupabaseSyncService {
     if (!isSupabaseConfigured() || !campaignCode || !note) return false;
 
     try {
-      const code = campaignCode.trim();
-      const payload = {
-        id: note._id || `note_${Date.now()}`,
-        campaign_code: code,
-        author_id: note.author?._id || 'unknown',
-        author_name: note.author?.characterName || 'Giocatore',
-        title: note.title || '',
-        content: note.content || '',
-        visibility: note.visibility || 'group',
-        ask_dm: Boolean(note.askDm),
-        dm_reply: note.dmResponse?.text || '',
-        updated_at: new Date().toISOString(),
-      };
+      const code = campaignCode.trim().toUpperCase();
+      const payload = noteModelToRow(note, code);
 
       const { error } = await supabase.from('notes').upsert(payload, { onConflict: 'id' });
       if (error) return handleSupabaseError('Error saving note', error);
 
-      // Save tags, images, pinned, etc. to dossier.notesMeta
-      const noteMeta = {
-        tags: Array.isArray(note.tags) ? note.tags : [],
-        images: Array.isArray(note.images) ? note.images : [],
-        pinned: Boolean(note.pinned),
-        canonState: note.canonState || 'canon',
-        dmOnly: Boolean(note.dmOnly),
-      };
-      this.saveNoteMeta(code, payload.id, noteMeta).catch(() => {});
-
-      return !error;
+      return true;
     } catch (err) {
       return handleSupabaseError('Failed to save note', err);
     }
   }
 
   /**
-   * Delete a single note and clean up dossier.notesMeta
+   * Delete a single note
    */
   static async deleteNote(noteId: string, campaignCode?: string): Promise<boolean> {
     if (!isSupabaseConfigured() || !noteId) return false;
     try {
       const { error } = await supabase.from('notes').delete().eq('id', noteId);
-      if (campaignCode) {
-        this.removeNoteMeta(campaignCode, noteId).catch(() => {});
-      }
       return !error;
     } catch {
       return false;
@@ -824,61 +836,12 @@ export class SupabaseSyncService {
     if (!isSupabaseConfigured() || !campaignCode || !chapter) return false;
 
     try {
-      const code = campaignCode.trim();
-      const cleanCode = code.toUpperCase();
+      const cleanCode = campaignCode.trim().toUpperCase();
       const payload = chapterModelToRow(chapter, cleanCode);
 
       const { error } = await supabase.from('chapters').upsert(payload, { onConflict: 'id' });
       if (error) {
-        console.warn('[Supabase] Warning upserting to chapters table:', error.message);
-      }
-
-      // Dual-layer persistence: also store directly in campaign dossier.chapters & chaptersMeta
-      try {
-        const { data: camp } = await supabase
-          .from('campaigns')
-          .select('dossier')
-          .or(`code.eq.${cleanCode},code.eq.${code}`)
-          .maybeSingle();
-
-        if (camp) {
-          const dossier = camp.dossier || {};
-          const existingChapters: any[] = Array.isArray(dossier.chapters) ? [...dossier.chapters] : [];
-          const idx = existingChapters.findIndex((c) => c && c.id === chapter.id);
-          const sanitizedChap = {
-            id: chapter.id,
-            name: chapter.name || 'Capitolo',
-            description: chapter.description || '',
-            color: chapter.color || '#6366f1',
-            coverImageUrl: chapter.coverImageUrl || '',
-            order: chapter.order || 1,
-            createdAt: chapter.createdAt || new Date().toISOString(),
-          };
-
-          if (idx !== -1) {
-            existingChapters[idx] = { ...existingChapters[idx], ...sanitizedChap };
-          } else {
-            existingChapters.push(sanitizedChap);
-          }
-
-          const chaptersMeta = dossier.chaptersMeta || {};
-          if (chapter.coverImageUrl !== undefined) {
-            chaptersMeta[chapter.id] = {
-              ...(chaptersMeta[chapter.id] || {}),
-              coverImageUrl: chapter.coverImageUrl,
-            };
-          }
-
-          await supabase
-            .from('campaigns')
-            .update({
-              dossier: { ...dossier, chapters: existingChapters, chaptersMeta },
-              updated_at: new Date().toISOString(),
-            })
-            .or(`code.eq.${cleanCode},code.eq.${code}`);
-        }
-      } catch (dossierErr) {
-        console.warn('[Supabase] Dossier chapter update warning:', dossierErr);
+        return handleSupabaseError('Error saving chapter', error);
       }
 
       return true;
@@ -1034,7 +997,6 @@ export class SupabaseSyncService {
       const payload = {
         id: account.id,
         email: email || `${account.id}@local.chronicle`,
-        password: account.password || '',
         character_name: account.characterName || 'Avventuriero',
         is_dm: Boolean(account.isDm),
         dm_campaigns: Array.isArray(account.dmCampaigns) ? account.dmCampaigns : [],
@@ -1083,7 +1045,6 @@ export class SupabaseSyncService {
         return {
           id: account.id,
           email: email || `${account.id}@local.chronicle`,
-          password: account.password || '',
           character_name: account.characterName || 'Avventuriero',
           is_dm: Boolean(account.isDm),
           dm_campaigns: Array.isArray(account.dmCampaigns) ? account.dmCampaigns : [],
@@ -1122,7 +1083,6 @@ export class SupabaseSyncService {
       return data.map((row) => ({
         id: row.id,
         email: row.email,
-        password: row.password,
         characterName: row.character_name,
         isDm: Boolean(row.is_dm),
         dmCampaigns: Array.isArray(row.dm_campaigns) ? row.dm_campaigns : [],
@@ -1220,139 +1180,52 @@ export class SupabaseSyncService {
     if (!isSupabaseConfigured() || !campaignCode || !bio || !bio.playerId) return false;
     try {
       const code = campaignCode.trim().toUpperCase();
-      const payload = {
-        player_id: bio.playerId,
-        campaign_code: code,
-        name: bio.characterName || bio.name || '',
-        avatar_url: bio.avatarUrl || '',
-        color: bio.color || '#6366f1',
-        class_level: bio.characterClass || bio.classLevel || '',
-        alignment: bio.characterAlignment || bio.alignment || '',
-        background: bio.backstoryMarkdown || bio.background || '',
-        personality: Array.isArray(bio.personalityTraits) ? bio.personalityTraits.join(', ') : (bio.personality || ''),
-        ideals: bio.ideals || '',
-        bonds: bio.bonds || '',
-        flaws: bio.flaws || '',
-        timeline_memories: bio.timelineMemories || [],
-        evolving_beliefs: bio.evolvingBeliefs || [],
-        inter_party_relations: bio.interPartyRelations || {},
-        character_race: bio.characterRace || '',
-        character_title: bio.characterTitle || '',
-        deity_or_patron: bio.deityOrPatron || '',
-        hometown: bio.hometown || '',
-        birth_date_formatted: bio.birthDateFormatted || '',
-        birth_start_day: bio.birthStartDay || 1,
-        birth_month: bio.birthMonth || '',
-        birth_year: bio.birthYear || 1492,
-        secrets: bio.secrets || '',
-        appearance_description: bio.appearanceDescription || '',
-        current_status: bio.currentStatus || '',
-        known_lore_bites: bio.knownLoreBites || [],
-        privacy_settings: bio.privacySettings || {},
-        updated_at: new Date().toISOString(),
-      };
-      const { error } = await supabase.from('character_bios').upsert(payload, { onConflict: 'player_id' });
-      return !error;
+      const payload = characterBioModelToRow(bio, code);
+      const { error } = await supabase.from('character_bios').upsert(payload, { onConflict: 'campaign_code,player_id' });
+      if (error) {
+        return handleSupabaseError('Error saving character bio', error);
+      }
+      return true;
     } catch (err) {
-      console.error('[Supabase] Failed to save single character bio:', err);
-      return false;
+      return handleSupabaseError('Failed to save single character bio', err);
     }
   }
 
   /**
-   * Persists character bios into campaign dossier and separate character_bios table atomically
+   * Persists character bios into separate character_bios table atomically
    */
   static async saveCharacterBios(campaignCode: string, bios: any[]): Promise<boolean> {
     if (!isSupabaseConfigured() || !campaignCode) return false;
     try {
-      const code = campaignCode.trim();
+      const code = campaignCode.trim().toUpperCase();
+      const payloads = (bios || [])
+        .filter((bio) => bio && bio.playerId)
+        .map((bio) => characterBioModelToRow(bio, code));
 
-      // Write atomically to the new 'character_bios' table
-      const upsertPromises = (bios || []).map((bio) => {
-        if (!bio || !bio.playerId) return Promise.resolve();
-        const payload = {
-          player_id: bio.playerId,
-          campaign_code: code,
-          name: bio.characterName || bio.name || '',
-          avatar_url: bio.avatarUrl || '',
-          color: bio.color || '#6366f1',
-          class_level: bio.characterClass || bio.classLevel || '',
-          alignment: bio.characterAlignment || bio.alignment || '',
-          background: bio.backstoryMarkdown || bio.background || '',
-          personality: Array.isArray(bio.personalityTraits) ? bio.personalityTraits.join(', ') : (bio.personality || ''),
-          ideals: bio.ideals || '',
-          bonds: bio.bonds || '',
-          flaws: bio.flaws || '',
-          timeline_memories: bio.timelineMemories || [],
-          evolving_beliefs: bio.evolvingBeliefs || [],
-          inter_party_relations: bio.interPartyRelations || {},
-          character_race: bio.characterRace || '',
-          character_title: bio.characterTitle || '',
-          deity_or_patron: bio.deityOrPatron || '',
-          hometown: bio.hometown || '',
-          birth_date_formatted: bio.birthDateFormatted || '',
-          birth_start_day: bio.birthStartDay || 1,
-          birth_month: bio.birthMonth || '',
-          birth_year: bio.birthYear || 1492,
-          secrets: bio.secrets || '',
-          appearance_description: bio.appearanceDescription || '',
-          current_status: bio.currentStatus || '',
-          known_lore_bites: bio.knownLoreBites || [],
-          privacy_settings: bio.privacySettings || {},
-          extra_data: {
-            characterRace: bio.characterRace,
-            characterTitle: bio.characterTitle,
-            deityOrPatron: bio.deityOrPatron,
-            hometown: bio.hometown,
-            birthDateFormatted: bio.birthDateFormatted,
-            birthStartDay: bio.birthStartDay,
-            birthMonth: bio.birthMonth,
-            birthYear: bio.birthYear,
-            secrets: bio.secrets,
-            appearanceDescription: bio.appearanceDescription,
-            currentStatus: bio.currentStatus,
-            knownLoreBites: bio.knownLoreBites,
-            privacySettings: bio.privacySettings,
-          },
-          updated_at: new Date().toISOString(),
-        };
-        return supabase.from('character_bios').upsert(payload, { onConflict: 'player_id' });
-      });
+      if (payloads.length === 0) return true;
 
-      await Promise.all(upsertPromises);
-
-      const { data: camp } = await supabase.from('campaigns').select('dossier').eq('code', code).maybeSingle();
-      const dossier = camp?.dossier || {};
-      await supabase.from('campaigns').update({
-        dossier: { ...dossier, characterBios: bios || [] },
-        updated_at: new Date().toISOString(),
-      }).eq('code', code);
+      const { error } = await supabase.from('character_bios').upsert(payloads, { onConflict: 'campaign_code,player_id' });
+      if (error) {
+        return handleSupabaseError('Error saving character bios', error);
+      }
       return true;
     } catch (err) {
-      console.error('[Supabase] Failed to save character bios:', err);
-      return false;
+      return handleSupabaseError('Failed to save character bios', err);
     }
   }
 
   /**
-   * Deletes a single character bio from Supabase
+   * Deletes a single character bio from Supabase scoped to both campaign and player
    */
   static async deleteCharacterBio(playerId: string, campaignCode?: string): Promise<boolean> {
     if (!isSupabaseConfigured() || !playerId) return false;
     try {
-      const { error } = await supabase.from('character_bios').delete().eq('player_id', playerId);
+      let query = supabase.from('character_bios').delete().eq('player_id', playerId);
       if (campaignCode) {
-        const code = campaignCode.trim();
-        const { data: camp } = await supabase.from('campaigns').select('dossier').eq('code', code).maybeSingle();
-        const dossier = camp?.dossier || {};
-        if (Array.isArray(dossier.characterBios)) {
-          const updated = dossier.characterBios.filter((b: any) => b.playerId !== playerId);
-          await supabase.from('campaigns').update({
-            dossier: { ...dossier, characterBios: updated },
-            updated_at: new Date().toISOString(),
-          }).eq('code', code);
-        }
+        const code = campaignCode.trim().toUpperCase();
+        query = query.eq('campaign_code', code);
       }
+      const { error } = await query;
       return !error;
     } catch {
       return false;
@@ -2216,26 +2089,11 @@ export class SupabaseSyncService {
     // 8. Character Bios
     if (Array.isArray(data.characterBios) && data.characterBios.length > 0) {
       try {
-        const payloads = data.characterBios.map((bio) => ({
-          player_id: bio.playerId,
-          campaign_code: code,
-          name: bio.characterName || bio.name || '',
-          avatar_url: bio.avatarUrl || '',
-          color: bio.color || '#6366f1',
-          class_level: bio.characterClass || bio.classLevel || '',
-          alignment: bio.characterAlignment || bio.alignment || '',
-          background: bio.backstoryMarkdown || bio.background || '',
-          personality: Array.isArray(bio.personalityTraits) ? bio.personalityTraits.join(', ') : (bio.personality || ''),
-          ideals: bio.ideals || '',
-          bonds: bio.bonds || '',
-          flaws: bio.flaws || '',
-          timeline_memories: bio.timelineMemories || [],
-          evolving_beliefs: bio.evolvingBeliefs || [],
-          inter_party_relations: bio.interPartyRelations || {},
-          updated_at: new Date().toISOString(),
-        }));
+        const payloads = data.characterBios
+          .filter((bio: any) => bio && bio.playerId)
+          .map((bio: any) => characterBioModelToRow(bio, code));
 
-        const { error } = await supabase.from('character_bios').upsert(payloads, { onConflict: 'player_id' });
+        const { error } = await supabase.from('character_bios').upsert(payloads, { onConflict: 'campaign_code,player_id' });
         if (error) throw error;
         stats.characterBios = payloads.length;
       } catch (err: any) {

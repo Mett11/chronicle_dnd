@@ -69,7 +69,6 @@ export interface UserPreferences {
 export interface UserAccount {
   id: string;
   email: string;
-  password?: string;
   characterName: string;
   isDm?: boolean;
   dmCampaigns?: string[];

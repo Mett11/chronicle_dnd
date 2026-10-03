@@ -128,10 +128,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
         let matched = accounts.find(
           (a) =>
+            a.id === firebaseUser.uid ||
             a.id === `usr_${firebaseUser.uid}` ||
             a.id === `usr_g_${firebaseUser.uid}` ||
             (userEmail && a.email && a.email.toLowerCase() === userEmail)
         );
+
+        if (matched && matched.id !== firebaseUser.uid) {
+          matched = { ...matched, id: firebaseUser.uid };
+        }
 
         if (!matched) {
           const isGoogle = firebaseUser.providerData.some((p) => p.providerId === 'google.com');
