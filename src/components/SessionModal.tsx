@@ -61,6 +61,7 @@ interface SessionModalProps {
     sessionImages: string[];
     eventsList: Omit<SessionEvent, 'id'>[];
     excludedPlayerIds?: string[];
+    attendeePlayerIds?: string[];
     attendees?: Player[];
     entitiesExtracted?: boolean;
     entitiesExtractedAt?: string;
@@ -319,7 +320,10 @@ export function SessionModal({
 
       // Initialize excludedPlayerIds
       let initialExcluded = initialSession.excludedPlayerIds;
-      if (!Array.isArray(initialExcluded) && Array.isArray(initialSession.attendees) && initialSession.attendees.length > 0) {
+      if (!Array.isArray(initialExcluded) && Array.isArray(initialSession.attendeePlayerIds) && initialSession.attendeePlayerIds.length > 0) {
+        const attendeeIds = new Set(initialSession.attendeePlayerIds);
+        initialExcluded = campaignPartyPlayers.filter((p) => !attendeeIds.has(p._id)).map((p) => p._id);
+      } else if (!Array.isArray(initialExcluded) && Array.isArray(initialSession.attendees) && initialSession.attendees.length > 0) {
         const attendeeIds = new Set(initialSession.attendees.map((a) => a._id));
         initialExcluded = campaignPartyPlayers.filter((p) => !attendeeIds.has(p._id)).map((p) => p._id);
       }
@@ -419,6 +423,7 @@ export function SessionModal({
     }
 
     const presentPlayers = campaignPartyPlayers.filter((p) => !excludedPlayerIds.includes(p._id));
+    const attendeeIds = presentPlayers.map((p) => p._id);
 
     onSave({
       number,
@@ -433,6 +438,7 @@ export function SessionModal({
       sessionImages,
       eventsList,
       excludedPlayerIds,
+      attendeePlayerIds: attendeeIds,
       attendees: presentPlayers,
       entitiesExtracted: hasExtractedEntities,
       entitiesExtractedAt: hasExtractedEntitiesAt,
@@ -763,7 +769,7 @@ export function SessionModal({
                                   </span>
                                   {p.isDm && (
                                     <span className="text-[10px] font-mono px-1 py-0.2 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30">
-                                      [DM]
+                                      [DM / Giocatore]
                                     </span>
                                   )}
                                 </div>

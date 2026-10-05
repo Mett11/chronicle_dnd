@@ -804,6 +804,9 @@ export class CampaignManager {
     const code = (campaignCode || this.getActiveCampaignCode() || '').trim().toUpperCase();
     if (!code) return;
     this.updateCampaignMeta(code, { dmIsPlayer: isPlayer });
+    if (isSupabaseConfigured()) {
+      SupabaseSyncService.updateCampaignMetadata(code, { dmIsPlayer: isPlayer }).catch(() => {});
+    }
     if (typeof window !== 'undefined') {
       localStorage.setItem(`chronicle_${code}_dm_is_player`, String(isPlayer));
       localStorage.setItem('chronicle_reading_include_dm', String(isPlayer));
@@ -814,6 +817,7 @@ export class CampaignManager {
         })
       );
       window.dispatchEvent(new CustomEvent('chronicle_data_updated'));
+      window.dispatchEvent(new CustomEvent('chronicle_accounts_updated'));
     }
   }
 

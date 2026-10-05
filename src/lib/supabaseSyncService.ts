@@ -729,6 +729,11 @@ export class SupabaseSyncService {
       if (updates.calendarSystem !== undefined) patch.calendar_system = updates.calendarSystem;
       if (updates.aiConfig !== undefined) patch.ai_config = updates.aiConfig;
       if (updates.activePlayers !== undefined) patch.active_players = updates.activePlayers;
+      if (updates.dmIsPlayer !== undefined) {
+        const { data: camp } = await supabase.from('campaigns').select('dossier').or(`code.eq.${cleanCode},code.eq.${code}`).maybeSingle();
+        const dossier = camp?.dossier || {};
+        patch.dossier = { ...dossier, dmIsPlayer: updates.dmIsPlayer };
+      }
 
       const { error } = await supabase
         .from('campaigns')
@@ -793,6 +798,7 @@ export class SupabaseSyncService {
         dossier: {
           ...existingDossier,
           ...(payloadData.dossier || {}),
+          dmIsPlayer: payloadData.dmIsPlayer !== undefined ? payloadData.dmIsPlayer : (existingDossier.dmIsPlayer ?? undefined),
           characterBios: payloadData.characterBios || existingDossier.characterBios || [],
           familyRelations: payloadData.familyRelations || existingDossier.familyRelations || [],
           worldLoreArticles: payloadData.worldLoreArticles || existingDossier.worldLoreArticles || [],
@@ -1584,6 +1590,7 @@ export class SupabaseSyncService {
         dmId: c.dm_id || c.dossier?.dmId || undefined,
         dmEmail: c.dossier?.dmEmail || c.dossier?.creatorEmail || undefined,
         dmName: c.dossier?.dmName || c.dossier?.creatorName || undefined,
+        dmIsPlayer: c.dossier?.dmIsPlayer !== undefined ? Boolean(c.dossier.dmIsPlayer) : undefined,
         expelledAccountIds: Array.isArray(c.expelled_account_ids)
           ? c.expelled_account_ids
           : (Array.isArray(c.dossier?.expelledAccountIds) ? c.dossier.expelledAccountIds : []),

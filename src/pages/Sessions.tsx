@@ -217,10 +217,27 @@ export function Sessions() {
   const [managingTagsPlayer, setManagingTagsPlayer] = useState<Player | null>(null);
 
   const activeCampaignCode = CampaignManager.getActiveCampaignCode() || '';
-  const isDmPlayer = CampaignManager.isDmPlayerCampaign();
+  const [isDmPlayer, setIsDmPlayer] = useState(() => CampaignManager.isDmPlayerCampaign());
+  const isMaster = Boolean(player?.isDm || CampaignManager.isCurrentUserDm() || player?.isCoDm);
+
+  useEffect(() => {
+    const handleCampaignSync = () => {
+      setIsDmPlayer(CampaignManager.isDmPlayerCampaign());
+    };
+    window.addEventListener('chronicle_campaign_updated', handleCampaignSync);
+    window.addEventListener('chronicle_campaigns_updated', handleCampaignSync);
+    window.addEventListener('chronicle_data_updated', handleCampaignSync);
+    window.addEventListener('chronicle_campaign_changed', handleCampaignSync);
+    return () => {
+      window.removeEventListener('chronicle_campaign_updated', handleCampaignSync);
+      window.removeEventListener('chronicle_campaigns_updated', handleCampaignSync);
+      window.removeEventListener('chronicle_data_updated', handleCampaignSync);
+      window.removeEventListener('chronicle_campaign_changed', handleCampaignSync);
+    };
+  }, []);
 
   const handleToggleSessionParticipant = (targetPlayerId: string) => {
-    if (!selectedSession || !player?.isDm) return;
+    if (!selectedSession || !isMaster) return;
     const currentExcluded = new Set(selectedSession.excludedPlayerIds || []);
     if (currentExcluded.has(targetPlayerId)) {
       currentExcluded.delete(targetPlayerId);
@@ -230,9 +247,11 @@ export function Sessions() {
     const nextExcluded = Array.from(currentExcluded);
     const partyPlayers = allPlayers.filter((p) => !p.isDm || isDmPlayer);
     const nextAttendees = partyPlayers.filter((p) => !currentExcluded.has(p._id));
+    const nextAttendeeIds = nextAttendees.map((p) => p._id);
 
     const updated = CampaignManager.updateSession(selectedSession._id, {
       excludedPlayerIds: nextExcluded,
+      attendeePlayerIds: nextAttendeeIds,
       attendees: nextAttendees,
     });
     if (updated) {
@@ -1236,7 +1255,8 @@ export function Sessions() {
                         {/* Attendance / Participants Jump Button */}
                         {(() => {
                           const excludedSet = new Set(selectedSession.excludedPlayerIds || []);
-                          const activeTotalCount = allPlayers.filter((p) => !excludedSet.has(p._id)).length;
+                          const partyPool = allPlayers.filter((p) => !p.isDm || isDmPlayer);
+                          const activeTotalCount = partyPool.filter((p) => !excludedSet.has(p._id)).length;
 
                           return (
                             <button
@@ -1251,7 +1271,7 @@ export function Sessions() {
                               title="Vai alla gestione presenze e lista partecipanti della seduta"
                             >
                               <Users size={12} className="text-primary" />
-                              <span className="hidden sm:inline">Presenze ({activeTotalCount}/{allPlayers.length})</span>
+                              <span className="hidden sm:inline">Presenze ({activeTotalCount}/{partyPool.length})</span>
                               <span className="sm:hidden font-bold text-[11px]">{activeTotalCount}</span>
                             </button>
                           );
@@ -1450,7 +1470,7 @@ export function Sessions() {
                             <span>Partecipanti alla Seduta ({activeTotalCount}/{partyPool.length} Attivi)</span>
                           </h3>
 
-                          {player?.isDm && (
+                          {isMaster && (
                             <button
                               type="button"
                               onClick={() => {
@@ -1508,13 +1528,13 @@ export function Sessions() {
                                       )}
                                     </div>
                                     <p className="text-[10px] text-content-3 font-mono uppercase truncate">
-                                      {p.isDm ? 'Dungeon Master / PG' : 'Personaggio Giocante'}
+                                      {p.isDm ? 'DM / Giocatore' : 'Personaggio Giocante'}
                                     </p>
                                   </div>
                                 </div>
 
                                 <div className="flex items-center gap-2 shrink-0">
-                                  {player?.isDm && (
+                                  {isMaster && (
                                     <button
                                       type="button"
                                       onClick={() => handleToggleSessionParticipant(p._id)}
