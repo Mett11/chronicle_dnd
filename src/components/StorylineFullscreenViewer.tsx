@@ -40,6 +40,8 @@ import { CloudSyncService } from '../lib/cloudSync';
 import { CampaignManager } from '../store/campaignStore';
 import { extractTextFromContent, safeString } from '../lib/sanitize';
 import { generateCampaignShareToken, buildClientPresentationUrl, copyTextToClipboard } from '../lib/shareToken';
+import { isSupabaseConfigured } from '../lib/supabase';
+import { SupabaseSyncService } from '../lib/supabaseSyncService';
 
 export interface StorylineSlide {
   imageUrl: string;
@@ -107,6 +109,15 @@ const MobileCronacaViewer: React.FC<{
     setShowShareModalUrl(immediateUrl);
     setIsPublishingShare(true);
     setShareSuccess(null);
+
+    // Sync to Supabase in parallel if configured
+    if (isSupabaseConfigured() && code) {
+      SupabaseSyncService.saveCampaign(code, {
+        meta,
+        sessions: CampaignManager.getSessions(),
+        chapters: CampaignManager.getChapters(),
+      }).catch((err) => console.warn('[StorylineShare] Supabase sync warning:', err));
+    }
 
     CloudSyncService.publishPublicPresentation(code).then((result) => {
       setIsPublishingShare(false);
@@ -609,6 +620,15 @@ export const StorylineFullscreenViewer: React.FC<StorylineFullscreenViewerProps>
     setShowShareModalUrl(immediateUrl);
     setIsPublishingShare(true);
     setShareSuccess(null);
+
+    // Sync to Supabase in parallel if configured
+    if (isSupabaseConfigured() && code) {
+      SupabaseSyncService.saveCampaign(code, {
+        meta,
+        sessions: CampaignManager.getSessions(),
+        chapters: CampaignManager.getChapters(),
+      }).catch((err) => console.warn('[StorylineShare] Supabase sync warning:', err));
+    }
 
     CloudSyncService.publishPublicPresentation(code).then((result) => {
       setIsPublishingShare(false);

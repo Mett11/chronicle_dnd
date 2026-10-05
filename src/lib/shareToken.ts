@@ -28,6 +28,43 @@ export function reverseCode(code: string): string {
 }
 
 /**
+ * Reconstructs possible campaign code variants from an obfuscated reversed string or raw input,
+ * generating standard hyphenated Chronicle codes (e.g. CHR-XXXX-XXXX) and raw unhyphenated codes.
+ */
+export function reconstructCampaignCodes(reversedOrRaw: string): string[] {
+  if (!reversedOrRaw) return [];
+  const clean = reversedOrRaw.trim();
+  const reversed = clean.split('').reverse().join('').toUpperCase();
+  const directUpper = clean.toUpperCase();
+
+  const candidates = new Set<string>();
+  candidates.add(clean);
+  candidates.add(directUpper);
+  candidates.add(reversed);
+
+  // If reversed looks like CHRXXXXXXXX (11 chars starting with CHR)
+  [reversed, directUpper].forEach((str) => {
+    const alphanumeric = str.replace(/[^A-Z0-9]/g, '');
+    candidates.add(alphanumeric);
+
+    if (alphanumeric.startsWith('CHR') && alphanumeric.length === 11) {
+      // Standard Chronicle format CHR-XXXX-XXXX
+      const formatted = `${alphanumeric.slice(0, 3)}-${alphanumeric.slice(3, 7)}-${alphanumeric.slice(7)}`;
+      candidates.add(formatted);
+    } else if (alphanumeric.length === 10 && alphanumeric.startsWith('CHR')) {
+      const formatted = `${alphanumeric.slice(0, 3)}-${alphanumeric.slice(3, 6)}-${alphanumeric.slice(6)}`;
+      candidates.add(formatted);
+    } else if (alphanumeric.length >= 8) {
+      // Generic hyphen splits
+      const mid = Math.floor(alphanumeric.length / 2);
+      candidates.add(`${alphanumeric.slice(0, mid)}-${alphanumeric.slice(mid)}`);
+    }
+  });
+
+  return Array.from(candidates).filter(Boolean);
+}
+
+/**
  * Builds a deterministic public presentation URL synchronously on client-side
  * with structure: base_url/presentation/nomecampagna/uuid_campagna_al_contrario
  */

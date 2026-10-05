@@ -1,4 +1,5 @@
 import { supabase, isSupabaseConfigured, markSupabaseOffline } from './supabase';
+import { slugifyCampaignTitle } from './shareToken';
 import {
   chapterRowToModel,
   chapterModelToRow,
@@ -222,15 +223,73 @@ export class SupabaseSyncService {
   /**
    * Fetches all campaign relational data from Supabase in parallel
    */
-  static async fetchCampaignData(campaignCode: string): Promise<Record<string, any> | null> {
+  static async fetchCampaignData(campaignCode: string, campaignTitleOrSlug?: string): Promise<Record<string, any> | null> {
     if (!isSupabaseConfigured() || !campaignCode) return null;
 
     try {
-      const cleanCode = campaignCode.trim().toUpperCase();
-      const rawCode = campaignCode.trim();
+      const candidates = new Set<string>();
+      [campaignCode, campaignTitleOrSlug || ''].forEach((c) => {
+        if (!c) return;
+        const str = c.trim();
+        candidates.add(str);
+        candidates.add(str.toUpperCase());
+        const alphanumeric = str.toUpperCase().replace(/[^A-Z0-9]/g, '');
+        if (alphanumeric) {
+          candidates.add(alphanumeric);
+          if (alphanumeric.startsWith('CHR') && alphanumeric.length === 11) {
+            candidates.add(`${alphanumeric.slice(0, 3)}-${alphanumeric.slice(3, 7)}-${alphanumeric.slice(7)}`);
+          } else if (alphanumeric.length === 10 && alphanumeric.startsWith('CHR')) {
+            candidates.add(`${alphanumeric.slice(0, 3)}-${alphanumeric.slice(3, 6)}-${alphanumeric.slice(6)}`);
+          }
+        }
+      });
+
+      const candidateList = Array.from(candidates);
+      const orFilterCodes = candidateList.map((cd) => `code.eq.${cd}`).join(',');
+      const orFilterCampCodes = candidateList.map((cd) => `campaign_code.eq.${cd}`).join(',');
+
+      // Step 1: Query campaign info
+      let campaignRow: any = null;
+      const initialCampRes = await supabase
+        .from('campaigns')
+        .select('*')
+        .or(orFilterCodes)
+        .maybeSingle();
+
+      if (initialCampRes.data) {
+        campaignRow = initialCampRes.data;
+        if (campaignRow.code && !candidateList.includes(campaignRow.code)) {
+          candidateList.push(campaignRow.code);
+        }
+      } else {
+        // Fallback: search campaigns table by slug / alphanumeric code
+        try {
+          const allCampsRes = await supabase.from('campaigns').select('*').limit(50);
+          if (allCampsRes.data && allCampsRes.data.length > 0) {
+            const targetSlug = slugifyCampaignTitle(campaignTitleOrSlug || campaignCode);
+            const targetAlpha = campaignCode.toUpperCase().replace(/[^A-Z0-9]/g, '');
+
+            const found = allCampsRes.data.find((c: any) => {
+              const cAlpha = (c.code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+              if (cAlpha && targetAlpha && (cAlpha === targetAlpha || cAlpha.includes(targetAlpha) || targetAlpha.includes(cAlpha))) return true;
+              const cSlug = slugifyCampaignTitle(c.title || c.name || c.code || '');
+              if (targetSlug && (cSlug === targetSlug || cSlug.includes(targetSlug) || targetSlug.includes(cSlug))) return true;
+              return false;
+            });
+
+            if (found) {
+              campaignRow = found;
+              if (found.code && !candidateList.includes(found.code)) {
+                candidateList.push(found.code);
+              }
+            }
+          }
+        } catch {}
+      }
+
+      const activeOrCampFilter = candidateList.map((cd) => `campaign_code.eq.${cd}`).join(',');
 
       const [
-        campaignRes,
         chaptersRes,
         sessionsRes,
         entitiesRes,
@@ -243,20 +302,15 @@ export class SupabaseSyncService {
         worldLoreArticlesRes,
       ] = await Promise.all([
         supabase
-          .from('campaigns')
-          .select('*')
-          .or(`code.eq.${cleanCode},code.eq.${rawCode}`)
-          .maybeSingle(),
-        supabase
           .from('chapters')
           .select('*')
-          .or(`campaign_code.eq.${cleanCode},campaign_code.eq.${rawCode}`)
+          .or(activeOrCampFilter)
           .then(async (res) => {
             if (res.error || !res.data || res.data.length === 0) {
               const fallbackRes = await supabase
                 .from('campaign_chapters')
                 .select('*')
-                .or(`campaign_code.eq.${cleanCode},campaign_code.eq.${rawCode}`);
+                .or(activeOrCampFilter);
               if (fallbackRes.data && fallbackRes.data.length > 0) return fallbackRes;
             }
             return res;
@@ -264,30 +318,30 @@ export class SupabaseSyncService {
         supabase
           .from('sessions')
           .select('*')
-          .or(`campaign_code.eq.${cleanCode},campaign_code.eq.${rawCode}`)
+          .or(activeOrCampFilter)
           .order('number', { ascending: true }),
         supabase
           .from('entities')
           .select('*')
-          .or(`campaign_code.eq.${cleanCode},campaign_code.eq.${rawCode}`),
+          .or(activeOrCampFilter),
         supabase
           .from('notes')
           .select('*')
-          .or(`campaign_code.eq.${cleanCode},campaign_code.eq.${rawCode}`),
+          .or(activeOrCampFilter),
         supabase
           .from('maps')
           .select('*')
-          .or(`campaign_code.eq.${cleanCode},campaign_code.eq.${rawCode}`),
+          .or(activeOrCampFilter),
         supabase
           .from('scrapbook')
           .select('*')
-          .or(`campaign_code.eq.${cleanCode},campaign_code.eq.${rawCode}`)
+          .or(activeOrCampFilter)
           .then(async (res) => {
             if (res.error || !res.data || res.data.length === 0) {
               const fallbackRes = await supabase
                 .from('scrapbook_items')
                 .select('*')
-                .or(`campaign_code.eq.${cleanCode},campaign_code.eq.${rawCode}`);
+                .or(activeOrCampFilter);
               if (fallbackRes.data && fallbackRes.data.length > 0) return fallbackRes;
             }
             return res;
@@ -295,25 +349,27 @@ export class SupabaseSyncService {
         supabase
           .from('audio_logs')
           .select('*')
-          .or(`campaign_code.eq.${cleanCode},campaign_code.eq.${rawCode}`)
+          .or(activeOrCampFilter)
           .order('created_at', { ascending: false }),
         // Standard safe reads for newly added standalone tables
         supabase
           .from('character_bios')
           .select('*')
-          .eq('campaign_code', cleanCode)
+          .or(activeOrCampFilter)
           .then(res => res, () => ({ data: [] })),
         supabase
           .from('family_relations')
           .select('*')
-          .eq('campaign_code', cleanCode)
+          .or(activeOrCampFilter)
           .then(res => res, () => ({ data: [] })),
         supabase
           .from('world_lore_articles')
           .select('*')
-          .eq('campaign_code', cleanCode)
+          .or(activeOrCampFilter)
           .then(res => res, () => ({ data: [] })),
       ]);
+
+      const campaignRes = { data: campaignRow, error: null };
 
       if (campaignRes.error && campaignRes.error.code !== 'PGRST116') {
         console.warn('[Supabase] Warning reading campaigns table:', campaignRes.error.message);
@@ -469,8 +525,8 @@ export class SupabaseSyncService {
       }
 
       return {
-        campaignCode: campRow.code || cleanCode,
-        title: campRow.title || cleanCode,
+        campaignCode: campRow.code || campaignCode,
+        title: campRow.title || campaignCode,
         subtitle: campRow.subtitle || '',
         description: campRow.description || '',
         system: campRow.system || 'D&D 5e',

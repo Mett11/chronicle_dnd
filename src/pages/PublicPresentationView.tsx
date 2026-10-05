@@ -5,7 +5,7 @@ import { StorylineFullscreenViewer, StorylineSlide } from '../components/Storyli
 import { Film, Sparkles, Compass, AlertCircle, RefreshCw } from 'lucide-react';
 import { Session, CampaignChapter } from '../types';
 import { extractTextFromContent, safeString } from '../lib/sanitize';
-import { generateCampaignShareToken, slugifyCampaignTitle } from '../lib/shareToken';
+import { generateCampaignShareToken, slugifyCampaignTitle, reconstructCampaignCodes } from '../lib/shareToken';
 import { isSupabaseConfigured } from '../lib/supabase';
 import { SupabaseSyncService } from '../lib/supabaseSyncService';
 
@@ -20,6 +20,7 @@ export function PublicPresentationView() {
   }>();
 
   const originalFromReversed = reversedCode ? reversedCode.trim().split('').reverse().join('').toUpperCase() : '';
+  const candidateCodes = reversedCode ? reconstructCampaignCodes(reversedCode) : [];
   const compositeSlug = campaignName && reversedCode ? `${slugifyCampaignTitle(campaignName)}__${reversedCode.toLowerCase()}` : '';
   const rawTarget = (compositeSlug || campaignName || shareId || token || routeCode || altCode || '').trim();
 
@@ -30,7 +31,7 @@ export function PublicPresentationView() {
   const [campaignTitle, setCampaignTitle] = useState<string>('');
 
   useEffect(() => {
-    if (!rawTarget && !campaignName && !routeCode) {
+    if (!rawTarget && !campaignName && !routeCode && !reversedCode) {
       setError('Nessun link di presentazione valido specificato.');
       setLoading(false);
       return;
@@ -53,6 +54,7 @@ export function PublicPresentationView() {
       const isLocalMatch = (
         (activeCode && activeCode.toUpperCase() === rawTarget.toUpperCase()) ||
         (activeCode && originalFromReversed && activeCode.toUpperCase() === originalFromReversed) ||
+        (activeCode && candidateCodes.some((c) => c.toUpperCase() === activeCode.toUpperCase())) ||
         (activeShareToken && activeShareToken === rawTarget.toLowerCase()) ||
         (activeSlug && (activeSlug === rawTarget.toLowerCase() || rawTarget.toLowerCase().startsWith(activeSlug))) ||
         (campaignName && localMeta?.name && slugifyCampaignTitle(localMeta.name) === slugifyCampaignTitle(campaignName)) ||
@@ -71,16 +73,34 @@ export function PublicPresentationView() {
         return;
       }
 
-      // Fetch from Supabase
+      // 1. Fetch from Supabase with all candidate codes & campaign slug
       try {
-        const upperCode = originalFromReversed || rawTarget.toUpperCase();
-        const targetCode = upperCode || activeCode || rawTarget;
-        const supaData = await SupabaseSyncService.fetchCampaignData(targetCode);
+        const targetCodes = [
+          ...candidateCodes,
+          originalFromReversed,
+          rawTarget,
+          routeCode,
+          altCode,
+          activeCode,
+        ].filter(Boolean) as string[];
+
+        let supaData: Record<string, any> | null = null;
+        for (const codeVariant of targetCodes) {
+          supaData = await SupabaseSyncService.fetchCampaignData(codeVariant, campaignName);
+          if (supaData && supaData.sessions && supaData.sessions.length > 0) {
+            break;
+          }
+        }
+
+        if (!supaData && campaignName) {
+          supaData = await SupabaseSyncService.fetchCampaignData(campaignName, campaignName);
+        }
+
         if (supaData && supaData.sessions && supaData.sessions.length > 0) {
           if (isMounted) {
             setSessions(supaData.sessions);
             setChapters(supaData.chapters || []);
-            setCampaignTitle(localMeta?.name || `Campagna ${targetCode}`);
+            setCampaignTitle(supaData.title || supaData.meta?.name || localMeta?.name || campaignName || 'Cronaca di Campagna');
             setLoading(false);
           }
           return;
@@ -89,7 +109,7 @@ export function PublicPresentationView() {
         console.warn('[PublicPresentationView] Supabase fetch error:', supaErr);
       }
 
-      // Fallback to local sessions if available
+      // 2. Fallback to local sessions if available
       if (localSessions && localSessions.length > 0) {
         if (isMounted) {
           setSessions(localSessions);
@@ -111,7 +131,7 @@ export function PublicPresentationView() {
     return () => {
       isMounted = false;
     };
-  }, [rawTarget]);
+  }, [rawTarget, campaignName, reversedCode]);
 
   // Construct sequential StorylineSlides for the presentation view
   const slides = useMemo<StorylineSlide[]>(() => {
