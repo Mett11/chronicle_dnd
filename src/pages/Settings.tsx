@@ -506,26 +506,14 @@ export function Settings() {
           </p>
         </div>
 
-        <div className="flex items-center gap-3 shrink-0">
-          <button
-            type="button"
-            onClick={() => handleOpenLegal('privacy')}
-            className="bg-surface-2 hover:bg-surface-3 text-content-1 border border-surface-3 hover:border-primary/50 flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-xl text-xs font-semibold cursor-pointer transition-all active:scale-95 shrink-0"
-            title="Note Legali, Cookie Policy & Conformità GDPR"
-          >
-            <Shield size={16} className="text-primary" />
-            <span>Note Legali &amp; Privacy</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={handleSwitchCampaign}
-            className="bg-primary text-surface-0 hover:bg-primary-hover font-semibold shadow-lg border border-primary-hover flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-xs sm:text-sm cursor-pointer transition-all hover:scale-102 active:scale-95 shrink-0"
-          >
-            <DoorOpen size={18} />
-            <span>Cambia Campagna</span>
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={handleSwitchCampaign}
+          className="bg-primary text-surface-0 hover:bg-primary-hover font-semibold shadow-lg border border-primary-hover flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-xs sm:text-sm cursor-pointer transition-all hover:scale-102 active:scale-95 shrink-0"
+        >
+          <DoorOpen size={18} />
+          <span>Cambia Campagna</span>
+        </button>
       </div>
 
       {/* Main Macro Navigation Tabs (No infinite scrolling) */}
