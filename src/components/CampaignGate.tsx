@@ -111,6 +111,7 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
   const [joinCode, setJoinCode] = useState('');
   const [isSearching, setIsSearching] = useState(false);
   const [joinError, setJoinError] = useState<string | null>(null);
+  const [isJoinInputOpen, setIsJoinInputOpen] = useState(false);
 
   // Create Campaign Modal State
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
@@ -303,14 +304,12 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
     if (!account) return false;
     const userEmail = (account.email || '').toLowerCase().trim();
     const campDmEmail = (camp.dmEmail || '').toLowerCase().trim();
-    const isExplicitDm = Boolean(
-      account.dmCampaigns?.some((code) => code.toUpperCase() === camp.code.toUpperCase()) ||
-      camp.dmId === account.id ||
-      (campDmEmail && userEmail && campDmEmail === userEmail)
-    );
-    if (isExplicitDm) return true;
-    // Fallback only if campaign has no designated DM at all and user has isDm
-    if (!camp.dmId && !campDmEmail && account.isDm) return true;
+    if (account.dmCampaigns?.some((code) => code.toUpperCase() === camp.code.toUpperCase())) {
+      return true;
+    }
+    if (camp.dmId && camp.dmId === account.id) return true;
+    if (campDmEmail && userEmail && campDmEmail === userEmail) return true;
+    if (account.isDm) return true;
     return false;
   };
 
@@ -660,37 +659,10 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
             >
               Tavolo delle Campagne
             </span>
-            {userHasCustomTheme && (
-              <span
-                className="hidden md:inline-flex items-center gap-1 px-2.5 py-0.5 rounded text-[10px] font-mono border"
-                style={{
-                  color: palette.accent,
-                  borderColor: `${palette.accent}40`,
-                  backgroundColor: palette.accentMuted,
-                }}
-              >
-                Tema: {activeTheme.name}
-              </span>
-            )}
           </div>
 
-          {/* User Account, Legal Note and Logout */}
+          {/* User Account and Logout */}
           <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={() => handleOpenLegal('privacy')}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-mono transition-all hover:brightness-125 cursor-pointer shadow-sm"
-              style={{
-                backgroundColor: `${palette.accent}12`,
-                borderColor: `${palette.accent}40`,
-                color: palette.accent,
-              }}
-              title="Note Legali, Privacy & GDPR"
-            >
-              <Shield size={13} />
-              <span>Note Legali &amp; Privacy</span>
-            </button>
-
             <div
               className="px-3.5 py-1.5 rounded-lg border text-xs font-mono shadow-sm select-all"
               style={{
@@ -751,21 +723,72 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
 
           {/* Action Buttons */}
           <div className="flex flex-wrap items-center gap-3 shrink-0">
-            <button
-              type="button"
-              onClick={() => handleOpenLegal('privacy')}
-              className="inline-flex items-center gap-2 px-4 py-3 text-xs tracking-[0.1em] uppercase rounded-xl transition-all shadow-md active:scale-95 cursor-pointer border hover:border-[#d4af37]"
-              style={{
-                fontFamily: "'Cinzel', Georgia, serif",
-                backgroundColor: palette.bgInput,
-                borderColor: palette.borderCard,
-                color: palette.textMain,
-              }}
-              title="Note Legali, Cookie Policy & Privacy GDPR"
-            >
-              <Shield size={15} style={{ color: palette.accent }} />
-              <span>Privacy &amp; GDPR</span>
-            </button>
+            {isJoinInputOpen ? (
+              <form
+                onSubmit={handleJoinCampaign}
+                className="inline-flex items-center gap-2 p-1.5 rounded-xl border shadow-lg animate-fade-in"
+                style={{
+                  backgroundColor: palette.bgInput,
+                  borderColor: palette.accent,
+                }}
+              >
+                <input
+                  type="text"
+                  autoFocus
+                  placeholder="Codice o Link (es. WATERDEEP)"
+                  value={joinCode}
+                  onChange={(e) => setJoinCode(e.target.value)}
+                  className="bg-transparent px-3 py-1.5 text-xs outline-none font-mono tracking-wider w-44 sm:w-60"
+                  style={{ color: palette.textMain }}
+                />
+                <button
+                  type="submit"
+                  disabled={!joinCode.trim() || isSearching}
+                  className="px-3.5 py-1.5 rounded-lg text-xs uppercase tracking-wider font-semibold border flex items-center gap-1.5 cursor-pointer transition-all disabled:opacity-50"
+                  style={{
+                    fontFamily: "'Cinzel', Georgia, serif",
+                    backgroundColor: palette.accentMuted,
+                    borderColor: palette.accent,
+                    color: palette.accent,
+                  }}
+                >
+                  {isSearching ? <Loader2 size={13} className="animate-spin" /> : <LogIn size={13} />}
+                  <span>Entra</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsJoinInputOpen(false);
+                    setJoinCode('');
+                    setJoinError(null);
+                  }}
+                  className="p-1.5 rounded-lg text-xs hover:bg-white/10 transition-colors cursor-pointer"
+                  style={{ color: palette.textMuted }}
+                  title="Annulla"
+                >
+                  <X size={14} />
+                </button>
+              </form>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  setIsJoinInputOpen(true);
+                  setJoinError(null);
+                }}
+                className="inline-flex items-center gap-2 px-4 py-3 text-xs tracking-[0.1em] uppercase rounded-xl transition-all shadow-md active:scale-95 cursor-pointer border hover:border-[#d4af37]"
+                style={{
+                  fontFamily: "'Cinzel', Georgia, serif",
+                  backgroundColor: palette.bgInput,
+                  borderColor: palette.borderCard,
+                  color: palette.textMain,
+                }}
+                title="Inserisci un codice invito o link per unirti al party"
+              >
+                <QrCode size={15} style={{ color: palette.accent }} />
+                <span>Inserisci Codice Invito</span>
+              </button>
+            )}
 
             <button
               type="button"
@@ -802,6 +825,15 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
             </button>
           </div>
         </div>
+
+        {isJoinInputOpen && joinError && (
+          <div className="mb-6 -mt-6 flex justify-end">
+            <div className="p-2.5 bg-red-950/40 border border-red-900/60 text-red-200 text-xs flex items-center gap-2 italic rounded-lg">
+              <AlertCircle size={14} className="shrink-0 text-red-400" />
+              <span>{joinError}</span>
+            </div>
+          </div>
+        )}
 
         {/* ================= SECTION 1: LE TUE CAMPAGNE (GRID OF TOMES) ================= */}
         <div className="space-y-6">
@@ -883,6 +915,12 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
                 const isDm = isDmOf(camp);
                 const profile = getProfileForCampaign(camp.code);
                 const hasProfile = Boolean(profile?.characterName?.trim());
+                const isDmAndPlayer = isDm && (
+                  Boolean(camp.dmIsPlayer) ||
+                  CampaignManager.isDmPlayerCampaign(camp.code) ||
+                  hasProfile ||
+                  (account?.joinedCampaigns || []).some((code) => code.toUpperCase() === camp.code.toUpperCase())
+                );
 
                 return (
                   <div
@@ -931,7 +969,20 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
                     <div>
                       {/* Top Role Badge & Code Copy */}
                       <div className="flex items-center justify-between gap-2 mb-4">
-                        {isDm ? (
+                        {isDmAndPlayer ? (
+                          <span
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[10px] tracking-wider font-semibold uppercase rounded"
+                            style={{
+                              fontFamily: "'Cinzel', Georgia, serif",
+                              color: palette.accent,
+                              backgroundColor: palette.accentMuted,
+                              borderColor: `${palette.accent}45`,
+                              borderWidth: '1px',
+                            }}
+                          >
+                            <Crown size={12} /> DM / Giocatore
+                          </span>
+                        ) : isDm ? (
                           <span
                             className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[10px] tracking-wider font-semibold uppercase rounded"
                             style={{
@@ -985,7 +1036,7 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
                       </h3>
 
                       {/* Character PG Profile in this campaign */}
-                      {!isDm && (
+                      {(!isDm || isDmAndPlayer || hasProfile) && (
                         <div
                           className="my-3 p-3 rounded-lg border text-xs"
                           style={{

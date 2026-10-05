@@ -17,6 +17,8 @@ import {
   audioLogModelToRow,
   characterBioRowToModel,
   characterBioModelToRow,
+  worldLoreArticleRowToModel,
+  worldLoreArticleModelToRow,
   resolveStorageUrl,
 } from './supabaseAdapter';
 import {
@@ -785,6 +787,9 @@ export class SupabaseSyncService {
         calendar_system: payloadData.calendarSystem !== undefined ? payloadData.calendarSystem : existing?.calendar_system || {},
         ai_config: payloadData.aiConfig !== undefined ? payloadData.aiConfig : existing?.ai_config || {},
         active_players: payloadData.activePlayers !== undefined ? payloadData.activePlayers : existing?.active_players || [],
+        title_font: payloadData.titleFont || payloadData.title_font || existing?.title_font || 'cinzel',
+        title_effect: payloadData.titleEffect || payloadData.title_effect || existing?.title_effect || 'default',
+        expelled_account_ids: payloadData.expelledAccountIds || payloadData.expelled_account_ids || existing?.expelled_account_ids || [],
         dossier: {
           ...existingDossier,
           ...(payloadData.dossier || {}),
@@ -1086,51 +1091,14 @@ export class SupabaseSyncService {
     if (!isSupabaseConfigured() || !campaignCode || !entity) return false;
 
     try {
-      const code = campaignCode.trim();
-      const entityType = entity.type || (entity as any).category || 'npc';
-      const rawImages = Array.isArray(entity.images)
-        ? entity.images
-        : ((entity as any).imageUrl ? [(entity as any).imageUrl] : []);
-
-      // Avoid packing giant base64 payloads (>300KB) into JSON columns that trigger Postgres statement timeout (code 57014)
-      const cleanImages = rawImages.map((img) =>
-        typeof img === 'string' && img.length > 300000 ? img.slice(0, 100) : img
-      );
-      const primaryImageUrl =
-        typeof (entity as any).imageUrl === 'string' && (entity as any).imageUrl.length < 300000
-          ? (entity as any).imageUrl
-          : cleanImages[0] || '';
-
-      const { _id, name, type, category, description, imageUrl, status, ...restAttributes } = entity as any;
-      const attributes = {
-        ...restAttributes,
-        images: cleanImages,
-        progressNote: entity.progressNote || '',
-        aliases: entity.aliases || [],
-        aiConfig: entity.aiConfig || undefined,
-        location: entity.location || undefined,
-        mapId: entity.mapId || undefined,
-        pinId: entity.pinId || undefined,
-      };
-
-      const payload = {
-        id: _id || `ent_${Date.now()}`,
-        campaign_code: code,
-        name: name || 'Senza Nome',
-        type: entityType,
-        description: description || '',
-        image_url: primaryImageUrl,
-        status: status || 'alive',
-        attributes,
-        updated_at: new Date().toISOString(),
-      };
+      const code = campaignCode.trim().toUpperCase();
+      const payload = entityModelToRow(entity, code);
 
       const { error } = await safeUpsert('entities', payload, { onConflict: 'id' });
-      if (error) console.warn('[Supabase] Warning/error saving entity:', error.message || error);
-      return !error;
+      if (error) return handleSupabaseError('Error saving entity', error);
+      return true;
     } catch (err) {
-      console.warn('[Supabase] Failed to save entity (falling back to local store):', err);
-      return false;
+      return handleSupabaseError('Failed to save entity', err);
     }
   }
 
@@ -1856,28 +1824,11 @@ export class SupabaseSyncService {
    * Persists a single world lore article to world_lore_articles table
    */
   static async saveWorldLoreArticle(campaignCode: string, art: any): Promise<boolean> {
-    if (!isSupabaseConfigured() || !campaignCode || !art || !art._id) return false;
+    if (!isSupabaseConfigured() || !campaignCode || !art || !(art._id || art.id)) return false;
     try {
       const code = campaignCode.trim().toUpperCase();
-      const payload = {
-        id: art._id,
-        campaign_code: code,
-        title: art.title || 'Senza Titolo',
-        subtitle: art.subtitle || '',
-        summary: art.summary || '',
-        content: art.fullContentMarkdown || art.content || '',
-        category_id: art.category || 'general',
-        images: Array.isArray(art.images) ? art.images : [],
-        is_draft: Boolean(art.dmOnly),
-        bites: Array.isArray(art.bites) ? art.bites : [],
-        author_player_id: art.authorPlayerId || '',
-        author_name: art.authorName || '',
-        tags: Array.isArray(art.tags) ? art.tags : [],
-        related_entity_ids: Array.isArray(art.relatedEntityIds) ? art.relatedEntityIds : [],
-        order_index: art.order || 0,
-        updated_at: new Date().toISOString(),
-      };
-      const { error } = await supabase.from('world_lore_articles').upsert(payload, { onConflict: 'id' });
+      const payload = worldLoreArticleModelToRow(art, code);
+      const { error } = await safeUpsert('world_lore_articles', payload, { onConflict: 'id' });
       return !error;
     } catch (err) {
       console.error('[Supabase] Failed to save single world lore article:', err);
@@ -1891,29 +1842,12 @@ export class SupabaseSyncService {
   static async saveWorldLoreArticles(campaignCode: string, articles: any[]): Promise<boolean> {
     if (!isSupabaseConfigured() || !campaignCode) return false;
     try {
-      const code = campaignCode.trim();
+      const code = campaignCode.trim().toUpperCase();
 
       // Atomic write to 'world_lore_articles'
       const upsertPromises = (articles || []).map((art) => {
-        if (!art || !art._id) return Promise.resolve();
-        const payload = {
-          id: art._id,
-          campaign_code: code,
-          title: art.title || 'Senza Titolo',
-          subtitle: art.subtitle || '',
-          summary: art.summary || '',
-          content: art.fullContentMarkdown || '',
-          category_id: art.category || 'general',
-          images: art.images || [],
-          is_draft: Boolean(art.dmOnly),
-          bites: art.bites || [],
-          author_player_id: art.authorPlayerId || '',
-          author_name: art.authorName || '',
-          tags: art.tags || [],
-          related_entity_ids: art.relatedEntityIds || [],
-          order_index: art.order || 0,
-          updated_at: new Date().toISOString(),
-        };
+        if (!art || !(art._id || art.id)) return Promise.resolve();
+        const payload = worldLoreArticleModelToRow(art, code);
         return supabase.from('world_lore_articles').upsert(payload, { onConflict: 'id' });
       });
 
@@ -2587,16 +2521,9 @@ export class SupabaseSyncService {
     // 10. World Lore Articles
     if (Array.isArray(data.worldLoreArticles) && data.worldLoreArticles.length > 0) {
       try {
-        const payloads = data.worldLoreArticles.map((art) => ({
-          id: art._id,
-          campaign_code: code,
-          title: art.title || 'Senza Titolo',
-          content: art.fullContentMarkdown || '',
-          category_id: art.category || 'general',
-          images: art.images || [],
-          is_draft: Boolean(art.dmOnly),
-          updated_at: new Date().toISOString(),
-        }));
+        const payloads = data.worldLoreArticles
+          .filter((art: any) => art && (art._id || art.id))
+          .map((art: any) => worldLoreArticleModelToRow(art, code));
 
         const { error } = await safeUpsert('world_lore_articles', payloads, { onConflict: 'id' });
         if (error) throw error;

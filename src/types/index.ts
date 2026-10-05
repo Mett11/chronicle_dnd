@@ -309,6 +309,8 @@ export interface Session {
   memorySynced?: boolean;
   memorySyncedAt?: string;
   gazetteConfig?: GazetteConfig;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export type RelationAttitude = 'friendly' | 'helpful' | 'neutral' | 'suspicious' | 'hostile' | 'fearful' | 'devoted';
@@ -585,6 +587,8 @@ export interface Note {
   _id: string;
   _createdAt: string;
   _updatedAt?: string;
+  createdAt?: string;
+  updatedAt?: string;
   title: string;
   content?: string;
   body?: any[];
@@ -599,7 +603,9 @@ export interface Note {
   tags?: string[];
   author: Player;
   category?: Category;
+  categoryId?: string;
   session?: Session;
+  sessionId?: string;
   relatedEntities?: Entity[];
   images?: string[];
   coverImage?: any;
