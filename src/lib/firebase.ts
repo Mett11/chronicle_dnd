@@ -1,21 +1,19 @@
-import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
-import firebaseConfig from '../../firebase-applet-config.json';
+/**
+ * Authoritative Supabase Integration Stubs
+ * Firebase has been completely replaced with Supabase PostgreSQL & Supabase Auth.
+ */
+export const auth: any = {
+  currentUser: null,
+  onAuthStateChanged: (_cb: any) => {
+    return () => {};
+  },
+};
 
-// Initialize Firebase App
-const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
+export const googleProvider: any = {};
 
-// Initialize Firebase Auth & Google Auth Provider (Google Login only)
-export const auth = getAuth(app);
-export const googleProvider = new GoogleAuthProvider();
-googleProvider.setCustomParameters({
-  prompt: 'select_account',
-});
+export const db: any = {};
 
-// Initialize and export Firestore
-export const db = getFirestore(app);
-
+const app: any = {};
 export default app;
 
 

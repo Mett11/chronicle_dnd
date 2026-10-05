@@ -1,4 +1,3 @@
-import { auth } from './firebase';
 import { isSupabaseConfigured } from './supabase';
 import { SupabaseSyncService } from './supabaseSyncService';
 import { encryptApiKey, decryptApiKey } from './cryptoUtils';
@@ -147,7 +146,6 @@ export class ApiKeyManager {
    * Helper to normalize user IDs into authoritative Firebase Auth UID
    */
   static getResolvedAuthUid(userId?: string): string {
-    if (auth.currentUser?.uid) return auth.currentUser.uid;
     const raw = (userId || this.getActiveUserId()).trim();
     if (!raw) return '';
     if (raw.startsWith('usr_g_')) return raw.replace('usr_g_', '');
@@ -250,7 +248,6 @@ export class ApiKeyManager {
    * Helper to retrieve the current logged-in user account ID.
    */
   static getActiveUserId(): string {
-    if (auth.currentUser?.uid) return auth.currentUser.uid;
     if (typeof window === 'undefined') return '';
     try {
       const gUid = localStorage.getItem('chronicle_global_active_user_id');

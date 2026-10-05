@@ -2439,7 +2439,12 @@ export class CampaignManager {
         if (deletedAccounts.has(lowId) || expelledSet.has(lowId)) return false;
         const isJoined = a.joinedCampaigns?.some((c) => c.toUpperCase() === cleanActiveCode);
         const isDm = a.dmCampaigns?.some((c) => c.toUpperCase() === cleanActiveCode) || campaign?.dmId === a.id;
-        return Boolean(isJoined || isDm);
+        const hasProfile = Boolean(
+          a.campaignProfiles &&
+          (a.campaignProfiles[cleanActiveCode] ||
+           Object.keys(a.campaignProfiles).some((k) => k.toUpperCase() === cleanActiveCode))
+        );
+        return Boolean(isJoined || isDm || hasProfile);
       })
       .map((a) => this.accountToPlayer(a));
   }

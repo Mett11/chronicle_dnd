@@ -2,7 +2,7 @@ import { supabase, isSupabaseConfigured } from './supabase';
 
 export const CHRONICLE_MEDIA_BUCKET = 'chronicle-media';
 
-export class FirebaseStorageService {
+export class SupabaseStorageService {
   /**
    * Helper to parse a public URL or relative path and extract the storage path within the bucket
    */
@@ -162,4 +162,5 @@ export class FirebaseStorageService {
   }
 }
 
-export const MediaStorageService = FirebaseStorageService;
+export const FirebaseStorageService = SupabaseStorageService;
+export const MediaStorageService = SupabaseStorageService;

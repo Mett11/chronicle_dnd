@@ -1,5 +1,3 @@
-import { auth, db } from './firebase';
-import { doc, getDoc, setDoc, deleteDoc } from 'firebase/firestore';
 import { ApiKeyManager } from './apiKeyManager';
 import { CampaignManager } from '../store/campaignStore';
 import { UserProfileSyncService } from './userProfileSync';
@@ -1459,51 +1457,7 @@ export class CloudSyncService {
       let aggregatedAudioLogs: AudioLog[] = [];
       let aggregatedHistoricalSessions: any[] = [];
 
-      if (remote._mediaChunkCount && remote._mediaChunkCount > 0) {
-        try {
-          const chunkPromises: Promise<any>[] = [];
-          for (let i = 0; i < remote._mediaChunkCount; i++) {
-            chunkPromises.push(getDoc(doc(db, 'dnd_campaigns', `${activeCode}__chunk_${i}`)));
-          }
-          const chunkSnaps = await Promise.all(chunkPromises);
-          chunkSnaps.forEach((snap) => {
-            if (snap.exists()) {
-              const cData = snap.data();
-              if (cData.sessionMedia) Object.assign(aggregatedSessionMedia, cData.sessionMedia);
-              if (cData.entityMedia) Object.assign(aggregatedEntityMedia, cData.entityMedia);
-              if (cData.noteMedia) Object.assign(aggregatedNoteMedia, cData.noteMedia);
-              if (cData.mapMedia) Object.assign(aggregatedMapMedia, cData.mapMedia);
-              if (cData.worldLoreMedia) Object.assign(aggregatedWorldLoreMedia, cData.worldLoreMedia);
-              if (Array.isArray(cData.worldLoreArticles)) aggregatedWorldLoreArticles.push(...cData.worldLoreArticles);
-              if (Array.isArray(cData.scrapbookItems)) aggregatedScrapbookItems.push(...cData.scrapbookItems);
-              if (Array.isArray(cData.audioLogs)) aggregatedAudioLogs.push(...cData.audioLogs);
-              if (Array.isArray(cData.historicalSessions)) aggregatedHistoricalSessions.push(...cData.historicalSessions);
-              if (Array.isArray(cData.sessions)) aggregatedHistoricalSessions.push(...cData.sessions);
-            }
-          });
-        } catch (chunkFetchErr) {
-          console.warn('Could not fetch media chunks:', chunkFetchErr);
-        }
-      }
-
-      // Legacy fallback: restore old companion chunk if present
-      if (remote._hasSplitChunks && !remote._mediaChunkCount) {
-        try {
-          const cSnap = await getDoc(doc(db, 'dnd_campaigns', `${activeCode}__chunks`));
-          if (cSnap.exists()) {
-            const cData = cSnap.data();
-            if (Array.isArray(cData?.scrapbookItems)) aggregatedScrapbookItems.push(...cData.scrapbookItems);
-            if (Array.isArray(cData?.audioLogs)) aggregatedAudioLogs.push(...cData.audioLogs);
-            if (Array.isArray(cData?.maps)) {
-              cData.maps.forEach((m: any) => {
-                if (m.imageUrl) aggregatedMapMedia[m.id] = m.imageUrl;
-              });
-            }
-          }
-        } catch (err) {
-          console.warn('Failed to load legacy companion chunks:', err);
-        }
-      }
+      // Supabase is single source of truth for media & relations
 
       // === 2. HYDRATE SESSIONS (MAIN + HISTORICAL CHUNKS) WITH IMAGES & AUDIO ===
       const rawCombinedSessions: any[] = [

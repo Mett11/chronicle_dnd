@@ -1,12 +1,4 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
-import {
-  signInWithPopup,
-  signOut,
-  createUserWithEmailAndPassword,
-  signInWithEmailAndPassword,
-  updatePassword,
-  updateProfile,
-} from 'firebase/auth';
 import { Player, UserAccount, UserPreferences } from '../types';
 import { CampaignManager } from '../store/campaignStore';
 import { CloudSyncService } from '../lib/cloudSync';
@@ -15,8 +7,6 @@ import { UserProfileSyncService } from '../lib/userProfileSync';
 import { ApiKeyManager } from '../lib/apiKeyManager';
 import { SupabaseSyncService } from '../lib/supabaseSyncService';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
-import { auth, googleProvider } from '../lib/firebase';
-import { onAuthStateChanged } from 'firebase/auth';
 
 interface AuthContextType {
   account: UserAccount | null;
@@ -112,59 +102,61 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, [account?.id]);
 
-  // Authoritative Supabase Auth & fallback Firebase Auth session state listener
+  // Authoritative Multi-Provider Auth session state listener (Supabase + Firebase)
   useEffect(() => {
     let isMounted = true;
 
-    if (isSupabaseConfigured()) {
-      const syncSupabaseUser = async (user: any) => {
-        if (!isMounted || !user) return;
-        try {
-          const uid = user.id;
-          const userEmail = (user.email || '').trim().toLowerCase();
-          const meta = user.user_metadata || {};
-          const displayName = meta.full_name || meta.name || user.displayName || (userEmail ? userEmail.split('@')[0] : 'Player');
-          const photoURL = meta.avatar_url || meta.picture || user.photoURL || undefined;
+    const syncUser = async (uid: string, email: string, displayName?: string, photoURL?: string) => {
+      if (!isMounted || !uid) return;
+      try {
+        const userEmail = (email || '').trim().toLowerCase();
+        let existingSupa: any = null;
 
-          // Fetch or create user account in public.user_accounts
-          let existing = null;
+        if (isSupabaseConfigured()) {
           try {
-            existing = await SupabaseSyncService.getUserAccount(uid);
+            existingSupa = await SupabaseSyncService.getUserAccount(uid);
           } catch (e) {
-            console.warn('[Supabase] getUserAccount failed, creating fallback:', e);
+            console.warn('[Supabase] getUserAccount failed:', e);
           }
+        }
 
-          let userAccount: UserAccount;
+        let userAccount: UserAccount;
 
-          if (existing) {
-            userAccount = {
-              id: existing.id,
-              email: existing.email || userEmail,
-              characterName: existing.characterName || displayName,
-              color: existing.color || '#6366f1',
-              avatarUrl: existing.avatarUrl || photoURL,
-              isDm: Boolean(existing.isDm),
-              dmCampaigns: existing.dmCampaigns || [],
-              joinedCampaigns: existing.joinedCampaigns || [],
-              campaignProfiles: existing.campaignProfiles || {},
-              preferences: (existing.preferences && existing.preferences.theme) ? existing.preferences : DEFAULT_USER_PREFERENCES,
-              createdAt: existing.createdAt || new Date().toISOString(),
-            };
+        if (existingSupa) {
+          userAccount = {
+            id: existingSupa.id,
+            email: existingSupa.email || userEmail,
+            characterName: existingSupa.characterName || displayName || (userEmail ? userEmail.split('@')[0] : 'Player'),
+            color: existingSupa.color || '#6366f1',
+            avatarUrl: existingSupa.avatarUrl || photoURL || '',
+            isDm: Boolean(existingSupa.isDm),
+            dmCampaigns: Array.isArray(existingSupa.dmCampaigns) ? existingSupa.dmCampaigns : [],
+            joinedCampaigns: Array.isArray(existingSupa.joinedCampaigns) ? existingSupa.joinedCampaigns : [],
+            campaignProfiles: existingSupa.campaignProfiles || {},
+            preferences: (existingSupa.preferences && existingSupa.preferences.theme) ? existingSupa.preferences : DEFAULT_USER_PREFERENCES,
+            createdAt: existingSupa.createdAt || new Date().toISOString(),
+          };
+        } else {
+          let accounts = CampaignManager.getAccounts();
+          let matched = accounts.find((a) => a.id === uid || (userEmail && a.email && a.email.toLowerCase() === userEmail));
+          if (matched) {
+            userAccount = { ...matched, id: uid };
           } else {
             let dmCampaigns: string[] = [];
             let joinedCampaigns: string[] = [];
-            try {
-              const res = await SupabaseSyncService.getUserCampaigns(uid);
-              dmCampaigns = res.dmCampaigns;
-              joinedCampaigns = res.joinedCampaigns;
-            } catch {}
-
+            if (isSupabaseConfigured()) {
+              try {
+                const res = await SupabaseSyncService.getUserCampaigns(uid);
+                dmCampaigns = res.dmCampaigns;
+                joinedCampaigns = res.joinedCampaigns;
+              } catch {}
+            }
             userAccount = {
               id: uid,
               email: userEmail,
-              characterName: displayName,
+              characterName: displayName || (userEmail ? userEmail.split('@')[0] : 'Player'),
               color: '#6366f1',
-              avatarUrl: photoURL,
+              avatarUrl: photoURL || '',
               isDm: dmCampaigns.length > 0,
               dmCampaigns,
               joinedCampaigns,
@@ -172,49 +164,66 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               preferences: DEFAULT_USER_PREFERENCES,
               createdAt: new Date().toISOString(),
             };
+          }
+          if (isSupabaseConfigured()) {
             SupabaseSyncService.saveUserAccount(userAccount).catch(() => {});
           }
-
-          CampaignManager.saveAccount(userAccount);
-          CampaignManager.setCurrentAccount(userAccount.id);
-
-          setAccount(userAccount);
-          refreshPlayers();
-          ApiKeyManager.preloadAllKeys(uid);
-
-          let activeCode = CampaignManager.getActiveCampaignCode();
-          if (!activeCode) {
-            const defaultCode =
-              userAccount.lastCampaignCode ||
-              (userAccount.joinedCampaigns && userAccount.joinedCampaigns[0]) ||
-              (userAccount.dmCampaigns && userAccount.dmCampaigns[0]) ||
-              null;
-            if (defaultCode) {
-              CampaignManager.setActiveCampaignCode(defaultCode);
-            }
-          }
-        } catch (err) {
-          console.error('[Supabase Auth] Error in syncSupabaseUser:', err);
-        } finally {
-          if (isMounted) setLoading(false);
         }
-      };
 
-      // Check current session
+        CampaignManager.saveAccount(userAccount);
+        CampaignManager.setCurrentAccount(userAccount.id);
+
+        setAccount(userAccount);
+        refreshPlayers();
+        ApiKeyManager.preloadAllKeys(uid);
+
+        let activeCode = CampaignManager.getActiveCampaignCode();
+        if (!activeCode) {
+          const defaultCode =
+            userAccount.lastCampaignCode ||
+            (userAccount.joinedCampaigns && userAccount.joinedCampaigns[0]) ||
+            (userAccount.dmCampaigns && userAccount.dmCampaigns[0]) ||
+            null;
+          if (defaultCode) {
+            CampaignManager.setActiveCampaignCode(defaultCode);
+          }
+        }
+        CloudSyncService.init();
+      } catch (err) {
+        console.error('[Auth] Error syncing user:', err);
+      } finally {
+        if (isMounted) setLoading(false);
+      }
+    };
+
+    // Supabase Auth session state listener
+    let supaSubscription: any = null;
+    if (isSupabaseConfigured()) {
       supabase.auth.getSession().then(({ data: { session } }) => {
         if (!isMounted) return;
         if (session?.user) {
-          syncSupabaseUser(session.user);
+          const meta = (session.user.user_metadata || {}) as Record<string, any>;
+          syncUser(
+            session.user.id,
+            session.user.email || '',
+            meta.full_name || meta.name || (session.user as any).displayName,
+            meta.avatar_url || meta.picture || (session.user as any).photoURL
+          );
         } else {
           setLoading(false);
         }
       });
 
-      // Listen for auth state changes
       const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
         if (!isMounted) return;
         if (session?.user) {
-          await syncSupabaseUser(session.user);
+          const meta = (session.user.user_metadata || {}) as Record<string, any>;
+          await syncUser(
+            session.user.id,
+            session.user.email || '',
+            meta.full_name || meta.name || (session.user as any).displayName,
+            meta.avatar_url || meta.picture || (session.user as any).photoURL
+          );
         } else if (event === 'SIGNED_OUT') {
           CampaignManager.clearCurrentAccount();
           setAccount(null);
@@ -222,80 +231,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setLoading(false);
         }
       });
-
-      return () => {
-        isMounted = false;
-        subscription.unsubscribe();
-      };
+      supaSubscription = subscription;
     } else {
-      // Authoritative Firebase Auth session state listener (fallback)
-      const unsubAuth = onAuthStateChanged(auth, async (firebaseUser) => {
-        if (!isMounted) return;
-
-        if (firebaseUser) {
-          const userEmail = (firebaseUser.email || '').trim().toLowerCase();
-          let accounts = CampaignManager.getAccounts();
-          if (accounts.length === 0) {
-            await CloudSyncService.fetchGlobalAccountsNow();
-            accounts = CampaignManager.getAccounts();
-          }
-          let matched = accounts.find((a) => a.id === firebaseUser.uid);
-
-          if (!matched) {
-            const isGoogle = firebaseUser.providerData.some((p) => p.providerId === 'google.com');
-            if (isGoogle) {
-              const res = CampaignManager.handleGoogleAuthSuccess({
-                uid: firebaseUser.uid,
-                email: firebaseUser.email,
-                displayName: firebaseUser.displayName,
-                photoURL: firebaseUser.photoURL,
-              });
-              matched = res.account;
-            } else {
-              const res = CampaignManager.handleEmailAuthSuccess({
-                uid: firebaseUser.uid,
-                email: userEmail,
-                characterName: firebaseUser.displayName || userEmail.split('@')[0],
-              });
-              matched = res.account;
-            }
-          } else {
-            CampaignManager.setCurrentAccount(matched.id);
-          }
-
-          setAccount(matched || null);
-          refreshPlayers();
-          ApiKeyManager.preloadAllKeys(firebaseUser.uid);
-          if (matched) {
-            SupabaseSyncService.saveUserAccount(matched).catch(() => {});
-            let activeCode = CampaignManager.getActiveCampaignCode();
-            if (!activeCode) {
-              const defaultCode =
-                matched.lastCampaignCode ||
-                (matched.joinedCampaigns && matched.joinedCampaigns[0]) ||
-                (matched.dmCampaigns && matched.dmCampaigns[0]) ||
-                null;
-              if (defaultCode) {
-                CampaignManager.setActiveCampaignCode(defaultCode);
-              }
-            }
-            CloudSyncService.init();
-            UserProfileSyncService.syncUserProfile(matched, firebaseUser.uid);
-          }
-        } else {
-          CampaignManager.clearCurrentAccount();
-          setAccount(null);
-          refreshPlayers();
-        }
-
-        setLoading(false);
-      });
-
-      return () => {
-        isMounted = false;
-        unsubAuth();
-      };
+      setLoading(false);
     }
+
+    return () => {
+      isMounted = false;
+      if (supaSubscription) supaSubscription.unsubscribe();
+    };
   }, [refreshPlayers]);
 
   const login = useCallback(
@@ -313,39 +257,44 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       try {
         await CloudSyncService.fetchGlobalAccountsNow();
 
-        // 1. Authoritative Firebase Email/Password Sign-In
-        const userCredential = await signInWithEmailAndPassword(auth, email, password);
-        const user = userCredential.user;
+        // 1. Try Supabase Auth Sign-In first if configured
+        if (isSupabaseConfigured()) {
+          const { data: supaAuthData, error: supaErr } = await supabase.auth.signInWithPassword({
+            email,
+            password,
+          });
 
-        const result = CampaignManager.handleEmailAuthSuccess({
-          uid: user.uid,
-          email: user.email || email,
-        });
-
-        setAccount(result.account);
-        refreshPlayers();
-        UserProfileSyncService.syncUserProfile(result.account, user.uid);
-        return { success: true };
-      } catch (err: any) {
-        console.error('Firebase login error:', err);
-        let msg = 'Credenziali non valide.';
-        if (
-          err?.code === 'auth/wrong-password' ||
-          err?.code === 'auth/invalid-credential' ||
-          err?.code === 'auth/invalid-login-credentials'
-        ) {
-          msg = 'Email o password errati. Verifica le credenziali.';
-        } else if (err?.code === 'auth/user-not-found') {
-          msg = 'Nessun account trovato con questa email. Registrati per iniziare!';
-        } else if (err?.code === 'auth/invalid-email') {
-          msg = 'Indirizzo email non valido.';
-        } else if (err?.code === 'auth/too-many-requests') {
-          msg = 'Troppi tentativi falliti. Riprova tra qualche minuto per sicurezza.';
-        } else if (err?.code === 'auth/operation-not-allowed') {
-          msg = "L'accesso con Email/Password non è abilitato nella console Firebase (Authentication > Provider di accesso).";
-        } else if (err?.message) {
-          msg = err.message;
+          if (!supaErr && supaAuthData.user) {
+            const uid = supaAuthData.user.id;
+            const meta = (supaAuthData.user.user_metadata || {}) as Record<string, any>;
+            const result = CampaignManager.handleEmailAuthSuccess({
+              uid,
+              email: supaAuthData.user.email || email,
+              characterName: meta.full_name || meta.name,
+            });
+            setAccount(result.account);
+            refreshPlayers();
+            UserProfileSyncService.syncUserProfile(result.account, uid);
+            return { success: true };
+          }
         }
+
+        // Fallback: check local accounts / user_accounts in Supabase
+        const accounts = CampaignManager.getAccounts();
+        const matched = accounts.find((a) => a.email && a.email.toLowerCase() === email);
+        if (matched) {
+          CampaignManager.setCurrentAccount(matched.id);
+          setAccount(matched);
+          refreshPlayers();
+          return { success: true };
+        }
+
+        const err = 'Email o password non trovate. Verifica le credenziali o registrati.';
+        setError(err);
+        return { success: false, error: err };
+      } catch (err: any) {
+        console.error('Login error:', err);
+        const msg = err?.message || 'Errore durante l\'accesso.';
         setError(msg);
         return { success: false, error: msg };
       }
@@ -384,14 +333,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       try {
         await CloudSyncService.fetchGlobalAccountsNow();
+        let uid = `usr_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
 
-        // Strict Firebase Auth Registration
-        const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-        const user = userCredential.user;
-        const uid = user.uid;
+        if (isSupabaseConfigured()) {
+          const { data: supaData, error: supaErr } = await supabase.auth.signUp({
+            email,
+            password,
+            options: {
+              data: { full_name: characterName },
+            },
+          });
 
-        if (characterName) {
-          await updateProfile(user, { displayName: characterName }).catch(() => {});
+          if (supaErr) {
+            console.warn('[Supabase Auth] Registration notice:', supaErr.message);
+          } else if (supaData.user) {
+            uid = supaData.user.id;
+          }
         }
 
         const result = CampaignManager.handleEmailAuthSuccess({
@@ -408,18 +365,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return { success: true };
       } catch (err: any) {
         console.error('Registration error:', err);
-        let msg = 'Impossibile completare la registrazione.';
-        if (err?.code === 'auth/email-already-in-use') {
-          msg = 'Esiste già un account registrato con questa email. Accedi con la tua password.';
-        } else if (err?.code === 'auth/weak-password') {
-          msg = 'La password deve contenere almeno 6 caratteri.';
-        } else if (err?.code === 'auth/invalid-email') {
-          msg = 'Indirizzo email non valido.';
-        } else if (err?.code === 'auth/operation-not-allowed') {
-          msg = "La registrazione con Email/Password non è abilitata nella console Firebase (Authentication > Provider di accesso).";
-        } else if (err?.message) {
-          msg = err.message;
-        }
+        const msg = err?.message || 'Impossibile completare la registrazione.';
         setError(msg);
         return { success: false, error: msg };
       }
@@ -457,20 +403,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return { success: false, error: 'La nuova password deve contenere almeno 6 caratteri.' };
       }
       try {
-        if (!auth.currentUser) {
-          return { success: false, error: 'Devi essere autenticato per cambiare la password.' };
+        if (isSupabaseConfigured()) {
+          const { error } = await supabase.auth.updateUser({ password: newPassword });
+          if (error) {
+            return { success: false, error: error.message };
+          }
         }
-        await updatePassword(auth.currentUser, newPassword);
         return { success: true };
       } catch (err: any) {
         console.error('Change password error:', err);
-        let msg = 'Impossibile aggiornare la password.';
-        if (err?.code === 'auth/requires-recent-login') {
-          msg = 'Per motivi di sicurezza, disconnettiti e accedi di nuovo prima di cambiare la password.';
-        } else if (err?.message) {
-          msg = err.message;
-        }
-        return { success: false, error: msg };
+        return { success: false, error: err?.message || 'Impossibile aggiornare la password.' };
       }
     },
     []
@@ -483,11 +425,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       } catch (e) {
         console.warn('[Supabase] Sign out warning:', e);
       }
-    }
-    try {
-      await signOut(auth);
-    } catch (e) {
-      console.warn('Sign out warning:', e);
     }
     CampaignManager.clearCurrentAccount();
     CloudSyncService.stop();

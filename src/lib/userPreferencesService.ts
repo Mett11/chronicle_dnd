@@ -1,4 +1,3 @@
-import { auth } from './firebase';
 import { UserPreferences } from '../types';
 import { SupabaseSyncService } from './supabaseSyncService';
 
@@ -43,8 +42,7 @@ export const DEFAULT_USER_PREFERENCES: UserPreferences = {
 };
 
 function normalizeUserId(userId?: string): string {
-  if (auth.currentUser?.uid) return auth.currentUser.uid;
-  const raw = (userId || '').trim();
+  const raw = (userId || (typeof window !== 'undefined' ? localStorage.getItem('chronicle_current_account_id') : '') || '').trim();
   if (!raw) return 'guest';
   if (raw.startsWith('usr_g_')) return raw.replace('usr_g_', '');
   if (raw.startsWith('usr_')) return raw.replace('usr_', '');

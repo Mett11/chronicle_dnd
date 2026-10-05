@@ -1339,6 +1339,8 @@ export class SupabaseSyncService {
         email: email || `${account.id}@local.chronicle`,
         character_name: account.characterName || 'Avventuriero',
         is_dm: Boolean(account.isDm),
+        dm_campaigns: Array.isArray(account.dmCampaigns) ? account.dmCampaigns : [],
+        joined_campaigns: Array.isArray(account.joinedCampaigns) ? account.joinedCampaigns : [],
         color: account.color || '#6366f1',
         avatar_url: account.avatarUrl || '',
         campaign_profiles: account.campaignProfiles || {},
@@ -1375,7 +1377,9 @@ export class SupabaseSyncService {
       if (!data) return null;
 
       // Also get memberships from campaign_members (verified against real campaigns)
-      const { dmCampaigns, joinedCampaigns } = await this.getUserCampaigns(userId);
+      const memberRes = await this.getUserCampaigns(userId);
+      const dmCampaigns = Array.from(new Set([...(Array.isArray(data.dm_campaigns) ? data.dm_campaigns : []), ...memberRes.dmCampaigns]));
+      const joinedCampaigns = Array.from(new Set([...(Array.isArray(data.joined_campaigns) ? data.joined_campaigns : []), ...memberRes.joinedCampaigns]));
 
       // Verify campaign_profiles against active campaigns
       const { data: realCampaigns } = await supabase.from('campaigns').select('code');
@@ -1410,7 +1414,7 @@ export class SupabaseSyncService {
         id: data.id,
         email: data.email,
         characterName: data.character_name,
-        isDm: Boolean(data.is_dm),
+        isDm: Boolean(data.is_dm || dmCampaigns.length > 0),
         dmCampaigns,
         joinedCampaigns,
         color: data.color || '#6366f1',
@@ -1434,9 +1438,8 @@ export class SupabaseSyncService {
     try {
       const { data, error } = await supabase
         .from('campaign_members')
-        .select('campaign_code, role, status')
-        .eq('user_id', userId)
-        .eq('status', 'active');
+        .select('campaign_code, role')
+        .eq('user_id', userId);
 
       if (error || !Array.isArray(data)) {
         return { dmCampaigns: [], joinedCampaigns: [] };
@@ -1510,6 +1513,8 @@ export class SupabaseSyncService {
           email: email || `${account.id}@local.chronicle`,
           character_name: account.characterName || 'Avventuriero',
           is_dm: Boolean(account.isDm),
+          dm_campaigns: Array.isArray(account.dmCampaigns) ? account.dmCampaigns : [],
+          joined_campaigns: Array.isArray(account.joinedCampaigns) ? account.joinedCampaigns : [],
           color: account.color || '#6366f1',
           avatar_url: account.avatarUrl || '',
           campaign_profiles: account.campaignProfiles || {},
