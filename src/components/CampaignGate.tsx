@@ -174,6 +174,7 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
               if (rc && rc.code) {
                 const clean = rc.code.toUpperCase();
                 const existingLocal = allCamp.find((l) => l.code.toUpperCase() === clean);
+                const dmIsPlayer = rc.dmIsPlayer !== undefined ? rc.dmIsPlayer : existingLocal?.dmIsPlayer;
                 remoteMap.set(clean, {
                   code: clean,
                   name: rc.name || rc.title || existingLocal?.name || clean,
@@ -181,8 +182,12 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
                   dmId: rc.dmId || rc.dm_id || existingLocal?.dmId,
                   dmEmail: rc.dmEmail || existingLocal?.dmEmail,
                   dmName: rc.dmName || existingLocal?.dmName,
+                  dmIsPlayer: dmIsPlayer,
                   expelledAccountIds: rc.expelledAccountIds || existingLocal?.expelledAccountIds || [],
                 });
+                if (dmIsPlayer !== undefined && typeof window !== 'undefined') {
+                  localStorage.setItem(`chronicle_${clean}_dm_is_player`, String(dmIsPlayer));
+                }
               }
             });
             // Update local store: remove any obsolete campaigns that no longer exist in Supabase
@@ -369,6 +374,16 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
           const supaData = await SupabaseSyncService.fetchCampaignData(cleanCode);
           if (supaData) {
             existing = CampaignManager.createCampaign(cleanCode, supaData.title || `Campagna ${cleanCode}`);
+            const dmIsPlayer = supaData.dmIsPlayer !== undefined
+              ? Boolean(supaData.dmIsPlayer)
+              : (supaData.dossier?.dmIsPlayer !== undefined ? Boolean(supaData.dossier.dmIsPlayer) : undefined);
+            if (dmIsPlayer !== undefined) {
+              existing.dmIsPlayer = dmIsPlayer;
+              CampaignManager.updateCampaignMeta(cleanCode, { dmIsPlayer });
+              if (typeof window !== 'undefined') {
+                localStorage.setItem(`chronicle_${cleanCode}_dm_is_player`, String(dmIsPlayer));
+              }
+            }
           }
         } catch (supaErr) {
           console.warn('Errore verifica supabase campagna:', supaErr);

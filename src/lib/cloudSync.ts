@@ -797,16 +797,25 @@ export class CloudSyncService {
     const finalCampaigns: CampaignMeta[] = [];
     remoteMap.forEach((remCamp, cleanCode) => {
       const loc = localCampaigns.find((l) => l.code.toUpperCase() === cleanCode);
+      const remoteDmIsPlayer = remCamp.dmIsPlayer !== undefined ? remCamp.dmIsPlayer : loc?.dmIsPlayer;
       if (loc) {
         finalCampaigns.push({
           ...loc,
           ...remCamp,
+          dmIsPlayer: remoteDmIsPlayer,
           expelledAccountIds: Array.from(
             new Set([...(remCamp.expelledAccountIds || []), ...(loc.expelledAccountIds || [])])
           ),
         });
       } else {
-        finalCampaigns.push(remCamp);
+        finalCampaigns.push({
+          ...remCamp,
+          dmIsPlayer: remoteDmIsPlayer,
+        });
+      }
+
+      if (remoteDmIsPlayer !== undefined && typeof window !== 'undefined') {
+        localStorage.setItem(`chronicle_${cleanCode}_dm_is_player`, String(remoteDmIsPlayer));
       }
     });
 
@@ -953,19 +962,44 @@ export class CloudSyncService {
             if (supaData.title) {
               try {
                 const allCamps = CampaignManager.getCampaigns();
-                const idx = allCamps.findIndex((c) => c.code === activeCode);
+                const idx = allCamps.findIndex((c) => c.code.toUpperCase() === activeCode.toUpperCase());
+                const remoteDmIsPlayer = supaData.dmIsPlayer !== undefined
+                  ? Boolean(supaData.dmIsPlayer)
+                  : (supaData.dossier?.dmIsPlayer !== undefined ? Boolean(supaData.dossier.dmIsPlayer) : undefined);
+
                 if (idx !== -1) {
-                  if (allCamps[idx].name !== supaData.title) {
-                    allCamps[idx].name = supaData.title;
-                    CampaignManager.saveCampaignsLocalOnly(allCamps);
-                  }
+                  allCamps[idx] = {
+                    ...allCamps[idx],
+                    name: supaData.title || allCamps[idx].name,
+                    subtitle: supaData.subtitle !== undefined ? supaData.subtitle : allCamps[idx].subtitle,
+                    description: supaData.description !== undefined ? supaData.description : allCamps[idx].description,
+                    dmId: supaData.dmId || allCamps[idx].dmId,
+                    dmIsPlayer: remoteDmIsPlayer !== undefined ? remoteDmIsPlayer : allCamps[idx].dmIsPlayer,
+                    expelledAccountIds: supaData.expelledAccountIds || allCamps[idx].expelledAccountIds,
+                  };
+                  CampaignManager.saveCampaignsLocalOnly(allCamps);
                 } else {
                   allCamps.push({
                     code: activeCode,
                     name: supaData.title,
+                    subtitle: supaData.subtitle || '',
+                    description: supaData.description || '',
+                    dmId: supaData.dmId || '',
+                    dmIsPlayer: remoteDmIsPlayer,
+                    expelledAccountIds: supaData.expelledAccountIds || [],
                     createdAt: new Date().toISOString(),
                   });
                   CampaignManager.saveCampaignsLocalOnly(allCamps);
+                }
+
+                if (remoteDmIsPlayer !== undefined && typeof window !== 'undefined') {
+                  const cleanCode = activeCode.trim().toUpperCase();
+                  localStorage.setItem(`chronicle_${cleanCode}_dm_is_player`, String(remoteDmIsPlayer));
+                  localStorage.setItem('chronicle_reading_include_dm', String(remoteDmIsPlayer));
+                  localStorage.setItem('chronicle_include_dm_as_player', String(remoteDmIsPlayer));
+                  window.dispatchEvent(new CustomEvent('chronicle_campaign_updated', { detail: { code: cleanCode, dmIsPlayer: remoteDmIsPlayer } }));
+                  window.dispatchEvent(new CustomEvent('chronicle_campaigns_updated'));
+                  window.dispatchEvent(new CustomEvent('chronicle_data_updated'));
                 }
               } catch (e) {
                 console.warn('[Supabase] meta hydration warn:', e);
@@ -1260,11 +1294,20 @@ export class CloudSyncService {
             if (row.calendar_system && typeof row.calendar_system === 'object') {
               CampaignManager.saveCalendarLocalOnly(row.calendar_system);
             }
-            if (row.title) {
+            const dmIsPlayer = row.dossier?.dmIsPlayer !== undefined ? Boolean(row.dossier.dmIsPlayer) : undefined;
+            if (row.title || row.dm_id || dmIsPlayer !== undefined) {
               CampaignManager.updateCampaignMeta(activeCode, {
-                name: row.title,
+                name: row.title || undefined,
                 dmId: row.dm_id || undefined,
+                dmIsPlayer: dmIsPlayer,
               });
+              if (dmIsPlayer !== undefined && typeof window !== 'undefined') {
+                const cleanCode = activeCode.trim().toUpperCase();
+                localStorage.setItem(`chronicle_${cleanCode}_dm_is_player`, String(dmIsPlayer));
+                localStorage.setItem('chronicle_reading_include_dm', String(dmIsPlayer));
+                localStorage.setItem('chronicle_include_dm_as_player', String(dmIsPlayer));
+                window.dispatchEvent(new CustomEvent('chronicle_campaign_updated', { detail: { code: cleanCode, dmIsPlayer } }));
+              }
             }
             if (row.dossier?.chapters && Array.isArray(row.dossier.chapters)) {
               CampaignManager.saveChaptersLocalOnly(row.dossier.chapters);

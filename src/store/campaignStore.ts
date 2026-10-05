@@ -742,8 +742,19 @@ export class CampaignManager {
     const cleanCode = code.trim().toUpperCase();
     const campaigns = CampaignManager.getCampaigns();
     const index = campaigns.findIndex((c) => c.code === cleanCode);
-    if (index === -1) return null;
-    campaigns[index] = { ...campaigns[index], ...updates };
+    let targetCampaign: CampaignMeta;
+    if (index === -1) {
+      targetCampaign = {
+        code: cleanCode,
+        name: updates.name || cleanCode,
+        createdAt: new Date().toISOString(),
+        ...updates,
+      };
+      campaigns.push(targetCampaign);
+    } else {
+      campaigns[index] = { ...campaigns[index], ...updates };
+      targetCampaign = campaigns[index];
+    }
     CampaignManager.saveCampaignsLocalOnly(campaigns);
     if (isSupabaseConfigured()) {
       SupabaseSyncService.updateCampaignMetadata(cleanCode, {
@@ -751,16 +762,18 @@ export class CampaignManager {
         subtitle: updates.subtitle,
         description: updates.description,
         dmId: updates.dmId,
+        dmIsPlayer: updates.dmIsPlayer,
       }).catch(() => {});
     }
     if (typeof window !== "undefined") {
       window.dispatchEvent(
         new CustomEvent("chronicle_campaign_updated", {
-          detail: { campaign: campaigns[index] },
+          detail: { campaign: targetCampaign, code: cleanCode, dmIsPlayer: updates.dmIsPlayer },
         }),
       );
+      window.dispatchEvent(new CustomEvent("chronicle_campaigns_updated"));
     }
-    return campaigns[index];
+    return targetCampaign;
   }
 
   static isCurrentUserDm(): boolean {

@@ -479,12 +479,14 @@ export function Sessions() {
     sessionImages: string[];
     eventsList: Omit<SessionEvent, 'id'>[];
     excludedPlayerIds?: string[];
+    attendeePlayerIds?: string[];
     attendees?: Player[];
     entitiesExtracted?: boolean;
     entitiesExtractedAt?: string;
     memorySynced?: boolean;
     memorySyncedAt?: string;
   }) => {
+    const attendeePlayerIds = payload.attendeePlayerIds || payload.attendees?.map((p) => p._id) || [];
     if (isEditing && selectedSession) {
       const updated = CampaignManager.updateSession(selectedSession._id, {
         number: payload.number,
@@ -501,6 +503,7 @@ export function Sessions() {
         loreYear: payload.loreMeta?.year,
         loreEndYear: payload.loreMeta?.endYear,
         excludedPlayerIds: payload.excludedPlayerIds,
+        attendeePlayerIds,
         attendees: payload.attendees,
         recap: [
           {
@@ -537,6 +540,7 @@ export function Sessions() {
         loreYear: payload.loreMeta?.year,
         loreEndYear: payload.loreMeta?.endYear,
         excludedPlayerIds: payload.excludedPlayerIds,
+        attendeePlayerIds,
         attendees: payload.attendees,
         recap: [
           {

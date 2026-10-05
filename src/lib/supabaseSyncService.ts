@@ -533,6 +533,7 @@ export class SupabaseSyncService {
         description: campRow.description || '',
         system: campRow.system || 'D&D 5e',
         dmId: campRow.dm_id || '',
+        dmIsPlayer: dossier.dmIsPlayer !== undefined ? Boolean(dossier.dmIsPlayer) : undefined,
         calendarSystem: campRow.calendar_system || {},
         aiConfig: campRow.ai_config || {},
         expelledAccountIds: Array.isArray(campRow.expelled_account_ids)
@@ -1297,6 +1298,7 @@ export class SupabaseSyncService {
 
       const cleanCode = code.trim().toUpperCase();
       const { error } = await supabase.from('campaigns').update({
+        active_players: mergedPlayers,
         dossier: {
           ...dossier,
           activePlayers: mergedPlayers,
