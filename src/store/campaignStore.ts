@@ -1840,16 +1840,7 @@ export class CampaignManager {
     }
     const campaigns = this.getCampaigns();
     const campIdx = campaigns.findIndex((c) => c.code.toUpperCase() === cleanCode);
-    if (campIdx === -1) {
-      campaigns.push({
-        code: cleanCode,
-        name: `Campagna ${cleanCode}`,
-        createdAt: new Date().toISOString(),
-        expelledAccountIds: [],
-      });
-      this.saveCampaigns(campaigns);
-      CloudSyncService.syncCampaignsToCloud(campaigns);
-    } else if (campaigns[campIdx].expelledAccountIds?.includes(accountId)) {
+    if (campIdx !== -1 && campaigns[campIdx].expelledAccountIds?.includes(accountId)) {
       campaigns[campIdx].expelledAccountIds = campaigns[campIdx].expelledAccountIds!.filter((id) => id !== accountId);
       this.saveCampaigns(campaigns);
       CloudSyncService.syncCampaignsToCloud(campaigns);

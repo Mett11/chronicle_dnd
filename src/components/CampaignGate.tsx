@@ -31,6 +31,7 @@ import { isSupabaseConfigured } from '../lib/supabase';
 import { SupabaseSyncService } from '../lib/supabaseSyncService';
 import { CampaignInviteModal } from './CampaignInviteModal';
 import { hasUserSavedTheme, getStoredTheme } from '../lib/theme';
+import { LegalModal, LegalTab } from './legal/LegalModal';
 
 const PG_COLOR_PRESETS = [
   { name: 'Indaco Arcano', hex: '#6366f1' },
@@ -96,18 +97,9 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
         const cDmEmail = (c.dmEmail || '').toLowerCase().trim();
         const userEmail = (acc.email || '').toLowerCase().trim();
         const isUserDm = c.dmId === acc.id || (cDmEmail && userEmail && cDmEmail === userEmail);
-        if (validCodesSet.has(clean) || isUserDm || acc.isDm) {
+        if (validCodesSet.has(clean) || isUserDm) {
           campMap.set(clean, c);
         }
-      }
-    });
-    validCodesSet.forEach((cleanCode) => {
-      if (!expelledCodes.has(cleanCode) && !campMap.has(cleanCode)) {
-        campMap.set(cleanCode, {
-          code: cleanCode,
-          name: `Campagna ${cleanCode}`,
-          createdAt: new Date().toISOString(),
-        });
       }
     });
     return Array.from(campMap.values());
@@ -149,6 +141,15 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
   const [campaignToLeave, setCampaignToLeave] = useState<CampaignMeta | null>(null);
   const [isLeavingCampaign, setIsLeavingCampaign] = useState(false);
 
+  // Legal / Privacy / Cookie Modal State
+  const [legalModalOpen, setLegalModalOpen] = useState(false);
+  const [legalModalTab, setLegalModalTab] = useState<LegalTab>('privacy');
+
+  const handleOpenLegal = (tab: LegalTab = 'privacy') => {
+    setLegalModalTab(tab);
+    setLegalModalOpen(true);
+  };
+
   const reloadCampaignList = async (forceShowLoading = false) => {
     if (!account) {
       setIsLoadingCampaigns(false);
@@ -165,21 +166,26 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
       if (isSupabaseConfigured()) {
         try {
           const remoteCamps = await SupabaseSyncService.fetchAllCampaigns();
-          if (remoteCamps && Array.isArray(remoteCamps) && remoteCamps.length > 0) {
-            const campMapLocal = new Map(allCamp.map((c) => [c.code.toUpperCase(), c]));
+          if (remoteCamps && Array.isArray(remoteCamps)) {
+            // When Supabase is connected, database campaigns are authoritative
+            const remoteMap = new Map<string, CampaignMeta>();
             remoteCamps.forEach((rc) => {
               if (rc && rc.code) {
                 const clean = rc.code.toUpperCase();
-                const existingLocal = campMapLocal.get(clean);
-                campMapLocal.set(clean, {
+                const existingLocal = allCamp.find((l) => l.code.toUpperCase() === clean);
+                remoteMap.set(clean, {
                   code: clean,
-                  name: rc.title || existingLocal?.name || `Campagna ${clean}`,
-                  createdAt: rc.created_at || existingLocal?.createdAt || new Date().toISOString(),
-                  dmId: rc.dm_id || existingLocal?.dmId,
+                  name: rc.name || rc.title || existingLocal?.name || clean,
+                  createdAt: rc.createdAt || rc.created_at || existingLocal?.createdAt || new Date().toISOString(),
+                  dmId: rc.dmId || rc.dm_id || existingLocal?.dmId,
+                  dmEmail: rc.dmEmail || existingLocal?.dmEmail,
+                  dmName: rc.dmName || existingLocal?.dmName,
+                  expelledAccountIds: rc.expelledAccountIds || existingLocal?.expelledAccountIds || [],
                 });
               }
             });
-            allCamp = Array.from(campMapLocal.values());
+            // Update local store: remove any obsolete campaigns that no longer exist in Supabase
+            allCamp = Array.from(remoteMap.values());
             CampaignManager.saveCampaignsLocalOnly(allCamp);
           }
         } catch (e) {
@@ -187,21 +193,55 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
         }
       }
 
+      const existingCodes = new Set(allCamp.map((c) => c.code.toUpperCase()));
       const expelledCodes = new Set(
         allCamp
           .filter((c) => c.expelledAccountIds?.includes(account.id))
           .map((c) => c.code.toUpperCase())
       );
 
-      const userEmail = (account.email || '').toLowerCase().trim();
-      const joined = (account.joinedCampaigns || []).filter((c) => !expelledCodes.has(c.toUpperCase()));
-      const dmList = (account.dmCampaigns || []).filter((c) => !expelledCodes.has(c.toUpperCase()));
-      const profileCodes = Object.keys(account.campaignProfiles || {}).filter((c) => !expelledCodes.has(c.toUpperCase()));
+      // Clean up orphaned campaign references from current user account
+      let accountModified = false;
+      const cleanedJoined = (account.joinedCampaigns || []).filter(
+        (c) => existingCodes.has(c.toUpperCase()) && !expelledCodes.has(c.toUpperCase())
+      );
+      if (cleanedJoined.length !== (account.joinedCampaigns || []).length) {
+        account.joinedCampaigns = cleanedJoined;
+        accountModified = true;
+      }
 
+      const cleanedDm = (account.dmCampaigns || []).filter(
+        (c) => existingCodes.has(c.toUpperCase()) && !expelledCodes.has(c.toUpperCase())
+      );
+      if (cleanedDm.length !== (account.dmCampaigns || []).length) {
+        account.dmCampaigns = cleanedDm;
+        accountModified = true;
+      }
+
+      if (account.campaignProfiles) {
+        const cleanedProfiles: Record<string, any> = {};
+        for (const [codeKey, prof] of Object.entries(account.campaignProfiles)) {
+          if (existingCodes.has(codeKey.toUpperCase()) && !expelledCodes.has(codeKey.toUpperCase())) {
+            cleanedProfiles[codeKey] = prof;
+          } else {
+            accountModified = true;
+          }
+        }
+        if (accountModified) {
+          account.campaignProfiles = cleanedProfiles;
+        }
+      }
+
+      if (accountModified) {
+        CampaignManager.saveAccount(account);
+        refreshAccount();
+      }
+
+      const userEmail = (account.email || '').toLowerCase().trim();
       const validCodesSet = new Set([
-        ...joined.map((c) => c.toUpperCase()),
-        ...dmList.map((c) => c.toUpperCase()),
-        ...profileCodes.map((c) => c.toUpperCase()),
+        ...(account.joinedCampaigns || []).map((c) => c.toUpperCase()),
+        ...(account.dmCampaigns || []).map((c) => c.toUpperCase()),
+        ...Object.keys(account.campaignProfiles || {}).map((c) => c.toUpperCase()),
       ]);
 
       const campMap = new Map<string, CampaignMeta>();
@@ -211,22 +251,14 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
           const cDmEmail = (c.dmEmail || '').toLowerCase().trim();
           const isUserDm = c.dmId === account.id || (cDmEmail && userEmail && cDmEmail === userEmail);
 
-          if (validCodesSet.has(clean) || isUserDm || account.isDm) {
+          // Only display campaigns the user is actually DM of or member of
+          if (validCodesSet.has(clean) || isUserDm) {
             campMap.set(clean, c);
           }
         }
       });
 
-      validCodesSet.forEach((cleanCode) => {
-        if (!expelledCodes.has(cleanCode) && !campMap.has(cleanCode)) {
-          campMap.set(cleanCode, {
-            code: cleanCode,
-            name: `Campagna ${cleanCode}`,
-            createdAt: new Date().toISOString(),
-          });
-        }
-      });
-
+      // Do NOT synthesize fake ghost campaigns for missing codes
       setMyCampaigns(Array.from(campMap.values()));
     } finally {
       setIsLoadingCampaigns(false);
@@ -271,12 +303,15 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
     if (!account) return false;
     const userEmail = (account.email || '').toLowerCase().trim();
     const campDmEmail = (camp.dmEmail || '').toLowerCase().trim();
-    return Boolean(
+    const isExplicitDm = Boolean(
       account.dmCampaigns?.some((code) => code.toUpperCase() === camp.code.toUpperCase()) ||
       camp.dmId === account.id ||
-      (campDmEmail && userEmail && campDmEmail === userEmail) ||
-      account.isDm
+      (campDmEmail && userEmail && campDmEmail === userEmail)
     );
+    if (isExplicitDm) return true;
+    // Fallback only if campaign has no designated DM at all and user has isDm
+    if (!camp.dmId && !campDmEmail && account.isDm) return true;
+    return false;
   };
 
   const getProfileForCampaign = (code: string): CampaignProfile | null => {
@@ -639,8 +674,23 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
             )}
           </div>
 
-          {/* User Account: ONLY EMAIL and Logout */}
-          <div className="flex items-center gap-4">
+          {/* User Account, Legal Note and Logout */}
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => handleOpenLegal('privacy')}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-mono transition-all hover:brightness-125 cursor-pointer shadow-sm"
+              style={{
+                backgroundColor: `${palette.accent}12`,
+                borderColor: `${palette.accent}40`,
+                color: palette.accent,
+              }}
+              title="Note Legali, Privacy & GDPR"
+            >
+              <Shield size={13} />
+              <span>Note Legali &amp; Privacy</span>
+            </button>
+
             <div
               className="px-3.5 py-1.5 rounded-lg border text-xs font-mono shadow-sm select-all"
               style={{
@@ -700,12 +750,28 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
           </div>
 
           {/* Action Buttons */}
-          <div className="flex items-center gap-3 shrink-0">
+          <div className="flex flex-wrap items-center gap-3 shrink-0">
+            <button
+              type="button"
+              onClick={() => handleOpenLegal('privacy')}
+              className="inline-flex items-center gap-2 px-4 py-3 text-xs tracking-[0.1em] uppercase rounded-xl transition-all shadow-md active:scale-95 cursor-pointer border hover:border-[#d4af37]"
+              style={{
+                fontFamily: "'Cinzel', Georgia, serif",
+                backgroundColor: palette.bgInput,
+                borderColor: palette.borderCard,
+                color: palette.textMain,
+              }}
+              title="Note Legali, Cookie Policy & Privacy GDPR"
+            >
+              <Shield size={15} style={{ color: palette.accent }} />
+              <span>Privacy &amp; GDPR</span>
+            </button>
+
             <button
               type="button"
               onClick={() => reloadCampaignList(true)}
               disabled={isLoadingCampaigns}
-              className="p-2.5 rounded-xl border transition-all cursor-pointer disabled:opacity-50"
+              className="p-3 rounded-xl border transition-all cursor-pointer disabled:opacity-50 hover:border-[#d4af37]"
               style={{
                 backgroundColor: palette.bgInput,
                 borderColor: palette.borderCard,
@@ -1524,7 +1590,7 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
           color: palette.textMuted,
         }}
       >
-        <div className="max-w-[1440px] mx-auto px-6 sm:px-12 flex flex-col sm:flex-row items-center justify-between gap-3">
+        <div className="max-w-[1440px] mx-auto px-6 sm:px-12 flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2">
             <span
               className="text-xs tracking-widest uppercase font-semibold transition-colors"
@@ -1538,11 +1604,48 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
             <span>&bull;</span>
             <span className="italic">Portale delle Campagne</span>
           </div>
+
+          <div className="flex flex-wrap items-center justify-center gap-3 font-mono text-[11px]">
+            <button
+              type="button"
+              onClick={() => handleOpenLegal('privacy')}
+              className="hover:text-[#f3ebd9] transition-colors cursor-pointer underline underline-offset-2"
+              style={{ color: palette.textSub }}
+            >
+              Privacy Policy
+            </button>
+            <span>&bull;</span>
+            <button
+              type="button"
+              onClick={() => handleOpenLegal('cookie')}
+              className="hover:text-[#f3ebd9] transition-colors cursor-pointer underline underline-offset-2"
+              style={{ color: palette.textSub }}
+            >
+              Cookie Policy
+            </button>
+            <span>&bull;</span>
+            <button
+              type="button"
+              onClick={() => handleOpenLegal('terms')}
+              className="hover:text-[#f3ebd9] transition-colors cursor-pointer underline underline-offset-2"
+              style={{ color: palette.textSub }}
+            >
+              Termini & GDPR
+            </button>
+          </div>
+
           <span className="text-[11px] italic" style={{ color: palette.textMuted }}>
             Tavolo di Ruolo Attivo &bull; D&D 5E
           </span>
         </div>
       </footer>
+
+      {/* Legal, Privacy & Cookie Modal */}
+      <LegalModal
+        isOpen={legalModalOpen}
+        onClose={() => setLegalModalOpen(false)}
+        defaultTab={legalModalTab}
+      />
     </div>
   );
 }

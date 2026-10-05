@@ -36,6 +36,8 @@ import { KeyModeSelector } from '../components/KeyModeSelector';
 import { isSupabaseConfigured } from '../lib/supabase';
 import { SupabaseSyncService } from '../lib/supabaseSyncService';
 import { SingleImageUploader } from '../components/SingleImageUploader';
+import { LegalModal, LegalTab } from '../components/legal/LegalModal';
+import { Cookie, FileText, CheckCircle } from 'lucide-react';
 
 export function Settings() {
   const navigate = useNavigate();
@@ -58,8 +60,17 @@ export function Settings() {
     CampaignManager.isCurrentUserDm()
   );
 
-  // Tab State: 'personale' | 'dm' | 'dati' | 'provider'
-  const [activeTab, setActiveTab] = useState<'personale' | 'dm' | 'dati' | 'provider'>('personale');
+  // Tab State: 'personale' | 'dm' | 'dati' | 'provider' | 'legale'
+  const [activeTab, setActiveTab] = useState<'personale' | 'dm' | 'dati' | 'provider' | 'legale'>('personale');
+
+  // Legal / Privacy / Cookie Modal State
+  const [legalModalOpen, setLegalModalOpen] = useState(false);
+  const [legalModalTab, setLegalModalTab] = useState<LegalTab>('privacy');
+
+  const handleOpenLegal = (tab: LegalTab = 'privacy') => {
+    setLegalModalTab(tab);
+    setLegalModalOpen(true);
+  };
 
   // Personal Character Profile Edit State
   const [charNameInput, setCharNameInput] = useState(() => player?.characterName || account?.characterName || '');
@@ -495,14 +506,26 @@ export function Settings() {
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={handleSwitchCampaign}
-          className="bg-primary text-surface-0 hover:bg-primary-hover font-semibold shadow-lg border border-primary-hover flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-xs sm:text-sm cursor-pointer transition-all hover:scale-102 active:scale-95 shrink-0"
-        >
-          <DoorOpen size={18} />
-          <span>Cambia Campagna</span>
-        </button>
+        <div className="flex items-center gap-3 shrink-0">
+          <button
+            type="button"
+            onClick={() => handleOpenLegal('privacy')}
+            className="bg-surface-2 hover:bg-surface-3 text-content-1 border border-surface-3 hover:border-primary/50 flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-xl text-xs font-semibold cursor-pointer transition-all active:scale-95 shrink-0"
+            title="Note Legali, Cookie Policy & Conformità GDPR"
+          >
+            <Shield size={16} className="text-primary" />
+            <span>Note Legali &amp; Privacy</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={handleSwitchCampaign}
+            className="bg-primary text-surface-0 hover:bg-primary-hover font-semibold shadow-lg border border-primary-hover flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-xs sm:text-sm cursor-pointer transition-all hover:scale-102 active:scale-95 shrink-0"
+          >
+            <DoorOpen size={18} />
+            <span>Cambia Campagna</span>
+          </button>
+        </div>
       </div>
 
       {/* Main Macro Navigation Tabs (No infinite scrolling) */}
@@ -558,6 +581,19 @@ export function Settings() {
           <Sparkles size={15} />
           <span>Provider AI &amp; Chiavi</span>
         </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('legale')}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer shrink-0 ${
+            activeTab === 'legale'
+              ? 'bg-primary text-surface-0 shadow-md font-bold'
+              : 'bg-surface-1/60 hover:bg-surface-2 text-content-2 hover:text-content-1 border border-surface-2'
+          }`}
+        >
+          <Shield size={15} />
+          <span>Privacy &amp; GDPR</span>
+        </button>
       </div>
 
       {/* =========================================================================
@@ -574,7 +610,7 @@ export function Settings() {
                   <span>Modifica Nome Personaggio &amp; Profilo</span>
                 </h2>
                 <p className="text-xs text-content-3 mt-0.5">
-                  Modifica il nome e l'aspetto del tuo personaggio per questa campagna. Il cambio si sincronizza su Supabase e con il party.
+                  Modifica il nome e l'aspetto del tuo personaggio per questa campagna. Il cambio si sincronizza in cloud e con il party.
                 </p>
               </div>
 
@@ -1339,6 +1375,110 @@ export function Settings() {
       )}
 
       {/* =========================================================================
+          TAB 5: PRIVACY, COOKIE & GDPR (NOTE LEGALI & TUTELA DATI)
+         ========================================================================= */}
+      {activeTab === 'legale' && (
+        <div className="space-y-6 animate-fade-in">
+          {/* Overview Banner */}
+          <div className="bg-surface-1 border border-surface-2 rounded-2xl p-6 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-surface-2 pb-4">
+              <div>
+                <h2 className="text-base font-semibold text-content-1 flex items-center gap-2">
+                  <Shield size={18} className="text-primary" />
+                  <span>Tutela della Privacy &amp; Conformità GDPR</span>
+                </h2>
+                <p className="text-xs text-content-2 mt-1">
+                  Chronicle è progettato nel pieno rispetto del Regolamento Generale sulla Protezione dei Dati (GDPR - UE 2016/679) e della Direttiva ePrivacy.
+                </p>
+              </div>
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 shrink-0">
+                <CheckCircle size={14} />
+                <span>GDPR Compliant</span>
+              </span>
+            </div>
+
+            {/* Quick Access Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
+              {/* Privacy Policy Card */}
+              <div className="bg-surface-2/60 border border-surface-2 hover:border-primary/50 transition-colors rounded-xl p-4 flex flex-col justify-between space-y-3">
+                <div className="space-y-2">
+                  <div className="w-9 h-9 rounded-lg bg-primary/10 border border-primary/30 flex items-center justify-center text-primary">
+                    <Shield size={18} />
+                  </div>
+                  <h3 className="text-sm font-semibold text-content-1">Informativa Privacy</h3>
+                  <p className="text-xs text-content-2 leading-relaxed">
+                    Come raccogliamo, proteggiamo e trattiamo unicamente l'email e i dati di gioco necessari al funzionamento delle campagne.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleOpenLegal('privacy')}
+                  className="w-full mt-2 py-2 px-3 rounded-lg bg-primary/15 hover:bg-primary text-primary hover:text-surface-0 border border-primary/40 text-xs font-semibold transition-all cursor-pointer flex items-center justify-center gap-2"
+                >
+                  <FileText size={14} />
+                  <span>Leggi Informativa Privacy</span>
+                </button>
+              </div>
+
+              {/* Cookie Policy Card */}
+              <div className="bg-surface-2/60 border border-surface-2 hover:border-primary/50 transition-colors rounded-xl p-4 flex flex-col justify-between space-y-3">
+                <div className="space-y-2">
+                  <div className="w-9 h-9 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
+                    <Cookie size={18} />
+                  </div>
+                  <h3 className="text-sm font-semibold text-content-1">Politica sui Cookie</h3>
+                  <p className="text-xs text-content-2 leading-relaxed">
+                    Utilizzo esclusivo di cookie tecnici essenziali e LocalStorage per sessione e preferenze visive. Zero cookie di tracciamento o profilazione.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleOpenLegal('cookie')}
+                  className="w-full mt-2 py-2 px-3 rounded-lg bg-amber-500/15 hover:bg-amber-500 text-amber-300 hover:text-surface-0 border border-amber-500/40 text-xs font-semibold transition-all cursor-pointer flex items-center justify-center gap-2"
+                >
+                  <Cookie size={14} />
+                  <span>Leggi Politica Cookie</span>
+                </button>
+              </div>
+
+              {/* Terms & GDPR Rights Card */}
+              <div className="bg-surface-2/60 border border-surface-2 hover:border-primary/50 transition-colors rounded-xl p-4 flex flex-col justify-between space-y-3">
+                <div className="space-y-2">
+                  <div className="w-9 h-9 rounded-lg bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-400">
+                    <FileText size={18} />
+                  </div>
+                  <h3 className="text-sm font-semibold text-content-1">Termini &amp; Diritti GDPR</h3>
+                  <p className="text-xs text-content-2 leading-relaxed">
+                    Esercizio dei tuoi diritti (accesso, rettifica, cancellazione dell'account o oblio) e conformità Open Game License / SRD 5.1.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleOpenLegal('terms')}
+                  className="w-full mt-2 py-2 px-3 rounded-lg bg-cyan-500/15 hover:bg-cyan-500 text-cyan-300 hover:text-surface-0 border border-cyan-500/40 text-xs font-semibold transition-all cursor-pointer flex items-center justify-center gap-2"
+                >
+                  <Shield size={14} />
+                  <span>Leggi Termini &amp; Diritti</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Summary Principles List */}
+            <div className="border-t border-surface-2 pt-4 mt-2 space-y-2">
+              <h4 className="text-xs font-semibold text-content-1 uppercase tracking-wider font-mono">
+                Sintesi dei tuoi diritti e trasparenza dati
+              </h4>
+              <ul className="text-xs text-content-2 space-y-1.5 list-disc list-inside">
+                <li><strong className="text-content-1 font-medium">Nessun dato venduto a terzi:</strong> Le informazioni delle campagne rimangono private e crittografate.</li>
+                <li><strong className="text-content-1 font-medium">Diritto all'Oblio:</strong> Puoi eliminare in qualunque momento il tuo account e tutti i dati correlati dalla scheda "Profilo &amp; Personaggio" o "Sincronizzazione &amp; Backup".</li>
+                <li><strong className="text-content-1 font-medium">Archiviazione Sicura:</strong> Le comunicazioni e il database utilizzano protocolli con crittografia in transito HTTPS/TLS e a riposo.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =========================================================================
           CONFIRMATION MODALS & DIALOGS
          ========================================================================= */}
 
@@ -1439,6 +1579,12 @@ export function Settings() {
           }
         }}
         isDm={isDm}
+      />
+      {/* Legal, Privacy, Cookie & GDPR Modal */}
+      <LegalModal
+        isOpen={legalModalOpen}
+        onClose={() => setLegalModalOpen(false)}
+        defaultTab={legalModalTab}
       />
     </div>
   );

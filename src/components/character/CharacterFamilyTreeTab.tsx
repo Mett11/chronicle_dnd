@@ -204,7 +204,7 @@ export function CharacterFamilyTreeTab({
           setSelectedRelationForDetail(relation);
         }
       } else {
-        setSaveError(res.error || 'Errore durante il salvataggio su Supabase.');
+        setSaveError(res.error || 'Errore durante il salvataggio in cloud.');
       }
     } catch (err: any) {
       setSaveError(err?.message || 'Errore di connessione cloud.');
@@ -275,7 +275,7 @@ export function CharacterFamilyTreeTab({
         setRelationToDelete(null);
         loadData();
       } else {
-        setSaveError(res.error || 'Errore durante la cancellazione su Supabase.');
+        setSaveError(res.error || 'Errore durante la cancellazione in cloud.');
       }
     } catch (err: any) {
       setSaveError(err?.message || 'Errore di connessione.');
@@ -1449,7 +1449,7 @@ export function CharacterFamilyTreeTab({
       <ConfirmModal
         isOpen={!!relationToDelete}
         title="Rimuovi Figura"
-        message={`Sei sicuro di voler rimuovere "${relationToDelete?.name}" dalle relazioni? L'operazione sincronizzerà la rimozione anche su Supabase.`}
+        message={`Sei sicuro di voler rimuovere "${relationToDelete?.name}" dalle relazioni? L'operazione sincronizzerà la rimozione anche in cloud.`}
         confirmLabel="Rimuovi"
         isDestructive={true}
         onConfirm={handleDeleteRelation}

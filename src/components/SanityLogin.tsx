@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from './AuthProvider';
+import { LegalModal, LegalTab } from './legal/LegalModal';
 import {
   Loader2,
   AlertCircle,
@@ -11,6 +12,7 @@ import {
   Brain,
   Zap,
   ShieldCheck,
+  Shield,
 } from 'lucide-react';
 
 interface ClassFolio {
@@ -297,6 +299,13 @@ export function SanityLogin() {
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
   const [selectedClassId, setSelectedClassId] = useState<string>('wizard');
   const [imageError, setImageError] = useState<boolean>(false);
+  const [legalModalOpen, setLegalModalOpen] = useState(false);
+  const [legalModalTab, setLegalModalTab] = useState<LegalTab>('privacy');
+
+  const openLegal = (tab: LegalTab = 'privacy') => {
+    setLegalModalTab(tab);
+    setLegalModalOpen(true);
+  };
 
   const selectedClass =
     ALL_CLASSES_FOLIO.find((c) => c.id === selectedClassId) || ALL_CLASSES_FOLIO[0];
@@ -530,9 +539,15 @@ export function SanityLogin() {
               <div className="mt-6 pt-5 border-t border-[#231d14] flex items-center justify-between text-[11px] text-[#786a55] italic">
                 <span className="flex items-center gap-1.5">
                   <ShieldCheck size={13} className="text-[#a38043]" />
-                  <span>Sincronizzazione Cloud Supabase</span>
+                  <span>Accesso protetto & sicuro</span>
                 </span>
-                <span>Nessuna password</span>
+                <button
+                  type="button"
+                  onClick={() => openLegal('privacy')}
+                  className="hover:text-[#d4af37] transition-colors cursor-pointer underline underline-offset-2 not-italic text-[#9c8973]"
+                >
+                  Privacy & Cookie (GDPR)
+                </button>
               </div>
             </div>
           </motion.div>
@@ -979,8 +994,8 @@ export function SanityLogin() {
 
       {/* ================= COLOPHON & FOOTER ================= */}
       <footer className="relative z-10 border-t border-[#201b13] bg-[#050406] py-10 text-xs text-[#6e604d]">
-        <div className="max-w-[1440px] mx-auto px-6 sm:px-12 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-2">
+        <div className="max-w-[1440px] mx-auto px-6 sm:px-12 flex flex-col md:flex-row items-center justify-between gap-4">
+          <div className="flex items-center gap-2 flex-wrap text-center md:text-left">
             <span
               className="text-[#d4af37] text-sm tracking-widest uppercase font-semibold"
               style={{ fontFamily: "'Cinzel Decorative', 'Cinzel', Georgia, serif" }}
@@ -990,8 +1005,40 @@ export function SanityLogin() {
             <span>&bull;</span>
             <span className="italic">Finito di imprimere per i tavoli di Dungeons & Dragons e dei Grandi Giochi di Ruolo.</span>
           </div>
+
+          <div className="flex items-center gap-4 text-[11px] text-[#8c7b68] flex-wrap justify-center">
+            <button
+              type="button"
+              onClick={() => openLegal('privacy')}
+              className="hover:text-[#d4af37] transition-colors cursor-pointer underline underline-offset-2"
+            >
+              Privacy Policy (GDPR)
+            </button>
+            <span>&bull;</span>
+            <button
+              type="button"
+              onClick={() => openLegal('cookie')}
+              className="hover:text-[#d4af37] transition-colors cursor-pointer underline underline-offset-2"
+            >
+              Cookie Policy
+            </button>
+            <span>&bull;</span>
+            <button
+              type="button"
+              onClick={() => openLegal('terms')}
+              className="hover:text-[#d4af37] transition-colors cursor-pointer underline underline-offset-2"
+            >
+              Termini & Diritti D&D
+            </button>
+          </div>
         </div>
       </footer>
+
+      <LegalModal
+        isOpen={legalModalOpen}
+        onClose={() => setLegalModalOpen(false)}
+        defaultTab={legalModalTab}
+      />
     </div>
   );
 }

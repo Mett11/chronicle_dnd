@@ -1342,8 +1342,37 @@ export class SupabaseSyncService {
       }
       if (!data) return null;
 
-      // Also get memberships from campaign_members
+      // Also get memberships from campaign_members (verified against real campaigns)
       const { dmCampaigns, joinedCampaigns } = await this.getUserCampaigns(userId);
+
+      // Verify campaign_profiles against active campaigns
+      const { data: realCampaigns } = await supabase.from('campaigns').select('code');
+      const realCodes = new Set((realCampaigns || []).map((rc: any) => (rc.code || '').trim().toUpperCase()));
+
+      const rawProfiles = data.campaign_profiles || {};
+      const cleanProfiles: Record<string, any> = {};
+      let profilesNeedClean = false;
+      for (const [key, val] of Object.entries(rawProfiles)) {
+        if (realCodes.has(key.toUpperCase())) {
+          cleanProfiles[key] = val;
+        } else {
+          profilesNeedClean = true;
+        }
+      }
+
+      if (profilesNeedClean) {
+        (async () => {
+          try {
+            await supabase
+              .from('user_accounts')
+              .update({
+                campaign_profiles: cleanProfiles,
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', userId);
+          } catch {}
+        })();
+      }
 
       return {
         id: data.id,
@@ -1354,7 +1383,7 @@ export class SupabaseSyncService {
         joinedCampaigns,
         color: data.color || '#6366f1',
         avatarUrl: data.avatar_url || '',
-        campaignProfiles: data.campaign_profiles || {},
+        campaignProfiles: cleanProfiles,
         preferences: data.preferences || {},
         createdAt: data.created_at || new Date().toISOString(),
       };
@@ -1365,7 +1394,8 @@ export class SupabaseSyncService {
   }
 
   /**
-   * Fetches campaigns associated with a user from campaign_members table
+   * Fetches campaigns associated with a user from campaign_members table,
+   * verifying against the active campaigns table and pruning orphaned records.
    */
   static async getUserCampaigns(userId: string): Promise<{ dmCampaigns: string[]; joinedCampaigns: string[] }> {
     if (!isSupabaseConfigured() || !userId) return { dmCampaigns: [], joinedCampaigns: [] };
@@ -1380,15 +1410,42 @@ export class SupabaseSyncService {
         return { dmCampaigns: [], joinedCampaigns: [] };
       }
 
+      // Check against real active campaigns so orphaned campaign_members are never loaded or presented
+      const { data: realCampaigns } = await supabase
+        .from('campaigns')
+        .select('code');
+      const realCodes = new Set((realCampaigns || []).map((rc: any) => (rc.code || '').trim().toUpperCase()));
+
       const dmCampaigns: string[] = [];
       const joinedCampaigns: string[] = [];
+      const orphanCodes: string[] = [];
+
       for (const row of data) {
+        const code = (row.campaign_code || '').trim().toUpperCase();
+        if (!code) continue;
+        if (!realCodes.has(code)) {
+          orphanCodes.push(row.campaign_code);
+          continue;
+        }
         if (row.role === 'dm') {
-          dmCampaigns.push(row.campaign_code);
+          if (!dmCampaigns.includes(code)) dmCampaigns.push(code);
         } else {
-          joinedCampaigns.push(row.campaign_code);
+          if (!joinedCampaigns.includes(code)) joinedCampaigns.push(code);
         }
       }
+
+      // Auto-cleanup orphan memberships from campaign_members in the background
+      if (orphanCodes.length > 0) {
+        (async () => {
+          try {
+            await supabase
+              .from('campaign_members')
+              .delete()
+              .in('campaign_code', orphanCodes);
+          } catch {}
+        })();
+      }
+
       return { dmCampaigns, joinedCampaigns };
     } catch {
       return { dmCampaigns: [], joinedCampaigns: [] };

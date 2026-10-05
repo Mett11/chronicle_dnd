@@ -444,7 +444,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return { success: true };
     } catch (err: any) {
       console.error('Supabase Google Sign-in error:', err);
-      const msg = err?.message || "Errore durante l'accesso con Google tramite Supabase.";
+      const msg = err?.message || "Errore durante l'accesso con Google. Riprova più tardi.";
       setError(msg);
       return { success: false, error: msg };
     }
