@@ -884,6 +884,7 @@ Rispondi ESCLUSIVAMENTE in formato JSON valido conforme al seguente schema:
         provider = 'gemini',
         model,
         orphanTags = [],
+        includeDmAsPlayer = false,
       } = req.body;
 
       if (!session || (!session.title && !session.recapText)) {
@@ -950,7 +951,8 @@ Rispondi ESCLUSIVAMENTE in formato JSON valido conforme al seguente schema:
                 .join(' | ')
             : 'fiducia di base 5/10 con tutti i compagni';
 
-          return `- [ID: ${p._id}] ${p.characterName || 'Personaggio'}${p.isDm ? ' (DM)' : ''}${
+          const isPlayingDm = includeDmAsPlayer && p.isDm;
+          return `- [ID: ${p._id}] ${p.characterName || 'Personaggio'}${isPlayingDm ? ' (MEMBRO PG GIOCANTE DEL PARTY - GIOCATO DAL DM)' : (p.isDm ? ' (DM / Narratore)' : '')}${
             p.isRegistered === false ? ' (Membro Party / Compagno Non Registrato)' : ''
           }
   Stato PG: "${bio?.currentStatus || 'In viaggio col gruppo'}"
@@ -986,7 +988,7 @@ DATA DI LORE DI RIFERIMENTO DELLA SESSIONE: "${session.loreDate || 'Data Attuale
 
 ELENCO DEI MEMBRI DEL PARTY & PERSONAGGI (AVVENTURIERI DELLA CAMPAGNA):
 ${playersCatalog}
-
+${includeDmAsPlayer ? '\n⭐ ATTENZIONE: Il personaggio del Dungeon Master è ATTIVO COME PG GIOCANTE nel gruppo. DEVI OBBLIGATORIAMENTE includere le sue memorie, le sue credenze e i suoi aggiornamenti di relazione con TUTTI gli altri compagni all\'interno di playerProposals!\n' : ''}
 ${orphanTags && orphanTags.length > 0 ? `ELENCO DEI PERSONAGGI/SOGGETTI NON ANCORA REGISTRATI (MANCANTI/ORFANI):
 ${orphanCatalog}
 ` : ''}
@@ -1000,12 +1002,12 @@ REGOLE FONDAMENTALI DI ANALISI:
 1. ANCORAGGIO ALLA DATA DI LORE:
    - Tutte le voci di memoria (timelineMemories) e credenze (evolvingBeliefs) DEVONO fare riferimento alla Data di Lore della sessione ("${session.loreDate || 'Data della sessione'}").
 2. MEMORIA, CREDENZE E RAPPORTI DEL PARTY (playerProposals):
-   - Per ciascun membro del gruppo (PG):
+   - Per ciascun membro del gruppo (PG)${includeDmAsPlayer ? ' (INCLUSO IL PG DEL DUNGEON MASTER)' : ''}:
      * timelineMemories: 1-2 ricordi significativi (svolte, traumi, scoperte, imprese, patti o segreti personali).
      * evolvingBeliefs: se il PG aveva una teoria o credenza su un PNG/luogo/oggetto e in questa sessione è stata confermata o smentita ('proven_fact', 'shattered_belief', 'active_theory', 'suspicion').
      * interPartyRelationUpdates: MANDATORIO! Devi valutare e aggiornare il rapporto e il livello di FIDUCIA (scala 1-10, atteggiamento, legame) nei confronti di TUTTI GLI ALTRI PG DEL PARTY (coppie PG A -> PG B, PG B -> PG A, ecc.).
        REGOLE MANDATORIE PER I RAPPORTI TRA COMPAGNI (PG ↔ PG):
-       - NON LIMITARTI A UN SOLO PERSONAGGIO O AL DM! Genera un aggiornamento di relazione per OGNI coppia di PG presente nel party.
+       - Genera un aggiornamento di relazione per OGNI coppia di PG presente nel party${includeDmAsPlayer ? ' (inclusi i legami tra gli altri PG e il PG del Master)' : ''}.
        - Ogni avventura, combattimento spalla a spalla, conversazione, strategia o scelta vissuta insieme fa EVOLVERE o RICONFERMARE il livello di fiducia (1-10) tra i compagni (es. collaborazione in combattimento +1 fiducia, disaccordo -1 fiducia, stima reciproca +1 fiducia).
        - Compila 'newTrust' (1-10), 'newAttitude', 'newRelationType', e spiega sempre la motivazione narratica in 'reason' e 'notes' basata sugli eventi di questa sessione.
      * suggestedCurrentStatus: stato o riflessione attuale del PG dopo questa sessione.

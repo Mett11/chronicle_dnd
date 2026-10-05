@@ -28,7 +28,7 @@ async function analyzeDirectInBrowser(
   payload: any,
   keys: ReturnType<typeof ApiKeyManager.getKeys>
 ): Promise<any> {
-  const { session, entities, players, orphanTags, provider, model } = payload;
+  const { session, entities, players, orphanTags, provider, model, includeDmAsPlayer } = payload;
 
   const entitiesCatalog = (entities as any[])
     .map((e: any) => {
@@ -90,7 +90,8 @@ async function analyzeDirectInBrowser(
             .join(' | ')
         : 'fiducia di base 5/10 con tutti i compagni';
 
-      return `- [ID: ${p._id}] ${p.characterName || 'Personaggio'}${p.isDm ? ' (DM)' : ''}${
+      const isPlayingDm = includeDmAsPlayer && p.isDm;
+      return `- [ID: ${p._id}] ${p.characterName || 'Personaggio'}${isPlayingDm ? ' (MEMBRO PG GIOCANTE DEL PARTY - GIOCATO DAL DM)' : (p.isDm ? ' (DM / Narratore)' : '')}${
         p.isRegistered === false ? ' (Membro Party / Compagno Non Registrato)' : ''
       }
   Stato Attuale PG: "${bio?.currentStatus || 'In viaggio col gruppo'}"
@@ -136,7 +137,7 @@ DATA DI LORE DI RIFERIMENTO DELLA SESSIONE: "${session.loreDate || 'Data Attuale
 
 ELENCO DEI MEMBRI DEL PARTY & AVVENTURIERI (PG):
 ${playersCatalog}
-
+${includeDmAsPlayer ? '\n⭐ ATTENZIONE: Il personaggio del Dungeon Master è ATTIVO COME PG GIOCANTE nel gruppo. DEVI OBBLIGATORIAMENTE includere le sue memorie, le sue credenze e i suoi aggiornamenti di relazione con TUTTI gli altri compagni all\'interno di playerProposals!\n' : ''}
 ${
   orphanTags && orphanTags.length > 0
     ? `ELENCO DEI PERSONAGGI/SOGGETTI NON ANCORA REGISTRATI (MANCANTI/ORFANI):
@@ -154,12 +155,12 @@ REGOLE FONDAMENTALI DI ANALISI:
 1. ANCORAGGIO ALLA DATA DI LORE:
    - Tutte le voci di memoria (timelineMemories) e rivelazioni di credenze (evolvingBeliefs) DEVONO fare riferimento alla Data di Lore della sessione ("${session.loreDate || 'Data della sessione'}").
 2. MEMORIA, CREDENZE E RAPPORTI DEL PARTY (playerProposals):
-   - Per ciascun membro del gruppo (PG):
+   - Per ciascun membro del gruppo (PG)${includeDmAsPlayer ? ' (INCLUSO IL PG DEL DUNGEON MASTER)' : ''}:
      * timelineMemories: 1-2 ricordi significativi (svolte, traumi, scoperte, imprese, patti o segreti personali).
      * evolvingBeliefs: se il PG aveva una teoria o credenza su un PNG/luogo/oggetto e in questa sessione è stata confermata o smentita ('proven_fact', 'shattered_belief', 'active_theory', 'suspicion').
      * interPartyRelationUpdates: MANDATORIO! Devi valutare e aggiornare il rapporto e il livello di FIDUCIA (scala 1-10, atteggiamento, legame) nei confronti di TUTTI GLI ALTRI PG DEL PARTY (coppie PG A -> PG B, PG B -> PG A, ecc.).
        REGOLE MANDATORIE PER I RAPPORTI TRA COMPAGNI (PG ↔ PG):
-       - NON LIMITARTI A UN SOLO PERSONAGGIO O AL DM! Genera un aggiornamento di relazione per OGNI coppia di PG presente nel party.
+       - Genera un aggiornamento di relazione per OGNI coppia di PG presente nel party${includeDmAsPlayer ? ' (inclusi i legami tra gli altri PG e il PG del Master)' : ''}.
        - Ogni avventura, combattimento spalla a spalla, conversazione, strategia o scelta vissuta insieme fa EVOLVERE o RICONFERMARE il livello di fiducia (1-10) tra i compagni (es. collaborazione in combattimento +1 fiducia, disaccordo -1 fiducia, stima reciproca +1 fiducia).
        - Compila 'newTrust' (1-10), 'newAttitude', 'newRelationType', e spiega sempre la motivazione narratica in 'reason' e 'notes' basata sugli eventi di questa sessione.
      * suggestedCurrentStatus: stato o riflessione attuale del PG dopo questa sessione.
@@ -668,6 +669,7 @@ export class SessionMemorySyncService {
       orphanTags: options.orphanTags || [],
       provider,
       model,
+      includeDmAsPlayer: shouldIncludeDmAsPlayer,
     };
 
     let rawResult: any = null;
@@ -703,10 +705,60 @@ export class SessionMemorySyncService {
       throw new Error("Nessuna risposta valida dall'analisi AI della memoria di sessione.");
     }
 
+    // Extract raw lists
+    let rawPlayersList: any[] = Array.isArray(rawResult.playerProposals)
+      ? rawResult.playerProposals
+      : Array.isArray(rawResult.players)
+      ? rawResult.players
+      : [];
+
+    const rawDetectedList: any[] = Array.isArray(rawResult.detectedEntities)
+      ? rawResult.detectedEntities
+      : Array.isArray(rawResult.entities)
+      ? rawResult.entities
+      : [];
+
+    // Check if any party member (e.g. DM's PG) was placed in detectedEntities
+    const partyNamesMap = new Map<string, typeof combinedPartyList[0]>();
+    combinedPartyList.forEach((p) => {
+      const pName = (p.characterName || '').toLowerCase().trim();
+      if (pName) partyNamesMap.set(pName, p);
+    });
+
+    rawDetectedList.forEach((entProp: any) => {
+      const entName = (entProp.entityName || entProp.name || '').toLowerCase().trim();
+      if (entName && partyNamesMap.has(entName)) {
+        const matchedPartyMember = partyNamesMap.get(entName)!;
+        const alreadyInPlayers = rawPlayersList.some((pp: any) => {
+          const ppName = (pp.characterName || '').toLowerCase().trim();
+          return ppName === entName || pp.playerId === matchedPartyMember._id;
+        });
+
+        if (!alreadyInPlayers) {
+          rawPlayersList.push({
+            playerId: matchedPartyMember._id,
+            characterName: matchedPartyMember.characterName,
+            involvementType: entProp.involvementType || 'direct_participant',
+            reason: entProp.reason || 'Membro del party attivo nella sessione',
+            suggestedCurrentStatus: entProp.suggestedCurrentStatus || '',
+            timelineMemories: entProp.timelineMemories || [],
+            evolvingBeliefs: entProp.evolvingBeliefs || [],
+            interPartyRelationUpdates: (entProp.partyRelationUpdates || []).map((pru: any) => ({
+              targetCharacterName: pru.characterName,
+              newAttitude: pru.newAttitude,
+              newRelationType: pru.newRelationType,
+              newTrust: pru.newTrust || 6,
+              notes: pru.newNotes || pru.notes,
+              milestoneEvent: pru.milestoneEvent,
+              reason: pru.reason,
+            })),
+          });
+        }
+      }
+    });
+
     // Process player proposals (strictly filtering out any excluded players)
-    const playerProposals: PlayerMemoryProposal[] = (
-      Array.isArray(rawResult.playerProposals) ? rawResult.playerProposals : []
-    )
+    const playerProposals: PlayerMemoryProposal[] = rawPlayersList
       .filter((pp: any) => {
         const charName = (pp.characterName || '').trim().toLowerCase();
         const pId = pp.playerId;
@@ -784,10 +836,16 @@ export class SessionMemorySyncService {
       };
     });
 
-    // Process entity proposals
+    // Process entity proposals (filtering out any that are actually party player characters)
     const detectedEntities: EntityMemoryProposal[] = (
       Array.isArray(rawResult.detectedEntities) ? rawResult.detectedEntities : []
-    ).map((ent: any, idx: number) => {
+    )
+      .filter((ent: any) => {
+        const eName = (ent.entityName || ent.name || '').toLowerCase().trim();
+        if (eName && partyNamesMap.has(eName)) return false;
+        return true;
+      })
+      .map((ent: any, idx: number) => {
       const entityId = ent.entityId || `entity_${idx}`;
       const matchedEntity = candidateEntities.find((e) => e._id === entityId);
 
