@@ -121,6 +121,7 @@ export interface CampaignMeta {
   dmId?: string;
   dmName?: string;
   dmEmail?: string;
+  dmIsPlayer?: boolean;
   expelledAccountIds?: string[];
   titleFont?: CampaignTitleFont;
   titleEffect?: CampaignTitleEffect;

@@ -563,8 +563,10 @@ export class SessionMemorySyncService {
 
     const shouldIncludeDmAsPlayer =
       options.includeDmAsPlayer ??
-      (typeof window !== 'undefined' &&
-        localStorage.getItem('chronicle_include_dm_as_player') === 'true');
+      (CampaignManager.isDmPlayerCampaign() ||
+        (typeof window !== 'undefined' &&
+          (localStorage.getItem('chronicle_include_dm_as_player') === 'true' ||
+            localStorage.getItem('chronicle_reading_include_dm') === 'true')));
 
     // Gather party members with their CharacterBio context
     const knownPartyMap = new Map<

@@ -217,6 +217,29 @@ export function Sessions() {
   const [managingTagsPlayer, setManagingTagsPlayer] = useState<Player | null>(null);
 
   const activeCampaignCode = CampaignManager.getActiveCampaignCode() || '';
+  const isDmPlayer = CampaignManager.isDmPlayerCampaign();
+
+  const handleToggleSessionParticipant = (targetPlayerId: string) => {
+    if (!selectedSession || !player?.isDm) return;
+    const currentExcluded = new Set(selectedSession.excludedPlayerIds || []);
+    if (currentExcluded.has(targetPlayerId)) {
+      currentExcluded.delete(targetPlayerId);
+    } else {
+      currentExcluded.add(targetPlayerId);
+    }
+    const nextExcluded = Array.from(currentExcluded);
+    const partyPlayers = allPlayers.filter((p) => !p.isDm || isDmPlayer);
+    const nextAttendees = partyPlayers.filter((p) => !currentExcluded.has(p._id));
+
+    const updated = CampaignManager.updateSession(selectedSession._id, {
+      excludedPlayerIds: nextExcluded,
+      attendees: nextAttendees,
+    });
+    if (updated) {
+      setSelectedSession({ ...updated });
+      refreshSessions();
+    }
+  };
 
   const handlePlayerStatusChange = (targetPlayerId: string, newStatus: PlayerPartyStatus) => {
     const code = activeCampaignCode || CampaignManager.getActiveCampaignCode() || '';
@@ -929,7 +952,7 @@ export function Sessions() {
                                   {player && sess.excludedPlayerIds.includes(player._id) ? (
                                     <span>Assente</span>
                                   ) : (
-                                    <span>{allPlayers.filter((p) => !p.isDm && !(sess.excludedPlayerIds || []).includes(p._id)).length} PG</span>
+                                    <span>{allPlayers.filter((p) => (!p.isDm || isDmPlayer) && !(sess.excludedPlayerIds || []).includes(p._id)).length} PG</span>
                                   )}
                                 </span>
                               )}
@@ -1416,14 +1439,15 @@ export function Sessions() {
                   {/* SECTION 5: Partecipanti alla Seduta */}
                   {allPlayers && allPlayers.length > 0 && (() => {
                     const excludedSet = new Set(selectedSession.excludedPlayerIds || []);
-                    const activeTotalCount = allPlayers.filter((p) => !excludedSet.has(p._id)).length;
+                    const partyPool = allPlayers.filter((p) => !p.isDm || isDmPlayer);
+                    const activeTotalCount = partyPool.filter((p) => !excludedSet.has(p._id)).length;
 
                     return (
                       <section id="session-participants-section" className="space-y-3 pt-4 border-t border-surface-2 scroll-mt-6">
                         <div className="flex items-center justify-between gap-2 flex-wrap">
                           <h3 className="font-serif font-bold text-sm sm:text-base text-content-1 flex items-center gap-2">
                             <Users size={15} className="text-primary" />
-                            <span>Partecipanti alla Seduta ({activeTotalCount}/{allPlayers.length} Attivi)</span>
+                            <span>Partecipanti alla Seduta ({activeTotalCount}/{partyPool.length} Attivi)</span>
                           </h3>
 
                           {player?.isDm && (
@@ -1443,7 +1467,7 @@ export function Sessions() {
                         </div>
 
                         <div className="divide-y divide-surface-2 border border-surface-2 rounded-xl bg-surface-1 overflow-hidden">
-                          {allPlayers.map((p) => {
+                          {partyPool.map((p) => {
                             const isExcluded = excludedSet.has(p._id);
 
                             return (
@@ -1471,20 +1495,54 @@ export function Sessions() {
                                       <h5 className={`font-serif font-semibold text-xs text-content-1 truncate ${isExcluded ? 'line-through text-content-3' : ''}`}>
                                         {p.characterName}
                                       </h5>
-                                      {isExcluded && (
+                                      {isExcluded ? (
                                         <span className="px-1.5 py-0.2 rounded bg-rose-500/10 text-rose-300 border border-rose-500/25 text-[10px] font-mono flex items-center gap-1">
                                           <span>🚫</span>
-                                          <span className="hidden sm:inline">Escluso</span>
+                                          <span className="hidden sm:inline">Non Presente (Escluso)</span>
+                                        </span>
+                                      ) : (
+                                        <span className="px-1.5 py-0.2 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/25 text-[10px] font-mono flex items-center gap-1">
+                                          <span>✅</span>
+                                          <span className="hidden sm:inline">Presente</span>
                                         </span>
                                       )}
                                     </div>
                                     <p className="text-[10px] text-content-3 font-mono uppercase truncate">
-                                      {p.isDm ? 'Dungeon Master' : 'Personaggio Giocante'}
+                                      {p.isDm ? 'Dungeon Master / PG' : 'Personaggio Giocante'}
                                     </p>
                                   </div>
                                 </div>
 
                                 <div className="flex items-center gap-2 shrink-0">
+                                  {player?.isDm && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleToggleSessionParticipant(p._id)}
+                                      className={`px-2 py-1 rounded text-xs font-mono flex items-center gap-1 transition-colors cursor-pointer border ${
+                                        isExcluded
+                                          ? 'bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border-emerald-500/30'
+                                          : 'bg-surface-2 hover:bg-rose-500/15 text-content-3 hover:text-rose-300 border-surface-3 hover:border-rose-500/30'
+                                      }`}
+                                      title={
+                                        isExcluded
+                                          ? `Segna ${p.characterName} come presente in questa sessione`
+                                          : `Escludi ${p.characterName} dalla partecipazione a questa sessione`
+                                      }
+                                    >
+                                      {isExcluded ? (
+                                        <>
+                                          <UserCheck size={12} />
+                                          <span className="hidden sm:inline">Includi</span>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <UserMinus size={12} />
+                                          <span className="hidden sm:inline">Escludi</span>
+                                        </>
+                                      )}
+                                    </button>
+                                  )}
+
                                   {p.isDm && (
                                     <span className="text-[10px] font-mono text-primary font-semibold hidden sm:inline">[DM]</span>
                                   )}

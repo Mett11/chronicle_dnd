@@ -141,9 +141,11 @@ export function SessionModal({
   
   // Campaign Maps & Entities
   const worldMaps = useMemo(() => CampaignManager.getMaps(), [isOpen]);
+  const isDmPlayer = CampaignManager.isDmPlayerCampaign();
   const campaignPartyPlayers = useMemo(() => {
-    return CampaignManager.getStoredPlayers().filter((p) => !p.isDm);
-  }, [isOpen]);
+    const all = CampaignManager.getStoredPlayers();
+    return all.filter((p) => !p.isDm || isDmPlayer);
+  }, [isOpen, isDmPlayer]);
   const allEntities = useMemo(() => {
     return CampaignManager.getEntities().filter((e) => {
       if (e.type === 'quest' && e.questScope === 'personal' && e.assigneePlayerId !== player?._id && !player?.isDm) {
@@ -317,11 +319,11 @@ export function SessionModal({
 
       // Initialize excludedPlayerIds
       let initialExcluded = initialSession.excludedPlayerIds;
-      if (!initialExcluded && initialSession.attendees && initialSession.attendees.length > 0) {
+      if (!Array.isArray(initialExcluded) && Array.isArray(initialSession.attendees) && initialSession.attendees.length > 0) {
         const attendeeIds = new Set(initialSession.attendees.map((a) => a._id));
         initialExcluded = campaignPartyPlayers.filter((p) => !attendeeIds.has(p._id)).map((p) => p._id);
       }
-      setExcludedPlayerIds(initialExcluded || []);
+      setExcludedPlayerIds(Array.isArray(initialExcluded) ? [...initialExcluded] : []);
     } else {
       const nextNum =
         existingSessions.length > 0 ? Math.max(...existingSessions.map((s) => s.number)) + 1 : 1;
@@ -737,7 +739,7 @@ export function SessionModal({
                                 isExcluded ? prev.filter((id) => id !== p._id) : [...prev, p._id]
                               );
                             }}
-                            className={`flex items-center justify-between p-2.5 rounded-xl border transition-all cursor-pointer ${
+                            className={`flex items-center justify-between p-2.5 rounded-xl border transition-all cursor-pointer select-none ${
                               isExcluded
                                 ? 'bg-surface-1/40 border-surface-3/50 text-content-3/70 opacity-65'
                                 : 'bg-surface-1 border-primary/40 text-content-1 shadow-xs'
@@ -755,9 +757,16 @@ export function SessionModal({
                                 )}
                               </div>
                               <div className="min-w-0">
-                                <span className={`font-semibold text-xs truncate block ${isExcluded ? 'line-through text-content-3' : 'text-content-1'}`}>
-                                  {p.characterName}
-                                </span>
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className={`font-semibold text-xs truncate block ${isExcluded ? 'line-through text-content-3' : 'text-content-1'}`}>
+                                    {p.characterName}
+                                  </span>
+                                  {p.isDm && (
+                                    <span className="text-[10px] font-mono px-1 py-0.2 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                                      [DM]
+                                    </span>
+                                  )}
+                                </div>
                                 <span className="text-[10px] font-mono text-content-3">
                                   {isExcluded ? '🚫 Non presente (Escluso)' : '✅ Presente / Partecipe'}
                                 </span>
@@ -766,8 +775,16 @@ export function SessionModal({
                             <input
                               type="checkbox"
                               checked={!isExcluded}
-                              onChange={() => {}}
-                              className="accent-primary rounded cursor-pointer"
+                              onChange={(e) => {
+                                const shouldBeExcluded = !e.target.checked;
+                                setExcludedPlayerIds((prev) =>
+                                  shouldBeExcluded
+                                    ? [...prev.filter((id) => id !== p._id), p._id]
+                                    : prev.filter((id) => id !== p._id)
+                                );
+                              }}
+                              onClick={(e) => e.stopPropagation()}
+                              className="accent-primary rounded cursor-pointer w-4 h-4"
                             />
                           </div>
                         );

@@ -784,6 +784,39 @@ export class CampaignManager {
     return Boolean(account.isDm);
   }
 
+  static isDmPlayerCampaign(campaignCode?: string): boolean {
+    const code = (campaignCode || this.getActiveCampaignCode() || '').trim().toUpperCase();
+    if (!code) return false;
+    const campaign = this.getCampaigns().find((c) => c.code.toUpperCase() === code);
+    if (campaign && campaign.dmIsPlayer !== undefined) {
+      return Boolean(campaign.dmIsPlayer);
+    }
+    if (typeof window !== 'undefined') {
+      const campVal = localStorage.getItem(`chronicle_${code}_dm_is_player`);
+      if (campVal !== null) return campVal === 'true';
+      return localStorage.getItem('chronicle_reading_include_dm') === 'true' ||
+        localStorage.getItem('chronicle_include_dm_as_player') === 'true';
+    }
+    return false;
+  }
+
+  static setDmPlayerCampaign(isPlayer: boolean, campaignCode?: string): void {
+    const code = (campaignCode || this.getActiveCampaignCode() || '').trim().toUpperCase();
+    if (!code) return;
+    this.updateCampaignMeta(code, { dmIsPlayer: isPlayer });
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(`chronicle_${code}_dm_is_player`, String(isPlayer));
+      localStorage.setItem('chronicle_reading_include_dm', String(isPlayer));
+      localStorage.setItem('chronicle_include_dm_as_player', String(isPlayer));
+      window.dispatchEvent(
+        new CustomEvent('chronicle_campaign_updated', {
+          detail: { code, dmIsPlayer: isPlayer },
+        })
+      );
+      window.dispatchEvent(new CustomEvent('chronicle_data_updated'));
+    }
+  }
+
   static getCampaignAiConfig(campaignCode?: string): {
     provider: 'gemini' | 'openrouter';
     modelId: string;

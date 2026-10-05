@@ -112,6 +112,7 @@ export function SessionMemorySyncModal({
 
   const [includeDmAsPlayer, setIncludeDmAsPlayer] = useState(() => {
     try {
+      if (CampaignManager.isDmPlayerCampaign()) return true;
       return localStorage.getItem('chronicle_include_dm_as_player') === 'true';
     } catch {
       return false;
@@ -124,6 +125,14 @@ export function SessionMemorySyncModal({
       localStorage.setItem('chronicle_include_dm_as_player', String(val));
     } catch {}
   };
+
+  useEffect(() => {
+    if (isOpen) {
+      if (CampaignManager.isDmPlayerCampaign()) {
+        setIncludeDmAsPlayer(true);
+      }
+    }
+  }, [isOpen]);
 
   useEffect(() => {
     const handleSyncSetting = (e: any) => {

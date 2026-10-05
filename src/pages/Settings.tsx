@@ -252,6 +252,28 @@ export function Settings() {
   const [campaignAiConfig, setCampaignAiConfig] = useState(() => CampaignManager.getCampaignAiConfig());
   const allowedPartyModels = campaignAiConfig.allowedPartyModels || [];
 
+  const [dmIsPlayer, setDmIsPlayer] = useState(() => CampaignManager.isDmPlayerCampaign());
+
+  useEffect(() => {
+    const handleCampaignUpdate = () => {
+      setDmIsPlayer(CampaignManager.isDmPlayerCampaign());
+    };
+    window.addEventListener('chronicle_campaign_updated', handleCampaignUpdate);
+    window.addEventListener('chronicle_campaigns_updated', handleCampaignUpdate);
+    window.addEventListener('chronicle_data_updated', handleCampaignUpdate);
+    return () => {
+      window.removeEventListener('chronicle_campaign_updated', handleCampaignUpdate);
+      window.removeEventListener('chronicle_campaigns_updated', handleCampaignUpdate);
+      window.removeEventListener('chronicle_data_updated', handleCampaignUpdate);
+    };
+  }, []);
+
+  const handleToggleDmIsPlayer = (nextValue: boolean) => {
+    setDmIsPlayer(nextValue);
+    CampaignManager.setDmPlayerCampaign(nextValue);
+    refreshAccount();
+  };
+
   useEffect(() => {
     const handleAiConfigUpdated = () => {
       setCampaignAiConfig(CampaignManager.getCampaignAiConfig());
@@ -801,6 +823,49 @@ export function Settings() {
                         <RefreshCw size={13} />
                         <span>Rigenera Codice</span>
                       </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* DM as Player Setting for whole campaign */}
+                <div className="pt-4 border-t border-surface-2">
+                  <div
+                    onClick={() => handleToggleDmIsPlayer(!dmIsPlayer)}
+                    className={`p-4 rounded-xl border transition-all cursor-pointer flex items-center justify-between gap-4 ${
+                      dmIsPlayer
+                        ? 'bg-primary/10 border-primary/40 shadow-xs'
+                        : 'bg-surface-2/40 border-surface-3 hover:border-surface-3/80'
+                    }`}
+                  >
+                    <div className="space-y-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-xs font-semibold text-content-1 flex items-center gap-1.5">
+                          <Crown size={14} className={dmIsPlayer ? 'text-amber-400' : 'text-content-3'} />
+                          <span>Il Dungeon Master partecipa anche come PG Giocante nella Campagna</span>
+                        </span>
+                        {dmIsPlayer ? (
+                          <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[10px] font-mono font-semibold">
+                            ATTIVO PER TUTTA LA CAMPAGNA
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded bg-surface-3 text-content-3 text-[10px] font-mono">
+                            Solo Narratore
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-content-3 leading-relaxed">
+                        Attiva questa casella se il Dungeon Master guida anche un personaggio giocante (DMPC/PG) al tavolo. Il personaggio del Master comparirà automaticamente nell'elenco dei partecipanti a ogni sessione, nel ruolino della compagnia e nell'evoluzione di memorie e relazioni IA del party.
+                      </p>
+                    </div>
+
+                    <div className="shrink-0">
+                      <input
+                        type="checkbox"
+                        checked={dmIsPlayer}
+                        onChange={(e) => handleToggleDmIsPlayer(e.target.checked)}
+                        onClick={(e) => e.stopPropagation()}
+                        className="w-4 h-4 accent-primary rounded cursor-pointer"
+                      />
                     </div>
                   </div>
                 </div>
