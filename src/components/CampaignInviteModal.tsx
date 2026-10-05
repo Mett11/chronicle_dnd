@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import QRCode from 'qrcode';
 import {
   X,
@@ -6,11 +6,10 @@ import {
   Check,
   QrCode,
   Share2,
-  ExternalLink,
-  Shield,
   Download,
   Sparkles,
 } from 'lucide-react';
+import { getStoredTheme } from '../lib/theme';
 
 interface CampaignInviteModalProps {
   isOpen: boolean;
@@ -35,6 +34,9 @@ export function CampaignInviteModal({
     ? `${window.location.origin}/?join=${cleanCode}`
     : `https://chronicle.dnd/?join=${cleanCode}`;
 
+  const currentTheme = getStoredTheme();
+  const accentColor = currentTheme?.colors?.primary || '#d4af37';
+
   useEffect(() => {
     if (!isOpen || !cleanCode) return;
 
@@ -42,8 +44,8 @@ export function CampaignInviteModal({
       width: 320,
       margin: 2,
       color: {
-        dark: '#111827',
-        light: '#f9fafb',
+        dark: '#070709',
+        light: '#fbf7ee', // Soft parchment ivory instead of blinding white
       },
       errorCorrectionLevel: 'M',
     })
@@ -58,9 +60,7 @@ export function CampaignInviteModal({
       await navigator.clipboard.writeText(inviteUrl);
       setCopiedLink(true);
       setTimeout(() => setCopiedLink(false), 2500);
-    } catch {
-      // Fallback
-    }
+    } catch {}
   };
 
   const handleCopyCode = async () => {
@@ -102,22 +102,42 @@ export function CampaignInviteModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fade-in font-body">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#050406]/85 backdrop-blur-md animate-fade-in text-[#e8e1d5]"
+      style={{ fontFamily: "'Newsreader', 'Lora', Georgia, serif" }}
+      onClick={onClose}
+    >
       <div
-        className="bg-surface-1 border border-surface-3 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl flex flex-col max-h-[90vh]"
+        className="bg-[#0c0b0f] border border-[#3a3020] rounded-2xl w-full max-w-md overflow-hidden shadow-2xl flex flex-col max-h-[92vh] relative"
         onClick={(e) => e.stopPropagation()}
       >
+        {/* Corner Fleurons */}
+        <div className="absolute top-2 left-2 text-[#a38043]/30 text-xs select-none">⌜</div>
+        <div className="absolute top-2 right-2 text-[#a38043]/30 text-xs select-none">⌝</div>
+        <div className="absolute bottom-2 left-2 text-[#a38043]/30 text-xs select-none">⌞</div>
+        <div className="absolute bottom-2 right-2 text-[#a38043]/30 text-xs select-none">⌟</div>
+
         {/* Header */}
-        <div className="p-4 sm:p-5 border-b border-surface-2 flex items-center justify-between bg-surface-2/40">
-          <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-primary/15 border border-primary/30 flex items-center justify-center text-primary">
-              <QrCode size={18} />
+        <div className="p-5 border-b border-[#241f17] flex items-center justify-between bg-[#110f16]/60">
+          <div className="flex items-center gap-3">
+            <div
+              className="w-10 h-10 rounded-xl flex items-center justify-center border shadow-sm"
+              style={{
+                backgroundColor: `${accentColor}18`,
+                borderColor: `${accentColor}40`,
+                color: accentColor,
+              }}
+            >
+              <QrCode size={19} />
             </div>
             <div>
-              <h2 className="text-base font-bold text-content-1 font-heading flex items-center gap-1.5">
-                Invita nel Party
+              <h2
+                className="text-base text-[#f3ebd9] font-normal tracking-wider uppercase"
+                style={{ fontFamily: "'Cinzel', Georgia, serif" }}
+              >
+                Sigillo d'Invito
               </h2>
-              <p className="text-xs text-content-3 truncate max-w-[260px]">
+              <p className="text-xs text-[#8c7b64] italic truncate max-w-[240px]">
                 {campaignName}
               </p>
             </div>
@@ -125,62 +145,69 @@ export function CampaignInviteModal({
           <button
             type="button"
             onClick={onClose}
-            className="p-1.5 rounded-lg text-content-3 hover:text-content-1 hover:bg-surface-3 transition-colors cursor-pointer"
+            className="p-1.5 rounded-lg text-[#8c7b64] hover:text-[#f3ebd9] transition-colors cursor-pointer"
           >
             <X size={18} />
           </button>
         </div>
 
         {/* Content */}
-        <div className="p-5 sm:p-6 overflow-y-auto space-y-5">
+        <div className="p-6 overflow-y-auto space-y-6 text-left">
           {/* QR Code Section */}
           <div className="flex flex-col items-center justify-center">
-            <div className="p-3 bg-white rounded-2xl shadow-lg border-2 border-primary/30 relative group">
+            <div
+              className="p-3 bg-[#fbf7ee] rounded-xl shadow-xl border-2 transition-colors relative"
+              style={{ borderColor: `${accentColor}55` }}
+            >
               {qrDataUrl ? (
                 <img
                   src={qrDataUrl}
                   alt={`QR Code invito per ${campaignName}`}
-                  className="w-48 h-48 sm:w-56 sm:h-56 rounded-xl object-contain block"
+                  className="w-48 h-48 sm:w-52 sm:h-52 rounded-lg object-contain block"
                 />
               ) : (
-                <div className="w-48 h-48 sm:w-56 sm:h-56 flex items-center justify-center bg-gray-100 rounded-xl text-gray-400 text-xs">
-                  Generazione QR Code...
+                <div className="w-48 h-48 sm:w-52 sm:h-52 flex items-center justify-center bg-[#f0e8d6] rounded-lg text-slate-500 text-xs font-mono">
+                  Generazione Sigillo...
                 </div>
               )}
             </div>
 
-            <div className="flex items-center gap-2 mt-3">
+            <div className="flex items-center gap-2 mt-3.5">
               <button
                 type="button"
                 onClick={handleDownloadQr}
-                className="px-3 py-1.5 text-xs text-content-2 hover:text-content-1 bg-surface-2 hover:bg-surface-3 rounded-lg border border-surface-3 flex items-center gap-1.5 transition-colors cursor-pointer"
+                className="px-3.5 py-1.5 text-xs text-[#a99982] hover:text-[#f5ede0] bg-[#16131a] hover:bg-[#201c26] rounded-lg border border-[#3a3020] flex items-center gap-1.5 transition-colors cursor-pointer"
               >
                 <Download size={13} />
-                <span>Scarica QR Code</span>
+                <span className="font-mono text-[11px]">Scarica Sigillo QR</span>
               </button>
             </div>
           </div>
 
           {/* Direct Invite Link */}
           <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-content-2 flex items-center justify-between">
+            <label
+              className="text-xs uppercase tracking-wider text-[#a99982] flex items-center justify-between"
+              style={{ fontFamily: "'Cinzel', Georgia, serif" }}
+            >
               <span>Link d'Invito Diretto</span>
-              <span className="text-[10px] text-content-3 font-normal">
-                Accesso automatico alla campagna
+              <span className="text-[10px] text-[#6e604d] italic lowercase font-sans">
+                accesso istantaneo al tavolo
               </span>
             </label>
-            <div className="flex items-center gap-1.5 bg-surface-0 border border-surface-3 rounded-xl p-1.5 pl-3">
-              <span className="text-xs text-content-2 font-mono truncate flex-1 select-all">
+            <div className="flex items-center gap-2 bg-[#16131a] border border-[#3e3424] focus-within:border-[#d4af37] rounded-xl p-1.5 pl-3 transition-colors">
+              <span className="text-xs text-[#a99982] font-mono truncate flex-1 select-all">
                 {inviteUrl}
               </span>
               <button
                 type="button"
                 onClick={handleCopyLink}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer shrink-0 ${
+                className={`px-3.5 py-2 rounded-lg text-xs font-semibold uppercase tracking-wider flex items-center gap-1.5 transition-all cursor-pointer shrink-0 ${
                   copiedLink
-                    ? 'bg-emerald-600 text-white'
-                    : 'bg-primary text-surface-0 hover:bg-primary/90 font-bold'
+                    ? 'bg-emerald-800 text-white'
+                    : 'bg-[#221e2c] hover:bg-[#2e293c] border border-[#a38043] text-[#f5ede0]'
                 }`}
+                style={{ fontFamily: "'Cinzel', Georgia, serif" }}
               >
                 {copiedLink ? (
                   <>
@@ -197,12 +224,13 @@ export function CampaignInviteModal({
             </div>
           </div>
 
-          {/* Action Buttons: Native Share */}
-          <div className="flex items-center gap-2">
+          {/* Action Buttons: Native Share & Code Copy */}
+          <div className="flex items-center gap-2.5">
             <button
               type="button"
               onClick={handleShare}
-              className="flex-1 py-2.5 bg-surface-2 hover:bg-surface-3 text-content-1 rounded-xl text-xs font-medium border border-surface-3 flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+              className="flex-1 py-2.5 bg-[#16131a] hover:bg-[#201c26] border border-[#3a3020] hover:border-[#a38043] text-[#f5ede0] rounded-xl text-xs uppercase tracking-wider font-semibold flex items-center justify-center gap-2 transition-all cursor-pointer"
+              style={{ fontFamily: "'Cinzel', Georgia, serif" }}
             >
               {shareSuccess ? (
                 <>
@@ -211,37 +239,38 @@ export function CampaignInviteModal({
                 </>
               ) : (
                 <>
-                  <Share2 size={14} className="text-primary" />
-                  <span>Condividi Invito</span>
+                  <Share2 size={14} style={{ color: accentColor }} />
+                  <span>Condividi</span>
                 </>
               )}
             </button>
             <button
               type="button"
               onClick={handleCopyCode}
-              title="Copia solo il codice alfanumerico"
-              className="px-3 py-2.5 bg-surface-2 hover:bg-surface-3 text-content-2 hover:text-content-1 rounded-xl text-xs font-mono border border-surface-3 flex items-center gap-1.5 transition-colors cursor-pointer"
+              title="Copia codice alfanumerico"
+              className="px-4 py-2.5 bg-[#16131a] hover:bg-[#201c26] border border-[#3a3020] hover:border-[#a38043] text-[#a99982] hover:text-[#f5ede0] rounded-xl text-xs font-mono flex items-center gap-1.5 transition-all cursor-pointer"
             >
               {copiedCode ? <Check size={13} className="text-emerald-400" /> : <Copy size={13} />}
               <span>{cleanCode}</span>
             </button>
           </div>
 
-          {/* Explanation note */}
-          <div className="bg-primary/5 border border-primary/20 rounded-xl p-3 text-[11px] text-content-2 flex items-start gap-2 leading-relaxed">
-            <Sparkles size={14} className="text-primary shrink-0 mt-0.5" />
+          {/* Atmospheric Explanation Note */}
+          <div className="bg-[#121016] border border-[#2b2316] rounded-xl p-3.5 text-xs text-[#8c7b64] flex items-start gap-2.5 leading-relaxed italic">
+            <Sparkles size={14} style={{ color: accentColor }} className="shrink-0 mt-0.5" />
             <p>
-              I giocatori che aprono il link o inquadrano il QR code dal telefono entreranno <strong>direttamente in questa campagna</strong>. Se non hanno ancora effettuato l'accesso, potranno farlo con Google in un click.
+              I compagni che aprono questo link o inquadrano il sigillo entreranno <strong>direttamente in questa campagna</strong>. Se è il loro primo accesso, potranno registrarsi con Google in un istante.
             </p>
           </div>
         </div>
 
         {/* Footer */}
-        <div className="p-3.5 bg-surface-2/30 border-t border-surface-2 flex justify-end">
+        <div className="p-4 bg-[#09080c] border-t border-[#241f17] flex justify-end">
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2 bg-surface-2 hover:bg-surface-3 text-content-1 text-xs font-medium rounded-xl transition-colors cursor-pointer"
+            className="px-5 py-2 bg-[#16131a] hover:bg-[#201c26] border border-[#3a3020] text-[#a99982] hover:text-[#f5ede0] text-xs uppercase tracking-wider rounded-xl transition-colors cursor-pointer"
+            style={{ fontFamily: "'Cinzel', Georgia, serif" }}
           >
             Chiudi
           </button>

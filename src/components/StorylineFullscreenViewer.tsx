@@ -160,7 +160,8 @@ const MobileCronacaViewer: React.FC<{
     setIsReadingMode(false);
   };
 
-  const hasImage = Boolean(currentSlide.imageUrl && !currentSlide.isPlaceholder);
+  const currentSlideImage = (currentSlide.imageUrl || currentSlide.sessionObj?.coverImage || currentSlide.sessionObj?.coverImageUrl || '').trim();
+  const hasImage = Boolean(currentSlideImage);
 
   // Horizontal swipe detection only on the stage (NOT during reading mode)
   const touchStartRef = useRef<{ x: number; y: number } | null>(null);
@@ -289,7 +290,7 @@ const MobileCronacaViewer: React.FC<{
               {/* Blurred Ambient Backdrop */}
               <div
                 className="absolute inset-0 bg-cover bg-center filter blur-xl scale-110 opacity-35 pointer-events-none"
-                style={{ backgroundImage: `url(${currentSlide.imageUrl})` }}
+                style={{ backgroundImage: `url(${currentSlideImage})` }}
               />
 
               {/* Foreground Image with tap-to-read */}
@@ -298,7 +299,7 @@ const MobileCronacaViewer: React.FC<{
                 onClick={() => setIsReadingMode(true)}
               >
                 <img
-                  src={currentSlide.imageUrl}
+                  src={currentSlideImage}
                   alt={currentSlide.sessionTitle || currentSlide.nodeTitle}
                   className="max-h-[60vh] max-w-full object-contain rounded-2xl shadow-2xl border border-surface-3/50 select-none"
                   referrerPolicy="no-referrer"
@@ -1040,7 +1041,7 @@ export const StorylineFullscreenViewer: React.FC<StorylineFullscreenViewerProps>
                   transition={{ duration: 0.2, ease: 'easeOut' }}
                   className="relative max-w-full max-h-full flex items-center justify-center"
                 >
-                  {currentSlide.imageUrl && !currentSlide.isPlaceholder ? (
+                  {currentSlide.imageUrl && currentSlide.imageUrl.trim() && !currentSlide.isPlaceholder ? (
                     <img
                       src={currentSlide.imageUrl}
                       alt={currentSlide.nodeTitle}
@@ -1295,7 +1296,7 @@ export const StorylineFullscreenViewer: React.FC<StorylineFullscreenViewerProps>
                         }`}
                         title={`${s.nodeTitle} (${s.loreDate || `Sess. #${s.sessionNumber}`})`}
                       >
-                        {s.imageUrl && !s.isPlaceholder ? (
+                        {s.imageUrl && s.imageUrl.trim() && !s.isPlaceholder ? (
                           <img
                             src={s.imageUrl}
                             alt={`Slide ${idx + 1}`}

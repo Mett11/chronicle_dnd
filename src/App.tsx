@@ -54,7 +54,8 @@ function AppContent() {
   }
 
   const { player, loading } = useAuth();
-  const [campaignCode, setCampaignCode] = useState<string | null>(() => CampaignManager.getActiveCampaignCode());
+  // Always start on Campaign Portal list on boot/login
+  const [campaignCode, setCampaignCode] = useState<string | null>(null);
   const [, setForceTick] = useState(0);
 
   // Capture invite link (?join=CODE or #join=CODE)
@@ -73,14 +74,13 @@ function AppContent() {
   // Pre-hydrate high-capacity IndexedDB cache on initial boot
   useEffect(() => {
     CampaignManager.hydrateFromIndexedDb().then(() => {
-      setCampaignCode(CampaignManager.getActiveCampaignCode());
       setForceTick((p) => p + 1);
     });
   }, []);
 
-  // Sync state if player or auth status changes
+  // Sync state if player or auth status changes (reset to Campaign Portal on login/logout)
   useEffect(() => {
-    setCampaignCode(CampaignManager.getActiveCampaignCode());
+    // Keep campaignCode as null on login to show the Campaign Portal list
   }, [player]);
 
   // Listen to campaign switch events (e.g. "Cambia Campagna", login, logout)

@@ -1,27 +1,53 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { auth } from './firebase';
 
-const getEnvVar = (name: string): string => {
+const getSupabaseUrl = (): string => {
   try {
-    if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env[name]) {
-      return String(import.meta.env[name]).trim();
+    if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_SUPABASE_URL) {
+      return String(import.meta.env.VITE_SUPABASE_URL).trim();
     }
   } catch {}
   try {
-    if (typeof process !== 'undefined' && process.env && process.env[name]) {
-      return String(process.env[name]).trim();
+    if (typeof process !== 'undefined' && process.env && process.env.VITE_SUPABASE_URL) {
+      return String(process.env.VITE_SUPABASE_URL).trim();
     }
   } catch {}
   return '';
 };
 
-const supabaseUrl = getEnvVar('VITE_SUPABASE_URL');
-const supabaseAnonKey = getEnvVar('VITE_SUPABASE_ANON_KEY');
+const getSupabaseAnonKey = (): string => {
+  try {
+    if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_SUPABASE_ANON_KEY) {
+      return String(import.meta.env.VITE_SUPABASE_ANON_KEY).trim();
+    }
+  } catch {}
+  try {
+    if (typeof process !== 'undefined' && process.env && process.env.VITE_SUPABASE_ANON_KEY) {
+      return String(process.env.VITE_SUPABASE_ANON_KEY).trim();
+    }
+  } catch {}
+  return '';
+};
+
+/**
+ * Sanitizes header strings to contain exclusively printable ASCII characters (code points 0x20 to 0x7E)
+ * Prevents "TypeError: Failed to execute 'set' on 'Headers': String contains non ISO-8859-1 code point"
+ */
+
+export const sanitizeHeaderString = (str: string): string => {
+  if (!str) return '';
+  return str.replace(/[^\x20-\x7E]/g, '').trim();
+};
+
+const rawUrl = getSupabaseUrl();
+const rawKey = getSupabaseAnonKey();
+
+const supabaseUrl = sanitizeHeaderString(rawUrl);
+const supabaseAnonKey = sanitizeHeaderString(rawKey);
 
 let supabaseOfflineUntil = 0;
 
 export const markSupabaseOffline = (durationMs = 60000) => {
-  supabaseOfflineUntil = Date.now() + durationMs;
+  // No-op to prevent disabling Supabase OAuth
 };
 
 export const resetSupabaseOffline = () => {
@@ -29,34 +55,55 @@ export const resetSupabaseOffline = () => {
 };
 
 export const isSupabaseConfigured = (): boolean => {
-  if (Date.now() < supabaseOfflineUntil) return false;
   return Boolean(
     supabaseUrl &&
-    supabaseAnonKey &&
     supabaseUrl.startsWith('http') &&
     !supabaseUrl.includes('placeholder') &&
-    !supabaseUrl.includes('your-project') &&
-    !supabaseAnonKey.includes('placeholder')
+    !supabaseUrl.includes('your-project')
   );
 };
 
-// Create client with Firebase Auth ID Token provider for Supabase Third-Party Auth / Custom JWT
+const activeAnonKey = supabaseAnonKey || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.dummy_anon_key_please_update';
+
+// Create Supabase client with native session persistence, URL OAuth detection, and header sanitization
 export const supabase: SupabaseClient = isSupabaseConfigured()
-  ? createClient(supabaseUrl, supabaseAnonKey, {
+  ? createClient(supabaseUrl, activeAnonKey, {
       auth: {
-        persistSession: false,
-        autoRefreshToken: false,
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: true,
       },
-      accessToken: async () => {
-        try {
-          const user = auth.currentUser;
-          if (user) {
-            return await user.getIdToken();
+      global: {
+        fetch: (url, options) => {
+          if (options && options.headers) {
+            const cleanHeaders = new Headers();
+            try {
+              if (options.headers instanceof Headers) {
+                options.headers.forEach((value, key) => {
+                  const k = sanitizeHeaderString(key);
+                  const v = sanitizeHeaderString(value);
+                  if (k && v) cleanHeaders.set(k, v);
+                });
+              } else if (Array.isArray(options.headers)) {
+                options.headers.forEach(([key, value]) => {
+                  const k = sanitizeHeaderString(key);
+                  const v = sanitizeHeaderString(value);
+                  if (k && v) cleanHeaders.set(k, v);
+                });
+              } else if (typeof options.headers === 'object') {
+                Object.entries(options.headers).forEach(([key, value]) => {
+                  const k = sanitizeHeaderString(key);
+                  const v = sanitizeHeaderString(String(value));
+                  if (k && v) cleanHeaders.set(k, v);
+                });
+              }
+            } catch (e) {
+              console.warn('[Supabase] Header sanitization notice:', e);
+            }
+            options = { ...options, headers: cleanHeaders };
           }
-        } catch (err) {
-          console.warn('[Supabase] Could not fetch Firebase ID token:', err);
-        }
-        return null;
+          return fetch(url, options);
+        },
       },
     })
   : (createClient('https://placeholder.supabase.co', 'placeholder-key') as SupabaseClient);

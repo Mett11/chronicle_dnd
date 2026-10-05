@@ -1049,7 +1049,7 @@ export function CharacterProfile() {
                     className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold text-white overflow-hidden shrink-0"
                     style={{ backgroundColor: p.color || '#6366f1' }}
                   >
-                    {p.avatarUrl ? (
+                    {p.avatarUrl && p.avatarUrl.trim() ? (
                       <img src={p.avatarUrl} alt="" className="w-full h-full object-cover" />
                     ) : (
                       p.characterName?.charAt(0).toUpperCase() || 'P'
@@ -1078,7 +1078,7 @@ export function CharacterProfile() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-5">
           <div className="flex items-center gap-4 sm:gap-5">
             <div className="relative group shrink-0">
-              {targetPlayer.avatarUrl ? (
+              {targetPlayer.avatarUrl && targetPlayer.avatarUrl.trim() ? (
                 <img
                   src={targetPlayer.avatarUrl}
                   alt={targetPlayer.characterName}

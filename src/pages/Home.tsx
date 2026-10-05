@@ -790,7 +790,7 @@ export function Home() {
                               className="w-4 h-4 rounded-[2px] flex items-center justify-center text-white text-[9px] font-bold overflow-hidden shrink-0"
                               style={{ backgroundColor: activeSelectedNote.author?.color || 'var(--color-primary)' }}
                             >
-                              {activeSelectedNote.author?.avatarUrl ? (
+                              {activeSelectedNote.author?.avatarUrl && activeSelectedNote.author.avatarUrl.trim() ? (
                                 <img
                                   src={activeSelectedNote.author.avatarUrl}
                                   alt="Avatar"

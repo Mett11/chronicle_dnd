@@ -1751,7 +1751,7 @@ export function Oracle() {
 
                       return (
                         <div key={idx} className="flex items-start gap-3 max-w-[95%] sm:max-w-[85%] animate-fadeIn">
-                          {avatarUrl ? (
+                          {avatarUrl && avatarUrl.trim() ? (
                             <img
                               src={avatarUrl}
                               alt={block.name}
@@ -1807,7 +1807,7 @@ export function Oracle() {
 
                           return (
                             <>
-                              {avatarUrl ? (
+                              {avatarUrl && avatarUrl.trim() ? (
                                 <img
                                   src={avatarUrl}
                                   alt={currentTypingName}

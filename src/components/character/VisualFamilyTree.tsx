@@ -583,7 +583,7 @@ export function VisualFamilyTree({
                   isCentral ? 'w-16 h-16 border-primary' : 'w-12 h-12 border-surface-3 group-hover:border-primary'
                 }`}
               >
-                {item.avatarUrl ? (
+                {item.avatarUrl && item.avatarUrl.trim() ? (
                   <img src={item.avatarUrl} alt={item.name} className="w-full h-full object-cover" />
                 ) : item.isHero ? (
                   <Shield size={isCentral ? 28 : 20} className="text-primary" />
@@ -1056,7 +1056,7 @@ export function VisualFamilyTree({
                   >
                     <div className="flex items-center gap-1.5 min-w-0">
                       <div className="w-6 h-6 rounded-full bg-surface-2 border border-surface-3 overflow-hidden flex items-center justify-center shrink-0">
-                        {sib.avatarUrl ? (
+                        {sib.avatarUrl && sib.avatarUrl.trim() ? (
                           <img src={sib.avatarUrl} alt={sib.name} className="w-full h-full object-cover" />
                         ) : sib.isHero ? (
                           <Shield size={12} className="text-primary" />

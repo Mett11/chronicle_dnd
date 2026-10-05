@@ -1,5 +1,6 @@
 import express from 'express';
 import path from 'path';
+import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
 import multer from 'multer';
@@ -14,7 +15,13 @@ const upload = multer({
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const args = process.argv.slice(2);
+  const portArgIndex = args.indexOf('--port');
+  const cliPort = portArgIndex !== -1 && args[portArgIndex + 1] ? parseInt(args[portArgIndex + 1], 10) : undefined;
+  const PORT = Number(process.env.PORT) || cliPort || 3000;
+  const hostArgIndex = args.indexOf('--host');
+  const cliHost = hostArgIndex !== -1 && args[hostArgIndex + 1] ? args[hostArgIndex + 1] : undefined;
+  const HOST = process.env.HOST || cliHost || '0.0.0.0';
 
   app.use(express.json({ limit: '30mb' }));
   app.use(express.urlencoded({ extended: true, limit: '30mb' }));
@@ -3078,10 +3085,26 @@ ${rawText.slice(0, 20000)}
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+  const server = app.listen(PORT, HOST, () => {
+    console.log(`Server running on http://${HOST}:${PORT}`);
+  });
+
+  server.on('error', (err: any) => {
+    console.error('Server fatal listen error:', err);
+    process.exit(1);
+  });
+
+  process.on('SIGTERM', () => {
+    server.close(() => process.exit(0));
+  });
+
+  process.on('SIGINT', () => {
+    server.close(() => process.exit(0));
   });
 }
 
-startServer();
+startServer().catch((err) => {
+  console.error('Fatal startup error in startServer:', err);
+  process.exit(1);
+});
 

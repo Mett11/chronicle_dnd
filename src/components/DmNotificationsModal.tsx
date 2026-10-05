@@ -340,7 +340,7 @@ export function DmNotificationsModal({
                           className="w-5 h-5 rounded-full flex items-center justify-center text-white text-[10px] font-bold overflow-hidden shrink-0"
                           style={{ backgroundColor: note.author?.color || '#6366f1' }}
                         >
-                          {note.author?.avatarUrl ? (
+                          {note.author?.avatarUrl && note.author.avatarUrl.trim() ? (
                             <img src={note.author.avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
                           ) : (
                             note.author?.characterName?.charAt(0).toUpperCase() || 'P'

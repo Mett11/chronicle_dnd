@@ -99,14 +99,14 @@ export function GazetteModal({ session, calendar, onClose, onSaved }: GazetteMod
     const list: string[] = [];
     if (Array.isArray(session.images)) {
       session.images.forEach((img) => {
-        if (img && typeof img === 'string' && !list.includes(img)) list.push(img);
+        if (img && typeof img === 'string' && img.trim() && !list.includes(img.trim())) list.push(img.trim());
       });
     }
     if (session.events && Array.isArray(session.events)) {
       session.events.forEach((evt) => {
         if (Array.isArray(evt.images)) {
           evt.images.forEach((img) => {
-            if (img && typeof img === 'string' && !list.includes(img)) list.push(img);
+            if (img && typeof img === 'string' && img.trim() && !list.includes(img.trim())) list.push(img.trim());
           });
         }
       });

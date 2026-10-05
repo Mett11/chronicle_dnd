@@ -17,7 +17,34 @@ export interface PwaStatus {
 export function initPwa() {
   if (typeof window === 'undefined') return;
 
-  // 1. Build Version Check: Purge stale CacheStorage if a new build is deployed
+  const isDevOrIframe =
+    import.meta.env.DEV ||
+    window.location.hostname === 'localhost' ||
+    window.location.hostname === '127.0.0.1' ||
+    window.location.hostname.includes('.run.app') ||
+    window.self !== window.top;
+
+  // In dev / iframe / preview environments, immediately unregister any service worker
+  // and purge CacheStorage to prevent reload loops and stale page caches.
+  if (isDevOrIframe) {
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations().then((registrations) => {
+        for (const registration of registrations) {
+          registration.unregister().catch(() => {});
+        }
+      }).catch(() => {});
+    }
+    if ('caches' in window) {
+      caches.keys().then((keys) => {
+        for (const key of keys) {
+          caches.delete(key).catch(() => {});
+        }
+      }).catch(() => {});
+    }
+    return;
+  }
+
+  // 1. Build Version Check: Purge stale CacheStorage if a new build is deployed (production standalone only)
   try {
     const currentBuild = import.meta.env.VITE_APP_BUILD_TIME || 'v2';
     const savedBuild = localStorage.getItem('chronicle_app_build_version');
@@ -26,15 +53,13 @@ export function initPwa() {
       console.log('[PWA] New build version detected:', currentBuild, '(was:', savedBuild, '). Purging stale asset cache...');
       localStorage.setItem('chronicle_app_build_version', currentBuild);
       
-      // Clear static CacheStorage assets without touching user account credentials in LocalStorage or Firebase Auth
+      // Clear static CacheStorage assets without touching user account credentials
       if ('caches' in window) {
         caches.keys().then((keys) => {
           Promise.all(keys.map((k) => caches.delete(k))).then(() => {
-            console.log('[PWA] Stale asset cache successfully purged. Reloading app assets...');
-            window.location.reload();
+            console.log('[PWA] Stale asset cache successfully purged.');
           });
         });
-        return;
       }
     } else if (!savedBuild) {
       localStorage.setItem('chronicle_app_build_version', currentBuild);
@@ -43,25 +68,21 @@ export function initPwa() {
     console.warn('[PWA] Version check warning:', e);
   }
 
-  // 2. Register Service Worker with Auto-Update on new version
+  // 2. Register Service Worker in production only
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
       navigator.serviceWorker
         .register('/sw.js')
         .then((reg) => {
           console.log('[PWA] ServiceWorker registered with scope:', reg.scope);
-
-          // Force check for SW update on page load
           reg.update().catch(() => {});
 
-          // Handle new SW installation
           reg.onupdatefound = () => {
             const installingWorker = reg.installing;
             if (installingWorker) {
               installingWorker.onstatechange = () => {
                 if (installingWorker.state === 'installed' && navigator.serviceWorker.controller) {
-                  console.log('[PWA] New version installed and ready. Skip waiting...');
-                  installingWorker.postMessage({ type: 'SKIP_WAITING' });
+                  console.log('[PWA] New version installed.');
                 }
               };
             }
@@ -70,16 +91,6 @@ export function initPwa() {
         .catch((err) => {
           console.warn('[PWA] ServiceWorker registration failed:', err);
         });
-
-      // Reload page seamlessly when new SW activates (user stays logged in)
-      let refreshing = false;
-      navigator.serviceWorker.addEventListener('controllerchange', () => {
-        if (!refreshing) {
-          refreshing = true;
-          console.log('[PWA] Controller changed. Reloading page with fresh assets...');
-          window.location.reload();
-        }
-      });
     });
   }
 

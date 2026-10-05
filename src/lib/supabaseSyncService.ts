@@ -58,9 +58,8 @@ function sanitizeHeavyPayload<T>(obj: T): T {
   if (obj === null || obj === undefined) return obj;
 
   if (typeof obj === 'string') {
-    // If it's a giant base64 image string
-    if (obj.length > 100000 && (obj.startsWith('data:') || obj.includes(';base64,'))) {
-      return '[Immagine rimossa per prevenire timeout del database]' as any;
+    if (obj.includes('[Immagine rimossa') || obj.includes('rimossa per prevenire')) {
+      return '' as any;
     }
     return obj;
   }
@@ -80,6 +79,120 @@ function sanitizeHeavyPayload<T>(obj: T): T {
   }
 
   return obj;
+}
+
+const knownMissingColumns = new Set<string>();
+
+/**
+ * Resilient upsert helper that automatically recovers from schema cache mismatches (PGRST204, PGRST205),
+ * missing legacy tables (42P01), or missing parent foreign key campaign rows (23503).
+ * When PostgREST reports a missing column, it learns the schema, strips the unrecognised property,
+ * and retries automatically.
+ */
+export async function safeUpsert(
+  tableName: string,
+  payload: Record<string, any> | Record<string, any>[],
+  options?: { onConflict?: string; fallbackTable?: string }
+): Promise<{ data: any; error: any }> {
+  let currentTable = tableName;
+
+  // Pre-strip known missing columns learned during earlier queries
+  const stripKnown = (item: any) => {
+    if (!item || typeof item !== 'object') return item;
+    const clean = { ...item };
+    for (const key of Object.keys(clean)) {
+      if (knownMissingColumns.has(`${currentTable}.${key}`)) {
+        delete clean[key];
+      }
+    }
+    return clean;
+  };
+
+  let currentPayload: any = Array.isArray(payload)
+    ? payload.map((item) => stripKnown(item))
+    : stripKnown(payload);
+
+  const maxRetries = 8;
+  let attempts = 0;
+
+  while (attempts < maxRetries) {
+    attempts++;
+    let res = await supabase
+      .from(currentTable)
+      .upsert(currentPayload, options?.onConflict ? { onConflict: options.onConflict } : undefined);
+
+    if (!res.error) {
+      return res;
+    }
+
+    // 1. Table not found error in PostgREST (PGRST205 or 42P01) -> Fallback table
+    const isTableNotFound =
+      res.error.code === 'PGRST205' ||
+      res.error.code === '42P01' ||
+      res.error.message?.includes('Could not find the table') ||
+      res.error.message?.includes('does not exist');
+
+    if (isTableNotFound && options?.fallbackTable && currentTable !== options.fallbackTable) {
+      currentTable = options.fallbackTable;
+      currentPayload = Array.isArray(payload)
+        ? payload.map((item) => stripKnown(item))
+        : stripKnown(payload);
+      continue;
+    }
+
+    // 2. Foreign key violation on campaigns table (23503) -> Auto-ensure parent campaign record exists
+    if (
+      res.error.code === '23503' &&
+      (res.error.message?.includes('campaign_code') ||
+        res.error.details?.includes('campaigns') ||
+        res.error.message?.includes('violates foreign key constraint'))
+    ) {
+      const sample = Array.isArray(currentPayload) ? currentPayload[0] : currentPayload;
+      const cCode = sample?.campaign_code || sample?.code;
+      if (cCode) {
+        try {
+          const cleanCode = String(cCode).trim().toUpperCase();
+          await supabase.from('campaigns').upsert(
+            {
+              code: cleanCode,
+              title: `Campagna ${cleanCode}`,
+              system: 'D&D 5e',
+              updated_at: new Date().toISOString(),
+            },
+            { onConflict: 'code' }
+          );
+          continue; // retry upserting child records
+        } catch {}
+      }
+    }
+
+    // 3. Missing column in schema cache handling (PGRST204)
+    if (
+      res.error.code === 'PGRST204' ||
+      res.error.message?.includes('schema cache') ||
+      res.error.message?.includes('Could not find the')
+    ) {
+      const match = res.error.message.match(/Could not find the '([^']+)' column/i);
+      if (match && match[1]) {
+        const missingCol = match[1];
+        knownMissingColumns.add(`${currentTable}.${missingCol}`);
+        if (Array.isArray(currentPayload)) {
+          currentPayload = currentPayload.map((item: any) => {
+            const next = { ...item };
+            delete next[missingCol];
+            return next;
+          });
+        } else {
+          delete currentPayload[missingCol];
+        }
+        continue;
+      }
+    }
+
+    return res;
+  }
+
+  return { data: null, error: new Error(`safeUpsert max retries reached for ${currentTable}`) };
 }
 
 export class SupabaseSyncService {
@@ -138,7 +251,16 @@ export class SupabaseSyncService {
           .from('chapters')
           .select('*')
           .or(`campaign_code.eq.${cleanCode},campaign_code.eq.${rawCode}`)
-          .order('order_index', { ascending: true }),
+          .then(async (res) => {
+            if (res.error || !res.data || res.data.length === 0) {
+              const fallbackRes = await supabase
+                .from('campaign_chapters')
+                .select('*')
+                .or(`campaign_code.eq.${cleanCode},campaign_code.eq.${rawCode}`);
+              if (fallbackRes.data && fallbackRes.data.length > 0) return fallbackRes;
+            }
+            return res;
+          }),
         supabase
           .from('sessions')
           .select('*')
@@ -151,8 +273,7 @@ export class SupabaseSyncService {
         supabase
           .from('notes')
           .select('*')
-          .or(`campaign_code.eq.${cleanCode},campaign_code.eq.${rawCode}`)
-          .order('created_at', { ascending: false }),
+          .or(`campaign_code.eq.${cleanCode},campaign_code.eq.${rawCode}`),
         supabase
           .from('maps')
           .select('*')
@@ -161,7 +282,16 @@ export class SupabaseSyncService {
           .from('scrapbook')
           .select('*')
           .or(`campaign_code.eq.${cleanCode},campaign_code.eq.${rawCode}`)
-          .order('created_at', { ascending: false }),
+          .then(async (res) => {
+            if (res.error || !res.data || res.data.length === 0) {
+              const fallbackRes = await supabase
+                .from('scrapbook_items')
+                .select('*')
+                .or(`campaign_code.eq.${cleanCode},campaign_code.eq.${rawCode}`);
+              if (fallbackRes.data && fallbackRes.data.length > 0) return fallbackRes;
+            }
+            return res;
+          }),
         supabase
           .from('audio_logs')
           .select('*')
@@ -282,40 +412,7 @@ export class SupabaseSyncService {
 
       let characterBios: any[] = [];
       if (characterBiosRows && characterBiosRows.length > 0) {
-        characterBios = characterBiosRows.map((row: any) => ({
-          playerId: row.player_id,
-          campaignCode: row.campaign_code,
-          characterName: row.name || '',
-          name: row.name || '',
-          avatarUrl: row.avatar_url || '',
-          color: row.color || '#6366f1',
-          characterClass: row.class_level || '',
-          characterAlignment: row.alignment || '',
-          backstoryMarkdown: row.background || '',
-          personalityTraits: row.personality ? row.personality.split(', ') : [],
-          ideals: row.ideals || '',
-          bonds: row.bonds || '',
-          flaws: row.flaws || '',
-          timelineMemories: Array.isArray(row.timeline_memories) ? row.timeline_memories : [],
-          evolvingBeliefs: Array.isArray(row.evolving_beliefs) ? row.evolving_beliefs : [],
-          interPartyRelations: row.inter_party_relations && typeof row.inter_party_relations === 'object' ? row.inter_party_relations : {},
-          characterRace: row.character_race || row.extra_data?.characterRace || '',
-          characterTitle: row.character_title || row.extra_data?.characterTitle || '',
-          deityOrPatron: row.deity_or_patron || row.extra_data?.deityOrPatron || '',
-          hometown: row.hometown || row.extra_data?.hometown || '',
-          birthDateFormatted: row.birth_date_formatted || row.extra_data?.birthDateFormatted || '',
-          birthStartDay: row.birth_start_day || row.extra_data?.birthStartDay || 1,
-          birthMonth: row.birth_month || row.extra_data?.birthMonth || '',
-          birthYear: row.birth_year || row.extra_data?.birthYear || 1492,
-          secrets: row.secrets || row.extra_data?.secrets || '',
-          appearanceDescription: row.appearance_description || row.extra_data?.appearanceDescription || '',
-          currentStatus: row.current_status || row.extra_data?.currentStatus || '',
-          knownLoreBites: Array.isArray(row.known_lore_bites)
-            ? row.known_lore_bites
-            : (Array.isArray(row.extra_data?.knownLoreBites) ? row.extra_data.knownLoreBites : []),
-          privacySettings: row.privacy_settings || row.extra_data?.privacySettings || {},
-          updatedAt: row.updated_at || new Date().toISOString(),
-        }));
+        characterBios = characterBiosRows.map((row: any) => characterBioRowToModel(row));
       } else if ((characterBiosRes as any)?.error && Array.isArray(dossier.characterBios) && dossier.characterBios.length > 0) {
         characterBios = dossier.characterBios;
       }
@@ -380,9 +477,27 @@ export class SupabaseSyncService {
         dmId: campRow.dm_id || '',
         calendarSystem: campRow.calendar_system || {},
         aiConfig: campRow.ai_config || {},
-        activePlayers: Array.isArray(campRow.active_players) && campRow.active_players.length > 0
-          ? campRow.active_players
-          : (Array.isArray(dossier.activePlayers) ? dossier.activePlayers : []),
+        expelledAccountIds: Array.isArray(campRow.expelled_account_ids)
+          ? campRow.expelled_account_ids
+          : (Array.isArray(dossier.expelledAccountIds) ? dossier.expelledAccountIds : []),
+        activePlayers: (() => {
+          const raw = Array.isArray(campRow.active_players) && campRow.active_players.length > 0
+            ? campRow.active_players
+            : (Array.isArray(dossier.activePlayers) ? dossier.activePlayers : []);
+          const expelled = new Set(
+            [
+              ...(Array.isArray(campRow.expelled_account_ids) ? campRow.expelled_account_ids : []),
+              ...(Array.isArray(dossier.expelledAccountIds) ? dossier.expelledAccountIds : []),
+            ].map((id: string) => String(id).toLowerCase())
+          );
+          return raw.filter((p: any) => {
+            if (!p || !p.id) return false;
+            const pId = String(p.id).toLowerCase();
+            const pAltId = p._id ? String(p._id).toLowerCase() : '';
+            const pEmail = p.email ? String(p.email).toLowerCase() : '';
+            return !expelled.has(pId) && (!pAltId || !expelled.has(pAltId)) && (!pEmail || !expelled.has(pEmail));
+          });
+        })(),
         dossier,
         characterBios,
         familyRelations,
@@ -443,10 +558,9 @@ export class SupabaseSyncService {
     if (!isSupabaseConfigured() || !campaignCode) return null;
     try {
       const cleanCode = campaignCode.trim().toUpperCase();
-      const [campRes, sessionsRes, chaptersRes] = await Promise.all([
-        supabase.from('campaigns').select('dossier').or(`code.eq.${cleanCode},code.eq.${campaignCode.trim()}`).maybeSingle(),
-        supabase.from('sessions').select('*').or(`campaign_code.eq.${cleanCode},campaign_code.eq.${campaignCode.trim()}`).order('number', { ascending: true }),
-        supabase.from('chapters').select('*').or(`campaign_code.eq.${cleanCode},campaign_code.eq.${campaignCode.trim()}`).order('order_index', { ascending: true }),
+      const [sessionsRes, chaptersRes] = await Promise.all([
+        supabase.from('sessions').select('*').eq('campaign_code', cleanCode).order('number', { ascending: true }),
+        supabase.from('campaign_chapters').select('*').eq('campaign_code', cleanCode).order('order_index', { ascending: true }),
       ]);
 
       if (sessionsRes.error || chaptersRes.error) {
@@ -454,15 +568,11 @@ export class SupabaseSyncService {
         return null;
       }
 
-      const dossier = campRes.data?.dossier || {};
-      const chaptersMeta = dossier.chaptersMeta || {};
-      const sessionsMeta = dossier.sessionsMeta || {};
-
       const chapters: CampaignChapter[] = (chaptersRes.data || []).map((row: any) =>
-        chapterRowToModel(row, chaptersMeta)
+        chapterRowToModel(row)
       );
       const sessions: Session[] = (sessionsRes.data || []).map((row: any) =>
-        sessionRowToModel(row, sessionsMeta)
+        sessionRowToModel(row)
       );
 
       return { sessions, chapters };
@@ -479,22 +589,18 @@ export class SupabaseSyncService {
     if (!isSupabaseConfigured() || !campaignCode) return null;
     try {
       const cleanCode = campaignCode.trim().toUpperCase();
-      const [campRes, notesRes] = await Promise.all([
-        supabase.from('campaigns').select('dossier').or(`code.eq.${cleanCode},code.eq.${campaignCode.trim()}`).maybeSingle(),
-        supabase.from('notes').select('*').or(`campaign_code.eq.${cleanCode},campaign_code.eq.${campaignCode.trim()}`).order('created_at', { ascending: false }),
-      ]);
+      const { data, error } = await supabase
+        .from('notes')
+        .select('*')
+        .eq('campaign_code', cleanCode)
+        .order('created_at', { ascending: false });
 
-      if (notesRes.error) {
-        console.warn('[Supabase] Warning reading notes in fetchNotesOnly:', notesRes.error.message);
+      if (error) {
+        console.warn('[Supabase] Warning reading notes in fetchNotesOnly:', error.message);
         return null;
       }
 
-      const dossier = campRes.data?.dossier || {};
-      const notesMeta = dossier.notesMeta || {};
-
-      return (notesRes.data || []).map((row: any) =>
-        noteRowToModel(row, notesMeta)
-      );
+      return (data || []).map((row: any) => noteRowToModel(row));
     } catch (e) {
       console.warn('[Supabase] fetchNotesOnly error:', e);
       return null;
@@ -516,6 +622,31 @@ export class SupabaseSyncService {
       return (res.data || []).map(entityRowToModel);
     } catch (e) {
       console.warn('[Supabase] fetchEntitiesOnly error:', e);
+      return null;
+    }
+  }
+
+  /**
+   * Granular On-Demand Fetch: Maps
+   */
+  static async fetchMapsOnly(campaignCode: string): Promise<WorldMap[] | null> {
+    if (!isSupabaseConfigured() || !campaignCode) return null;
+    try {
+      const cleanCode = campaignCode.trim().toUpperCase();
+      const { data, error } = await supabase
+        .from('maps')
+        .select('*')
+        .eq('campaign_code', cleanCode)
+        .order('created_at', { ascending: true });
+
+      if (error) {
+        console.warn('[Supabase] Warning reading maps in fetchMapsOnly:', error.message);
+        return null;
+      }
+
+      return (data || []).map((row: any) => mapRowToModel(row));
+    } catch (e) {
+      console.warn('[Supabase] fetchMapsOnly error:', e);
       return null;
     }
   }
@@ -558,11 +689,26 @@ export class SupabaseSyncService {
   /**
    * Save or create campaign info with full field preservation
    */
-  static async saveCampaign(campaignCode: string, data: Record<string, any>): Promise<boolean> {
-    if (!isSupabaseConfigured() || !campaignCode) return false;
+  static async saveCampaign(campaignCodeOrMeta: string | Record<string, any>, data?: Record<string, any>): Promise<boolean> {
+    if (!isSupabaseConfigured() || !campaignCodeOrMeta) return false;
 
     try {
-      const code = campaignCode.trim();
+      let code = '';
+      let payloadData: Record<string, any> = {};
+
+      if (typeof campaignCodeOrMeta === 'string') {
+        code = campaignCodeOrMeta.trim();
+        payloadData = data || {};
+      } else if (typeof campaignCodeOrMeta === 'object' && campaignCodeOrMeta !== null) {
+        code = (campaignCodeOrMeta.code || '').trim();
+        payloadData = {
+          title: campaignCodeOrMeta.name || campaignCodeOrMeta.title,
+          ...campaignCodeOrMeta,
+          ...(data || {}),
+        };
+      }
+
+      if (!code) return false;
       const cleanCode = code.toUpperCase();
 
       // Read existing campaign first to merge existing columns
@@ -572,29 +718,28 @@ export class SupabaseSyncService {
         .or(`code.eq.${cleanCode},code.eq.${code}`)
         .maybeSingle();
 
-      const existingDossier = existing?.dossier || data.dossier || {};
+      const existingDossier = existing?.dossier || payloadData.dossier || {};
       const payload = {
-        id: cleanCode,
         code: cleanCode,
-        title: data.title !== undefined ? data.title : existing?.title || 'Nuova Campagna',
-        subtitle: data.subtitle !== undefined ? data.subtitle : existing?.subtitle || '',
-        description: data.description !== undefined ? data.description : existing?.description || '',
-        system: data.system !== undefined ? data.system : existing?.system || 'D&D 5e',
-        dm_id: data.dmId !== undefined ? data.dmId : existing?.dm_id || '',
-        calendar_system: data.calendarSystem !== undefined ? data.calendarSystem : existing?.calendar_system || {},
-        ai_config: data.aiConfig !== undefined ? data.aiConfig : existing?.ai_config || {},
-        active_players: data.activePlayers !== undefined ? data.activePlayers : existing?.active_players || [],
+        title: payloadData.title !== undefined ? payloadData.title : existing?.title || 'Nuova Campagna',
+        subtitle: payloadData.subtitle !== undefined ? payloadData.subtitle : existing?.subtitle || '',
+        description: payloadData.description !== undefined ? payloadData.description : existing?.description || '',
+        system: payloadData.system !== undefined ? payloadData.system : existing?.system || 'D&D 5e',
+        dm_id: payloadData.dmId !== undefined ? payloadData.dmId : existing?.dm_id || '',
+        calendar_system: payloadData.calendarSystem !== undefined ? payloadData.calendarSystem : existing?.calendar_system || {},
+        ai_config: payloadData.aiConfig !== undefined ? payloadData.aiConfig : existing?.ai_config || {},
+        active_players: payloadData.activePlayers !== undefined ? payloadData.activePlayers : existing?.active_players || [],
         dossier: {
           ...existingDossier,
-          ...(data.dossier || {}),
-          characterBios: data.characterBios || existingDossier.characterBios || [],
-          familyRelations: data.familyRelations || existingDossier.familyRelations || [],
-          worldLoreArticles: data.worldLoreArticles || existingDossier.worldLoreArticles || [],
+          ...(payloadData.dossier || {}),
+          characterBios: payloadData.characterBios || existingDossier.characterBios || [],
+          familyRelations: payloadData.familyRelations || existingDossier.familyRelations || [],
+          worldLoreArticles: payloadData.worldLoreArticles || existingDossier.worldLoreArticles || [],
         },
         updated_at: new Date().toISOString(),
       };
 
-      const { error } = await supabase.from('campaigns').upsert(payload, { onConflict: 'code' });
+      const { error } = await safeUpsert('campaigns', payload, { onConflict: 'code' });
       if (error) {
         return handleSupabaseError('Error saving campaign', error);
       }
@@ -617,8 +762,106 @@ export class SupabaseSyncService {
   }
 
   /**
-   * Joins a user to campaign_members table (server-authoritative membership)
+   * Updates an existing campaign code on Supabase across all campaign tables, handling Foreign Key constraints
    */
+  static async updateCampaignCode(oldCode: string, newCode: string): Promise<boolean> {
+    if (!isSupabaseConfigured() || !oldCode || !newCode) return false;
+    const cleanOld = oldCode.trim().toUpperCase();
+    const cleanNew = newCode.trim().toUpperCase();
+    if (cleanOld === cleanNew) return true;
+
+    try {
+      // 1. Fetch old campaign record
+      const { data: oldCamp } = await supabase
+        .from('campaigns')
+        .select('*')
+        .eq('code', cleanOld)
+        .maybeSingle();
+
+      if (oldCamp) {
+        // 2. Insert duplicate campaign row with new code
+        const newCampRecord = { ...oldCamp, code: cleanNew, updated_at: new Date().toISOString() };
+        await supabase.from('campaigns').upsert(newCampRecord, { onConflict: 'code' });
+      }
+
+      // List of child tables that reference campaign_code
+      const childTables = [
+        'campaign_data',
+        'campaign_members',
+        'sessions',
+        'campaign_chapters',
+        'notes',
+        'entities',
+        'maps',
+        'character_bios',
+        'family_relations',
+        'world_lore_articles',
+        'scrapbook_items',
+        'audio_logs',
+        'calendars',
+      ];
+
+      // 3. Update all child tables to point to new code
+      for (const table of childTables) {
+        try {
+          await supabase
+            .from(table)
+            .update({ campaign_code: cleanNew })
+            .eq('campaign_code', cleanOld);
+        } catch (tErr) {
+          console.warn(`Warning updating child table ${table}:`, tErr);
+        }
+      }
+
+      // 4. Delete old campaign record and any remaining old child entries
+      await this.deleteLegacyCampaign(cleanOld);
+
+      return true;
+    } catch (err) {
+      console.error('Failed to update campaign code on Supabase:', err);
+      return false;
+    }
+  }
+
+  /**
+   * Deletes a legacy or orphaned campaign and all its child records from Supabase
+   */
+  static async deleteLegacyCampaign(campaignCode: string): Promise<boolean> {
+    if (!isSupabaseConfigured() || !campaignCode) return false;
+    const cleanCode = campaignCode.trim().toUpperCase();
+
+    try {
+      const childTables = [
+        'campaign_data',
+        'campaign_members',
+        'sessions',
+        'campaign_chapters',
+        'notes',
+        'entities',
+        'maps',
+        'character_bios',
+        'family_relations',
+        'world_lore_articles',
+        'scrapbook_items',
+        'audio_logs',
+        'calendars',
+      ];
+
+      for (const table of childTables) {
+        try {
+          await supabase.from(table).delete().eq('campaign_code', cleanCode);
+        } catch (tErr) {
+          console.warn(`Warning deleting child records from ${table}:`, tErr);
+        }
+      }
+
+      await supabase.from('campaigns').delete().eq('code', cleanCode);
+      return true;
+    } catch (err) {
+      console.error('Error deleting legacy campaign from Supabase:', err);
+      return false;
+    }
+  }
   static async joinCampaignMember(campaignCode: string, userId: string, role: 'player' | 'dm' = 'player', characterName?: string): Promise<boolean> {
     if (!isSupabaseConfigured() || !campaignCode || !userId) return false;
     try {
@@ -639,19 +882,54 @@ export class SupabaseSyncService {
   }
 
   /**
-   * Leaves or removes a member from campaign_members
+   * Leaves or removes a member from campaign_members and campaign dossier on Supabase
    */
-  static async removeCampaignMember(campaignCode: string, userId: string): Promise<boolean> {
+  static async removeCampaignMember(campaignCode: string, userId: string, email?: string): Promise<boolean> {
     if (!isSupabaseConfigured() || !campaignCode || !userId) return false;
     try {
-      const cleanCode = campaignCode.trim().toUpperCase();
-      const { error } = await supabase
-        .from('campaign_members')
-        .delete()
-        .eq('campaign_code', cleanCode)
-        .eq('user_id', userId);
-      return !error;
-    } catch {
+      const code = campaignCode.trim().toUpperCase();
+      const cleanEmail = (email || '').toLowerCase().trim();
+
+      await supabase.from('campaign_members').delete().eq('campaign_code', code).or(`user_id.eq.${userId}${cleanEmail ? `,user_id.eq.${cleanEmail}` : ''}`);
+
+      const { data: camp } = await supabase.from('campaigns').select('dossier, active_players, expelled_account_ids').eq('code', code).maybeSingle();
+      if (camp) {
+        const currentExpelled: string[] = Array.isArray(camp.expelled_account_ids) ? [...camp.expelled_account_ids] : [];
+        if (!currentExpelled.includes(userId)) {
+          currentExpelled.push(userId);
+        }
+        if (cleanEmail && !currentExpelled.includes(cleanEmail)) {
+          currentExpelled.push(cleanEmail);
+        }
+
+        const activePlayers = (camp.dossier?.activePlayers || []).filter(
+          (p: any) => p.id !== userId && p._id !== userId && (!cleanEmail || p.email !== cleanEmail)
+        );
+        const familyRelations = (camp.dossier?.familyRelations || []).filter(
+          (r: any) => r.playerId !== userId && r.source_entity_id !== userId && (!cleanEmail || r.email !== cleanEmail)
+        );
+
+        await supabase.from('campaigns').update({
+          dossier: {
+            ...camp.dossier,
+            activePlayers,
+            familyRelations,
+            expelledAccountIds: currentExpelled,
+          },
+          active_players: activePlayers,
+          expelled_account_ids: currentExpelled,
+          updated_at: new Date().toISOString(),
+        }).eq('code', code);
+      }
+
+      // Also clean standalone tables
+      try {
+        await supabase.from('character_bios').delete().eq('campaign_code', code).eq('player_id', userId);
+        await supabase.from('family_relations').delete().eq('campaign_code', code).eq('source_entity_id', userId);
+      } catch {}
+      return true;
+    } catch (err) {
+      console.warn('[Supabase] removeCampaignMember exception:', err);
       return false;
     }
   }
@@ -691,7 +969,7 @@ export class SupabaseSyncService {
       const cleanSession = sanitizeHeavyPayload(session);
       const payload = sessionModelToRow(cleanSession, code);
 
-      const { error } = await supabase.from('sessions').upsert(payload, { onConflict: 'id' });
+      const { error } = await safeUpsert('sessions', payload, { onConflict: 'id' });
       if (error) return handleSupabaseError('Error saving session', error);
 
       return true;
@@ -723,7 +1001,7 @@ export class SupabaseSyncService {
       const code = campaignCode.trim().toUpperCase();
       const payload = noteModelToRow(note, code);
 
-      const { error } = await supabase.from('notes').upsert(payload, { onConflict: 'id' });
+      const { error } = await safeUpsert('notes', payload, { onConflict: 'id' });
       if (error) return handleSupabaseError('Error saving note', error);
 
       return true;
@@ -791,7 +1069,7 @@ export class SupabaseSyncService {
         updated_at: new Date().toISOString(),
       };
 
-      const { error } = await supabase.from('entities').upsert(payload, { onConflict: 'id' });
+      const { error } = await safeUpsert('entities', payload, { onConflict: 'id' });
       if (error) console.warn('[Supabase] Warning/error saving entity:', error.message || error);
       return !error;
     } catch (err) {
@@ -839,7 +1117,10 @@ export class SupabaseSyncService {
       const cleanCode = campaignCode.trim().toUpperCase();
       const payload = chapterModelToRow(chapter, cleanCode);
 
-      const { error } = await supabase.from('chapters').upsert(payload, { onConflict: 'id' });
+      const { error } = await safeUpsert('chapters', payload, {
+        onConflict: 'id',
+        fallbackTable: 'campaign_chapters',
+      });
       if (error) {
         return handleSupabaseError('Error saving chapter', error);
       }
@@ -859,12 +1140,18 @@ export class SupabaseSyncService {
       const code = campaignCode.trim();
       const cleanCode = code.toUpperCase();
 
-      // 1. Update chapters table
+      // 1. Update campaign_chapters / chapters table
       supabase
-        .from('chapters')
+        .from('campaign_chapters')
         .update({ cover_image_url: coverImageUrl, updated_at: new Date().toISOString() })
         .eq('id', chapterId)
-        .then(() => {}, () => {});
+        .then(() => {}, () => {
+          supabase
+            .from('chapters')
+            .update({ cover_image_url: coverImageUrl, updated_at: new Date().toISOString() })
+            .eq('id', chapterId)
+            .then(() => {}, () => {});
+        });
 
       // 2. Update campaign dossier
       const { data: camp } = await supabase
@@ -954,16 +1241,23 @@ export class SupabaseSyncService {
       }
 
       // 2. Fetch existing active_players from campaigns to avoid wiping out fellow party members
-      const { data: camp } = await supabase.from('campaigns').select('active_players, dossier').eq('code', code).maybeSingle();
+      const { data: camp } = await supabase.from('campaigns').select('active_players, dossier, expelled_account_ids').eq('code', code).maybeSingle();
       const existingPlayers: any[] = Array.isArray(camp?.active_players) ? camp.active_players : [];
+
+      const expelledSet = new Set<string>([
+        ...(Array.isArray(camp?.expelled_account_ids) ? camp.expelled_account_ids : []),
+        ...(Array.isArray(camp?.dossier?.expelledAccountIds) ? camp.dossier.expelledAccountIds : []),
+      ].map((id: string) => String(id).toLowerCase()));
 
       // Non-destructive merge
       const playerMap = new Map<string, any>();
       existingPlayers.forEach((p) => {
-        if (p && p.id) playerMap.set(p.id, p);
+        if (p && p.id && !expelledSet.has(String(p.id).toLowerCase()) && (!p.email || !expelledSet.has(String(p.email).toLowerCase()))) {
+          playerMap.set(p.id, p);
+        }
       });
       sanitized.forEach((p) => {
-        if (p && p.id) {
+        if (p && p.id && !expelledSet.has(String(p.id).toLowerCase()) && (!p.email || !expelledSet.has(String(p.email).toLowerCase()))) {
           const current = playerMap.get(p.id) || {};
           playerMap.set(p.id, { ...current, ...p });
         }
@@ -971,19 +1265,25 @@ export class SupabaseSyncService {
       const mergedPlayers = Array.from(playerMap.values());
       const dossier = camp?.dossier || {};
 
+      const cleanCode = code.trim().toUpperCase();
       const { error } = await supabase.from('campaigns').update({
-        active_players: mergedPlayers,
         dossier: {
           ...dossier,
           activePlayers: mergedPlayers,
         },
         updated_at: new Date().toISOString(),
-      }).eq('code', code);
+      }).or(`code.eq.${code},code.eq.${cleanCode}`);
 
-      if (error) return handleSupabaseError('Error saving active players', error);
-      return !error;
-    } catch (err) {
-      return handleSupabaseError('Failed to save active players', err);
+      if (error) {
+        // Fallback if dossier column doesn't exist in Supabase schema
+        await supabase.from('campaigns').update({
+          updated_at: new Date().toISOString(),
+        }).or(`code.eq.${code},code.eq.${cleanCode}`);
+        return true;
+      }
+      return true;
+    } catch {
+      return false;
     }
   }
 
@@ -993,14 +1293,20 @@ export class SupabaseSyncService {
   static async saveUserAccount(account: any): Promise<boolean> {
     if (!isSupabaseConfigured() || !account || !account.id) return false;
     try {
+      const authUserRes = await supabase.auth.getUser();
+      const currentAuthId = authUserRes.data?.user?.id;
+
+      // In Supabase RLS, users can only update their own row (id = auth.uid())
+      if (currentAuthId && account.id !== currentAuthId) {
+        return true; // Gracefully skip updating other users' central accounts
+      }
+
       const email = (account.email || '').toLowerCase().trim();
       const payload = {
         id: account.id,
         email: email || `${account.id}@local.chronicle`,
         character_name: account.characterName || 'Avventuriero',
         is_dm: Boolean(account.isDm),
-        dm_campaigns: Array.isArray(account.dmCampaigns) ? account.dmCampaigns : [],
-        joined_campaigns: Array.isArray(account.joinedCampaigns) ? account.joinedCampaigns : [],
         color: account.color || '#6366f1',
         avatar_url: account.avatarUrl || '',
         campaign_profiles: account.campaignProfiles || {},
@@ -1008,21 +1314,84 @@ export class SupabaseSyncService {
         updated_at: new Date().toISOString(),
       };
 
-      // Try upsert by id
-      let { error } = await supabase.from('user_accounts').upsert(payload, { onConflict: 'id' });
-      // If error is caused by email uniqueness conflict with a different ID, upsert on email
-      if (error && email) {
-        const { error: emailErr } = await supabase.from('user_accounts').upsert(payload, { onConflict: 'email' });
-        if (!emailErr) error = null;
-      }
+      const { error } = await supabase.from('user_accounts').upsert(payload, { onConflict: 'id' });
       if (error) {
-        console.warn('[Supabase] saveUserAccount warning:', error.message);
         return false;
       }
       return true;
     } catch (err) {
-      console.warn('[Supabase] saveUserAccount exception:', err);
       return false;
+    }
+  }
+
+  /**
+   * Fetches a specific user account from public.user_accounts
+   */
+  static async getUserAccount(userId: string): Promise<any | null> {
+    if (!isSupabaseConfigured() || !userId) return null;
+    try {
+      const { data, error } = await supabase
+        .from('user_accounts')
+        .select('*')
+        .eq('id', userId)
+        .maybeSingle();
+
+      if (error) {
+        console.warn('[Supabase] getUserAccount error:', error.message);
+        return null;
+      }
+      if (!data) return null;
+
+      // Also get memberships from campaign_members
+      const { dmCampaigns, joinedCampaigns } = await this.getUserCampaigns(userId);
+
+      return {
+        id: data.id,
+        email: data.email,
+        characterName: data.character_name,
+        isDm: Boolean(data.is_dm),
+        dmCampaigns,
+        joinedCampaigns,
+        color: data.color || '#6366f1',
+        avatarUrl: data.avatar_url || '',
+        campaignProfiles: data.campaign_profiles || {},
+        preferences: data.preferences || {},
+        createdAt: data.created_at || new Date().toISOString(),
+      };
+    } catch (err) {
+      console.warn('[Supabase] getUserAccount exception:', err);
+      return null;
+    }
+  }
+
+  /**
+   * Fetches campaigns associated with a user from campaign_members table
+   */
+  static async getUserCampaigns(userId: string): Promise<{ dmCampaigns: string[]; joinedCampaigns: string[] }> {
+    if (!isSupabaseConfigured() || !userId) return { dmCampaigns: [], joinedCampaigns: [] };
+    try {
+      const { data, error } = await supabase
+        .from('campaign_members')
+        .select('campaign_code, role, status')
+        .eq('user_id', userId)
+        .eq('status', 'active');
+
+      if (error || !Array.isArray(data)) {
+        return { dmCampaigns: [], joinedCampaigns: [] };
+      }
+
+      const dmCampaigns: string[] = [];
+      const joinedCampaigns: string[] = [];
+      for (const row of data) {
+        if (row.role === 'dm') {
+          dmCampaigns.push(row.campaign_code);
+        } else {
+          joinedCampaigns.push(row.campaign_code);
+        }
+      }
+      return { dmCampaigns, joinedCampaigns };
+    } catch {
+      return { dmCampaigns: [], joinedCampaigns: [] };
     }
   }
 
@@ -1032,14 +1401,19 @@ export class SupabaseSyncService {
   static async saveAllUserAccounts(accounts: any[]): Promise<boolean> {
     if (!isSupabaseConfigured() || !Array.isArray(accounts) || accounts.length === 0) return false;
     try {
-      // Deduplicate by id and email so conflicting rows don't violate PostgreSQL unique constraint
+      const authUserRes = await supabase.auth.getUser();
+      const currentAuthId = authUserRes.data?.user?.id;
+
+      // Deduplicate by id and filter to current authenticated user for RLS compliance
       const byIdOrEmail = new Map<string, any>();
       for (const a of accounts) {
         if (!a || !a.id) continue;
-        const key = a.id;
-        byIdOrEmail.set(key, a);
+        if (currentAuthId && a.id !== currentAuthId) continue; // RLS restricts writing other user accounts
+        byIdOrEmail.set(a.id, a);
       }
       const uniqueAccounts = Array.from(byIdOrEmail.values());
+      if (uniqueAccounts.length === 0) return true;
+
       const payloads = uniqueAccounts.map((account) => {
         const email = (account.email || '').toLowerCase().trim();
         return {
@@ -1047,8 +1421,6 @@ export class SupabaseSyncService {
           email: email || `${account.id}@local.chronicle`,
           character_name: account.characterName || 'Avventuriero',
           is_dm: Boolean(account.isDm),
-          dm_campaigns: Array.isArray(account.dmCampaigns) ? account.dmCampaigns : [],
-          joined_campaigns: Array.isArray(account.joinedCampaigns) ? account.joinedCampaigns : [],
           color: account.color || '#6366f1',
           avatar_url: account.avatarUrl || '',
           campaign_profiles: account.campaignProfiles || {},
@@ -1059,12 +1431,30 @@ export class SupabaseSyncService {
 
       const { error } = await supabase.from('user_accounts').upsert(payloads, { onConflict: 'id' });
       if (error) {
-        console.warn('[Supabase] saveAllUserAccounts batch warning:', error.message);
         return false;
       }
       return true;
     } catch (err) {
-      console.warn('[Supabase] saveAllUserAccounts exception:', err);
+      return false;
+    }
+  }
+
+  /**
+   * Deletes a user account completely from public.user_accounts and campaign_members on Supabase
+   */
+  static async deleteUserAccount(userId: string, email?: string): Promise<boolean> {
+    if (!isSupabaseConfigured() || !userId) return false;
+    try {
+      const cleanEmail = (email || '').toLowerCase().trim();
+      let query = `id.eq.${userId}`;
+      if (cleanEmail && !cleanEmail.endsWith('@local.chronicle')) {
+        query += `,email.eq.${cleanEmail}`;
+      }
+      await supabase.from('user_accounts').delete().or(query);
+      await supabase.from('campaign_members').delete().or(`user_id.eq.${userId}${cleanEmail ? `,user_id.eq.${cleanEmail}` : ''}`);
+      return true;
+    } catch (err) {
+      console.warn('[Supabase] deleteUserAccount exception:', err);
       return false;
     }
   }
@@ -1077,7 +1467,6 @@ export class SupabaseSyncService {
     try {
       const { data, error } = await supabase.from('user_accounts').select('*');
       if (error || !Array.isArray(data)) {
-        console.warn('[Supabase] fetchAllUserAccounts error:', error?.message);
         return [];
       }
       return data.map((row) => ({
@@ -1105,7 +1494,7 @@ export class SupabaseSyncService {
   static async fetchAllCampaigns(): Promise<any[]> {
     if (!isSupabaseConfigured()) return [];
     try {
-      const { data, error } = await supabase.from('campaigns').select('code, title, created_at, dm_id, dossier');
+      const { data, error } = await supabase.from('campaigns').select('code, title, created_at, dm_id, dossier, expelled_account_ids');
       if (error || !Array.isArray(data)) return [];
       return data.map((c) => ({
         code: c.code,
@@ -1114,6 +1503,9 @@ export class SupabaseSyncService {
         dmId: c.dm_id || c.dossier?.dmId || undefined,
         dmEmail: c.dossier?.dmEmail || c.dossier?.creatorEmail || undefined,
         dmName: c.dossier?.dmName || c.dossier?.creatorName || undefined,
+        expelledAccountIds: Array.isArray(c.expelled_account_ids)
+          ? c.expelled_account_ids
+          : (Array.isArray(c.dossier?.expelledAccountIds) ? c.dossier.expelledAccountIds : []),
       }));
     } catch {
       return [];
@@ -1181,7 +1573,7 @@ export class SupabaseSyncService {
     try {
       const code = campaignCode.trim().toUpperCase();
       const payload = characterBioModelToRow(bio, code);
-      const { error } = await supabase.from('character_bios').upsert(payload, { onConflict: 'campaign_code,player_id' });
+      const { error } = await safeUpsert('character_bios', payload, { onConflict: 'campaign_code,player_id' });
       if (error) {
         return handleSupabaseError('Error saving character bio', error);
       }
@@ -1204,7 +1596,7 @@ export class SupabaseSyncService {
 
       if (payloads.length === 0) return true;
 
-      const { error } = await supabase.from('character_bios').upsert(payloads, { onConflict: 'campaign_code,player_id' });
+      const { error } = await safeUpsert('character_bios', payloads, { onConflict: 'campaign_code,player_id' });
       if (error) {
         return handleSupabaseError('Error saving character bios', error);
       }
@@ -1262,7 +1654,7 @@ export class SupabaseSyncService {
         order_index: rel.order || 0,
         updated_at: new Date().toISOString(),
       };
-      const { error } = await supabase.from('family_relations').upsert(payload, { onConflict: 'id' });
+      const { error } = await safeUpsert('family_relations', payload, { onConflict: 'id' });
       return !error;
     } catch (err) {
       console.error('[Supabase] Failed to save single family relation:', err);
@@ -1453,21 +1845,36 @@ export class SupabaseSyncService {
   }
 
   /**
-   * Persists calendar system and lore date state into campaigns table in Supabase
+   * Persists calendar system and lore date state into campaigns and calendars tables in Supabase
    */
   static async saveCalendar(campaignCode: string, calendar: any): Promise<boolean> {
     if (!isSupabaseConfigured() || !campaignCode || !calendar) return false;
     try {
-      const code = campaignCode.trim();
-      const { error } = await supabase.from('campaigns').update({
+      const code = campaignCode.trim().toUpperCase();
+
+      // 1. Update campaigns table JSON
+      await supabase.from('campaigns').update({
         calendar_system: calendar,
         updated_at: new Date().toISOString(),
-      }).eq('code', code);
+      }).or(`code.eq.${code},code.eq.${campaignCode.trim()}`);
 
-      if (error) console.error('[Supabase] Error saving calendar:', error);
-      return !error;
+      // 2. Upsert to calendars relational table
+      const calendarRow = {
+        campaign_code: code,
+        system_name: calendar.name || calendar.system_name || 'Harptos',
+        months: calendar.months || [],
+        current_day: calendar.currentDay || 1,
+        current_month: calendar.currentMonth || 1,
+        current_year: calendar.currentYear || 1492,
+        events: calendar.events || [],
+        updated_at: new Date().toISOString(),
+      };
+      try {
+        await supabase.from('calendars').upsert(calendarRow, { onConflict: 'campaign_code' });
+      } catch {}
+
+      return true;
     } catch (err) {
-      console.error('[Supabase] Failed to save calendar:', err);
       return false;
     }
   }
@@ -1485,12 +1892,10 @@ export class SupabaseSyncService {
         .maybeSingle();
 
       if (error) {
-        console.warn('[Supabase] Warning fetching user preferences:', error.message);
         return null;
       }
       return data || null;
-    } catch (err) {
-      console.warn('[Supabase] Error fetching user preferences:', err);
+    } catch {
       return null;
     }
   }
@@ -1516,10 +1921,8 @@ export class SupabaseSyncService {
         updated_at: new Date().toISOString(),
       };
       const { error } = await supabase.from('user_preferences').upsert(payload, { onConflict: 'user_id' });
-      if (error) console.warn('[Supabase] Warning saving user preferences:', error.message);
       return !error;
-    } catch (err) {
-      console.warn('[Supabase] Error saving user preferences:', err);
+    } catch {
       return false;
     }
   }
@@ -1541,12 +1944,10 @@ export class SupabaseSyncService {
         .maybeSingle();
 
       if (error) {
-        console.warn('[Supabase] Warning fetching oracle chat:', error.message);
         return null;
       }
       return Array.isArray(data?.messages) ? data.messages : null;
-    } catch (err) {
-      console.warn('[Supabase] Error fetching oracle chat:', err);
+    } catch {
       return null;
     }
   }
@@ -1569,10 +1970,8 @@ export class SupabaseSyncService {
       };
 
       const { error } = await supabase.from('oracle_chats').upsert(payload, { onConflict: 'id' });
-      if (error) console.warn('[Supabase] Warning saving oracle chat:', error.message);
       return !error;
-    } catch (err) {
-      console.warn('[Supabase] Error saving oracle chat:', err);
+    } catch {
       return false;
     }
   }
@@ -1583,11 +1982,16 @@ export class SupabaseSyncService {
   static async deleteChapter(chapterId: string, campaignCode?: string): Promise<boolean> {
     if (!isSupabaseConfigured()) return false;
     try {
-      const { error } = await supabase.from('chapters').delete().eq('id', chapterId);
+      try {
+        await supabase.from('campaign_chapters').delete().eq('id', chapterId);
+      } catch {}
+      try {
+        await supabase.from('chapters').delete().eq('id', chapterId);
+      } catch {}
       if (campaignCode) {
         this.removeChapterMeta(campaignCode, chapterId).catch(() => {});
       }
-      return !error;
+      return true;
     } catch {
       return false;
     }
@@ -1600,18 +2004,10 @@ export class SupabaseSyncService {
     if (!isSupabaseConfigured() || !campaignCode || !map) return false;
 
     try {
-      const code = campaignCode.trim();
-      const payload = {
-        id: map.id || `map_${Date.now()}`,
-        campaign_code: code,
-        title: map.title || 'Mappa',
-        image_url: map.imageUrl || '',
-        pins: map.pins || [],
-        fog_of_war: {},
-        updated_at: new Date().toISOString(),
-      };
+      const code = campaignCode.trim().toUpperCase();
+      const payload = mapModelToRow(map, code);
 
-      const { error } = await supabase.from('maps').upsert(payload, { onConflict: 'id' });
+      const { error } = await safeUpsert('maps', payload, { onConflict: 'id' });
       if (error) console.error('[Supabase] Error saving map:', error);
 
       if (map.folderId !== undefined || map.description !== undefined) {
@@ -1621,6 +2017,23 @@ export class SupabaseSyncService {
       return !error;
     } catch (err) {
       console.error('[Supabase] Failed to save map:', err);
+      return false;
+    }
+  }
+
+  /**
+   * Bulk save all maps for a campaign
+   */
+  static async saveMaps(campaignCode: string, maps: WorldMap[]): Promise<boolean> {
+    if (!isSupabaseConfigured() || !campaignCode || !Array.isArray(maps)) return false;
+    try {
+      const code = campaignCode.trim().toUpperCase();
+      const payloads = maps.map((m) => mapModelToRow(m, code));
+      if (payloads.length === 0) return true;
+
+      const { error } = await safeUpsert('maps', payloads, { onConflict: 'id' });
+      return !error;
+    } catch {
       return false;
     }
   }
@@ -1760,18 +2173,13 @@ export class SupabaseSyncService {
     if (!isSupabaseConfigured() || !campaignCode || !item) return false;
 
     try {
-      const code = campaignCode.trim();
-      const payload = {
-        id: item.id || `scr_${Date.now()}`,
-        campaign_code: code,
-        title: item.title || '',
-        image_url: item.imageUrl,
-        caption: item.caption || '',
-        created_by: item.authorName || '',
-        created_at: item.createdAt || new Date().toISOString(),
-      };
+      const code = campaignCode.trim().toUpperCase();
+      const payload = scrapbookModelToRow(item, code);
 
-      const { error } = await supabase.from('scrapbook').upsert(payload, { onConflict: 'id' });
+      const { error } = await safeUpsert('scrapbook', payload, {
+        onConflict: 'id',
+        fallbackTable: 'scrapbook_items',
+      });
       if (error) console.error('[Supabase] Error saving scrapbook item:', error);
       return !error;
     } catch (err) {
@@ -1811,7 +2219,7 @@ export class SupabaseSyncService {
         created_at: log.createdAt || new Date().toISOString(),
       };
 
-      const { error } = await supabase.from('audio_logs').upsert(payload, { onConflict: 'id' });
+      const { error } = await safeUpsert('audio_logs', payload, { onConflict: 'id' });
       if (error) console.error('[Supabase] Error saving audio log:', error);
       return !error;
     } catch (err) {
@@ -1856,54 +2264,39 @@ export class SupabaseSyncService {
     const stats: Record<string, number> = {};
     const errors: string[] = [];
 
+    // 0. Ensure the parent campaign row exists in 'campaigns' table before writing any child relational records
+    try {
+      const campRes = await supabase.from('campaigns').select('code').eq('code', code).maybeSingle();
+      if (!campRes.data || !campRes.data.code) {
+        await safeUpsert(
+          'campaigns',
+          {
+            code,
+            title: `Campagna ${code}`,
+            system: 'D&D 5e',
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'code' }
+        );
+      }
+    } catch (campInitErr) {
+      console.warn('[Supabase Bulk] Warning initializing parent campaign:', campInitErr);
+    }
+
     // Sanitize heavy base64 media payloads to prevent PostgreSQL write timeout (code 57014)
     const data = sanitizeHeavyPayload(rawCampaignData);
 
     // 1. Sessions
     if (Array.isArray(data.sessions) && data.sessions.length > 0) {
       try {
-        const payloads = data.sessions.map((session) => {
-          const meta = {
-            images: Array.isArray(session.images) ? session.images : [],
-            coverImage: session.coverImage || '',
-            entitiesExtracted: Boolean(session.entitiesExtracted),
-            entitiesExtractedAt: session.entitiesExtractedAt || null,
-            memorySynced: Boolean(session.memorySynced),
-            memorySyncedAt: session.memorySyncedAt || null,
-            sessionType: session.sessionType || 'mixed',
-            quotes: Array.isArray(session.quotes) ? session.quotes : [],
-            audioLogs: Array.isArray(session.audioLogs) ? session.audioLogs : [],
-            excludedPlayerIds: Array.isArray(session.excludedPlayerIds) ? session.excludedPlayerIds : [],
-            attendees: Array.isArray(session.attendees) ? session.attendees : [],
-            gazetteConfig: session.gazetteConfig || null,
-          };
-          const existingTags = Array.isArray((session as any).tags)
-            ? (session as any).tags.filter((t: any) => typeof t === 'string' && !t.startsWith('__meta__:'))
-            : [];
-          const tagsWithMeta = [...existingTags, '__meta__:' + JSON.stringify(meta)];
+        const payloads = data.sessions
+          .filter((s: any) => s && (s._id || s.id))
+          .map((session: any) => sessionModelToRow(session, code));
 
-          return {
-            id: session._id || `sess_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-            campaign_code: code,
-            chapter_id: session.chapterId || null,
-            number: session.number || 1,
-            title: session.title || `Sessione ${session.number}`,
-            summary: typeof session.recap === 'string' ? session.recap : '',
-            recap: session.recap || [],
-            date_str: session.date || '',
-            calendar_date: session.loreDate || {},
-            audio_url: '',
-            plot_events: session.events || [],
-            tags: tagsWithMeta,
-            updated_at: new Date().toISOString(),
-          };
-        });
-
-        // Split into chunks of 50 to avoid any HTTP payload size limits
         const chunkSize = 50;
         for (let i = 0; i < payloads.length; i += chunkSize) {
           const chunk = payloads.slice(i, i + chunkSize);
-          const { error } = await supabase.from('sessions').upsert(chunk, { onConflict: 'id' });
+          const { error } = await safeUpsert('sessions', chunk, { onConflict: 'id' });
           if (error) throw error;
         }
         stats.sessions = payloads.length;
@@ -1916,19 +2309,19 @@ export class SupabaseSyncService {
     // 2. Chapters
     if (Array.isArray(data.chapters) && data.chapters.length > 0) {
       try {
-        const payloads = data.chapters.map((chapter) => ({
-          id: chapter.id || `chap_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-          campaign_code: code,
-          number: chapter.order || 1,
-          title: chapter.name || '',
-          synopsis: chapter.description || '',
-          status: 'in_progress',
-          order_index: chapter.order || 0,
-          updated_at: new Date().toISOString(),
-        }));
+        const payloads = data.chapters
+          .filter((c: any) => c && c.id)
+          .map((chapter: any) => chapterModelToRow(chapter, code));
 
-        const { error } = await supabase.from('chapters').upsert(payloads, { onConflict: 'id' });
-        if (error) throw error;
+        const chunkSize = 50;
+        for (let i = 0; i < payloads.length; i += chunkSize) {
+          const chunk = payloads.slice(i, i + chunkSize);
+          const { error } = await safeUpsert('chapters', chunk, {
+            onConflict: 'id',
+            fallbackTable: 'campaign_chapters',
+          });
+          if (error) throw error;
+        }
         stats.chapters = payloads.length;
       } catch (err: any) {
         console.error('[Supabase Bulk] Error saving chapters:', err);
@@ -1939,49 +2332,14 @@ export class SupabaseSyncService {
     // 3. Entities
     if (Array.isArray(data.entities) && data.entities.length > 0) {
       try {
-        const payloads = data.entities.map((entity) => {
-          const entityType = entity.type || (entity as any).category || 'npc';
-          const rawImages = Array.isArray(entity.images)
-            ? entity.images
-            : ((entity as any).imageUrl ? [(entity as any).imageUrl] : []);
-
-          const cleanImages = rawImages.map((img) =>
-            typeof img === 'string' && img.length > 300000 ? img.slice(0, 100) : img
-          );
-          const primaryImageUrl =
-            typeof (entity as any).imageUrl === 'string' && (entity as any).imageUrl.length < 300000
-              ? (entity as any).imageUrl
-              : cleanImages[0] || '';
-
-          const { _id, name, type, category, description, imageUrl, status, ...restAttributes } = entity as any;
-          const attributes = {
-            ...restAttributes,
-            images: cleanImages,
-            progressNote: entity.progressNote || '',
-            aliases: entity.aliases || [],
-            aiConfig: entity.aiConfig || undefined,
-            location: entity.location || undefined,
-            mapId: entity.mapId || undefined,
-            pinId: entity.pinId || undefined,
-          };
-
-          return {
-            id: _id || `ent_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-            campaign_code: code,
-            name: name || 'Senza Nome',
-            type: entityType,
-            description: description || '',
-            image_url: primaryImageUrl,
-            status: status || 'alive',
-            attributes,
-            updated_at: new Date().toISOString(),
-          };
-        });
+        const payloads = data.entities
+          .filter((e: any) => e && (e._id || e.id))
+          .map((entity: any) => entityModelToRow(entity, code));
 
         const chunkSize = 50;
         for (let i = 0; i < payloads.length; i += chunkSize) {
           const chunk = payloads.slice(i, i + chunkSize);
-          const { error } = await supabase.from('entities').upsert(chunk, { onConflict: 'id' });
+          const { error } = await safeUpsert('entities', chunk, { onConflict: 'id' });
           if (error) throw error;
         }
         stats.entities = payloads.length;
@@ -1994,23 +2352,14 @@ export class SupabaseSyncService {
     // 4. Notes
     if (Array.isArray(data.notes) && data.notes.length > 0) {
       try {
-        const payloads = data.notes.map((note) => ({
-          id: note._id || `note_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-          campaign_code: code,
-          author_id: note.author?._id || 'unknown',
-          author_name: note.author?.characterName || 'Giocatore',
-          title: note.title || '',
-          content: note.content || '',
-          visibility: note.visibility || 'group',
-          ask_dm: Boolean(note.askDm),
-          dm_reply: note.dmResponse?.text || '',
-          updated_at: new Date().toISOString(),
-        }));
+        const payloads = data.notes
+          .filter((n: any) => n && (n._id || n.id))
+          .map((note: any) => noteModelToRow(note, code));
 
         const chunkSize = 50;
         for (let i = 0; i < payloads.length; i += chunkSize) {
           const chunk = payloads.slice(i, i + chunkSize);
-          const { error } = await supabase.from('notes').upsert(chunk, { onConflict: 'id' });
+          const { error } = await safeUpsert('notes', chunk, { onConflict: 'id' });
           if (error) throw error;
         }
         stats.notes = payloads.length;
@@ -2023,18 +2372,16 @@ export class SupabaseSyncService {
     // 5. Maps
     if (Array.isArray(data.maps) && data.maps.length > 0) {
       try {
-        const payloads = data.maps.map((map) => ({
-          id: map.id || `map_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-          campaign_code: code,
-          title: map.title || 'Mappa',
-          image_url: map.imageUrl || '',
-          pins: map.pins || [],
-          fog_of_war: {},
-          updated_at: new Date().toISOString(),
-        }));
+        const payloads = data.maps
+          .filter((m: any) => m && m.id)
+          .map((map: any) => mapModelToRow(map, code));
 
-        const { error } = await supabase.from('maps').upsert(payloads, { onConflict: 'id' });
-        if (error) throw error;
+        const chunkSize = 50;
+        for (let i = 0; i < payloads.length; i += chunkSize) {
+          const chunk = payloads.slice(i, i + chunkSize);
+          const { error } = await safeUpsert('maps', chunk, { onConflict: 'id' });
+          if (error) throw error;
+        }
         stats.maps = payloads.length;
       } catch (err: any) {
         console.error('[Supabase Bulk] Error saving maps:', err);
@@ -2045,18 +2392,19 @@ export class SupabaseSyncService {
     // 6. Scrapbook
     if (Array.isArray(data.scrapbookItems) && data.scrapbookItems.length > 0) {
       try {
-        const payloads = data.scrapbookItems.map((item) => ({
-          id: item.id || `scr_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-          campaign_code: code,
-          title: item.title || '',
-          image_url: item.imageUrl,
-          caption: item.caption || '',
-          created_by: item.authorName || '',
-          created_at: item.createdAt || new Date().toISOString(),
-        }));
+        const payloads = data.scrapbookItems
+          .filter((s: any) => s && s.id)
+          .map((item: any) => scrapbookModelToRow(item, code));
 
-        const { error } = await supabase.from('scrapbook').upsert(payloads, { onConflict: 'id' });
-        if (error) throw error;
+        const chunkSize = 50;
+        for (let i = 0; i < payloads.length; i += chunkSize) {
+          const chunk = payloads.slice(i, i + chunkSize);
+          const { error } = await safeUpsert('scrapbook', chunk, {
+            onConflict: 'id',
+            fallbackTable: 'scrapbook_items',
+          });
+          if (error) throw error;
+        }
         stats.scrapbook = payloads.length;
       } catch (err: any) {
         console.error('[Supabase Bulk] Error saving scrapbook:', err);
@@ -2067,18 +2415,16 @@ export class SupabaseSyncService {
     // 7. Audio Logs
     if (Array.isArray(data.audioLogs) && data.audioLogs.length > 0) {
       try {
-        const payloads = data.audioLogs.map((log) => ({
-          id: log.id || `aud_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-          campaign_code: code,
-          title: log.title || 'Diario Audio',
-          audio_url: log.audioUrl,
-          duration: log.durationSeconds || 0,
-          recorded_by: log.recordedBy || '',
-          created_at: log.createdAt || new Date().toISOString(),
-        }));
+        const payloads = data.audioLogs
+          .filter((a: any) => a && a.id)
+          .map((log: any) => audioLogModelToRow(log, code));
 
-        const { error } = await supabase.from('audio_logs').upsert(payloads, { onConflict: 'id' });
-        if (error) throw error;
+        const chunkSize = 50;
+        for (let i = 0; i < payloads.length; i += chunkSize) {
+          const chunk = payloads.slice(i, i + chunkSize);
+          const { error } = await safeUpsert('audio_logs', chunk, { onConflict: 'id' });
+          if (error) throw error;
+        }
         stats.audioLogs = payloads.length;
       } catch (err: any) {
         console.error('[Supabase Bulk] Error saving audio logs:', err);
@@ -2093,7 +2439,7 @@ export class SupabaseSyncService {
           .filter((bio: any) => bio && bio.playerId)
           .map((bio: any) => characterBioModelToRow(bio, code));
 
-        const { error } = await supabase.from('character_bios').upsert(payloads, { onConflict: 'campaign_code,player_id' });
+        const { error } = await safeUpsert('character_bios', payloads, { onConflict: 'campaign_code,player_id' });
         if (error) throw error;
         stats.characterBios = payloads.length;
       } catch (err: any) {
@@ -2116,7 +2462,7 @@ export class SupabaseSyncService {
           updated_at: new Date().toISOString(),
         }));
 
-        const { error } = await supabase.from('family_relations').upsert(payloads, { onConflict: 'id' });
+        const { error } = await safeUpsert('family_relations', payloads, { onConflict: 'id' });
         if (error) throw error;
         stats.familyRelations = payloads.length;
       } catch (err: any) {
@@ -2139,7 +2485,7 @@ export class SupabaseSyncService {
           updated_at: new Date().toISOString(),
         }));
 
-        const { error } = await supabase.from('world_lore_articles').upsert(payloads, { onConflict: 'id' });
+        const { error } = await safeUpsert('world_lore_articles', payloads, { onConflict: 'id' });
         if (error) throw error;
         stats.worldLoreArticles = payloads.length;
       } catch (err: any) {

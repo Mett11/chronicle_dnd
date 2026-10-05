@@ -7,6 +7,8 @@ export interface CampaignProfile {
   status?: PlayerPartyStatus;
   tags?: string[];
   aliases?: string[];
+  isCoDm?: boolean;
+  isCoMaster?: boolean;
 }
 
 export interface UserPreferences {
@@ -71,6 +73,8 @@ export interface UserAccount {
   email: string;
   characterName: string;
   isDm?: boolean;
+  isCoDm?: boolean;
+  isCoMaster?: boolean;
   dmCampaigns?: string[];
   color: string;
   avatarUrl?: string;
@@ -130,6 +134,8 @@ export interface Player {
   characterName: string;
   email?: string;
   isDm: boolean;
+  isCoDm?: boolean;
+  isCoMaster?: boolean;
   color?: string;
   aliases?: string[];
   avatarUrl?: string;

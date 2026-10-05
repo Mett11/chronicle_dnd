@@ -813,6 +813,14 @@ export const CLASS_THEMES: ClassTheme[] = [
 
 const THEME_STORAGE_KEY = 'chronicle_theme_class';
 
+export function hasUserSavedTheme(): boolean {
+  try {
+    return Boolean(localStorage.getItem(THEME_STORAGE_KEY));
+  } catch {
+    return false;
+  }
+}
+
 export function getStoredTheme(): ClassTheme {
   const storedId = localStorage.getItem(THEME_STORAGE_KEY);
   const found = CLASS_THEMES.find((t) => t.id === storedId);

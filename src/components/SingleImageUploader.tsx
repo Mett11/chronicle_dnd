@@ -141,7 +141,7 @@ export function SingleImageUploader({
       )}
 
       {/* If Image is already set, show preview card with quick actions */}
-      {value ? (
+      {value && value.trim() ? (
         <div className="relative group rounded-2xl overflow-hidden border border-[#222] bg-[#111] shadow-xl">
           <div className={`w-full ${previewHeightClass || aspectClass} bg-[#111] flex items-center justify-center relative overflow-hidden`}>
             <img
@@ -315,11 +315,13 @@ export function SingleImageUploader({
             >
               <X size={24} />
             </button>
-            <img
-              src={value}
-              alt="Visualizzazione ingrandita"
-              className="max-h-[85vh] max-w-full rounded-2xl object-contain shadow-2xl border border-surface-3"
-            />
+            {value && value.trim() ? (
+              <img
+                src={value}
+                alt="Visualizzazione ingrandita"
+                className="max-h-[85vh] max-w-full rounded-2xl object-contain shadow-2xl border border-surface-3"
+              />
+            ) : null}
           </div>
         </div>
       )}

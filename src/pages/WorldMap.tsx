@@ -1,6 +1,6 @@
 import React, { useState, useRef, useMemo, useEffect } from 'react';
 import { CampaignManager } from '../store/campaignStore';
-import { WorldMap as WorldMapType, MapPin, Entity, MapFolder, Session } from '../types';
+import { WorldMap as WorldMapType, type MapPin, Entity, MapFolder, Session } from '../types';
 import { useAuth } from '../components/AuthProvider';
 import { SingleImageUploader } from '../components/SingleImageUploader';
 import { ConfirmModal } from '../components/ConfirmModal';
@@ -995,21 +995,29 @@ export function WorldMap() {
                 className="relative inline-block"
                 onClick={handleMapClick}
               >
-                <img
-                  ref={mapImageRef}
-                  src={activeMap.imageUrl}
-                  alt={activeMap.title}
-                  draggable={false}
-                  className={`object-contain rounded-xl border border-surface-2 pointer-events-none select-none transition-all duration-150 ${
-                    isFullscreen
-                      ? 'max-w-[96vw] max-h-[92vh]'
-                      : 'max-w-[92vw] sm:max-w-[85vw] max-h-[75vh] sm:max-h-[78vh]'
-                  }`}
-                  onError={(e) => {
-                    (e.target as HTMLImageElement).src =
-                      'https://images.unsplash.com/photo-1524654458049-e36be0721fa2?q=80&w=1600&auto=format&fit=crop';
-                  }}
-                />
+                {activeMap.imageUrl && activeMap.imageUrl.trim() ? (
+                  <img
+                    ref={mapImageRef}
+                    src={activeMap.imageUrl}
+                    alt={activeMap.title}
+                    draggable={false}
+                    className={`object-contain rounded-xl border border-surface-2 pointer-events-none select-none transition-all duration-150 ${
+                      isFullscreen
+                        ? 'max-w-[96vw] max-h-[92vh]'
+                        : 'max-w-[92vw] sm:max-w-[85vw] max-h-[75vh] sm:max-h-[78vh]'
+                    }`}
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).src =
+                        'https://images.unsplash.com/photo-1524654458049-e36be0721fa2?q=80&w=1600&auto=format&fit=crop';
+                    }}
+                  />
+                ) : (
+                  <div className="w-[500px] h-[350px] max-w-[85vw] max-h-[60vh] bg-surface-2/40 border border-dashed border-surface-3 rounded-xl flex flex-col items-center justify-center text-content-3 p-6 text-center">
+                    <MapPinIcon size={36} className="text-primary/60 mb-2" />
+                    <p className="text-sm font-semibold text-content-2">Nessuna immagine per questa mappa</p>
+                    <p className="text-xs text-content-3 mt-1">Carica un'immagine per posizionare i punti d'interesse.</p>
+                  </div>
+                )}
 
                 {/* Render All Pins on the Map */}
                 {filteredPins.map((pin) => {
@@ -1314,13 +1322,19 @@ export function WorldMap() {
                                       }`}
                                     >
                                       <div className="flex items-center gap-2.5 min-w-0">
-                                        <img
-                                          src={m.imageUrl}
-                                          alt={m.title}
-                                          loading="lazy"
-                                          decoding="async"
-                                          className="w-9 h-9 rounded-lg object-cover border border-surface-3 shrink-0"
-                                        />
+                                        {m.imageUrl && m.imageUrl.trim() ? (
+                                          <img
+                                            src={m.imageUrl}
+                                            alt={m.title}
+                                            loading="lazy"
+                                            decoding="async"
+                                            className="w-9 h-9 rounded-lg object-cover border border-surface-3 shrink-0"
+                                          />
+                                        ) : (
+                                          <div className="w-9 h-9 rounded-lg bg-surface-2 flex items-center justify-center text-content-3 border border-surface-3 shrink-0">
+                                            <MapPinIcon size={16} />
+                                          </div>
+                                        )}
                                         <div className="min-w-0">
                                           <p
                                             className={`font-heading font-semibold text-xs truncate ${
@@ -1411,11 +1425,17 @@ export function WorldMap() {
                                 }`}
                               >
                                 <div className="flex items-center gap-2.5 min-w-0">
-                                  <img
-                                    src={m.imageUrl}
-                                    alt={m.title}
-                                    className="w-9 h-9 rounded-lg object-cover border border-surface-3 shrink-0"
-                                  />
+                                  {m.imageUrl && m.imageUrl.trim() ? (
+                                    <img
+                                      src={m.imageUrl}
+                                      alt={m.title}
+                                      className="w-9 h-9 rounded-lg object-cover border border-surface-3 shrink-0"
+                                    />
+                                  ) : (
+                                    <div className="w-9 h-9 rounded-lg bg-surface-2 flex items-center justify-center text-content-3 border border-surface-3 shrink-0">
+                                      <MapPinIcon size={16} />
+                                    </div>
+                                  )}
                                   <div className="min-w-0">
                                     <p
                                       className={`font-heading font-semibold text-xs truncate ${

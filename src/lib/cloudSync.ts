@@ -512,7 +512,21 @@ export class CloudSyncService {
 
       const activeCode = CampaignManager.getActiveCampaignCode();
       if (activeCode && activeCode !== '__NONE__') {
-        SupabaseSyncService.saveActivePlayers(activeCode, accounts).catch(() => {});
+        const cleanCode = activeCode.trim().toUpperCase();
+        const camp = CampaignManager.getCampaigns().find((c) => c.code.toUpperCase() === cleanCode);
+        const expelledSet = new Set<string>((camp?.expelledAccountIds || []).map((id) => id.toLowerCase()));
+        const deletedSet = new Set<string>(CampaignManager.getDeletedAccountIds().map((id) => id.toLowerCase()));
+        const allowedAccounts = accounts.filter(
+          (a) =>
+            a &&
+            a.id &&
+            !expelledSet.has(a.id.toLowerCase()) &&
+            !deletedSet.has(a.id.toLowerCase()) &&
+            (a.joinedCampaigns?.some((c) => c.toUpperCase() === cleanCode) ||
+              a.dmCampaigns?.some((c) => c.toUpperCase() === cleanCode) ||
+              camp?.dmId === a.id)
+        );
+        SupabaseSyncService.saveActivePlayers(activeCode, allowedAccounts).catch(() => {});
       }
     }, 400);
   }

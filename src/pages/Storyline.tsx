@@ -257,29 +257,26 @@ function extractLoreDaysForSession(
     const totalDays = Math.min(60, endDay - startDay + 1);
 
     if (totalDays > 1) {
-      const days: ExtractedLoreDayInfo[] = [];
       const spanRange = `${startDay} - ${endDay} ${monthName}, ${yr} ${yearSuffix}`.trim();
-      for (let d = startDay; d <= endDay; d++) {
-        const dayNum = d - startDay + 1;
-        days.push({
-          dayKey: `lore_${yr}_${resolvedMonthIdx}_${d}`,
-          shortDate: `${d} ${monthName}`,
-          fullDate: `${d} ${monthName}, ${yr} ${yearSuffix}`.trim(),
-          dayTitle: `${d} ${monthName} ${yr} ${yearSuffix}`.trim(),
-          sortKey: yr * 100000 + resolvedMonthIdx * 1000 + d,
-          matchedDayOfMonth: d,
+      return [
+        {
+          dayKey: `lore_${yr}_${resolvedMonthIdx}_${startDay}`,
+          shortDate: `${startDay}-${endDay} ${monthName}`,
+          fullDate: session.loreDate?.trim() || spanRange,
+          dayTitle: `${startDay} - ${endDay} ${monthName} ${yr} ${yearSuffix}`.trim(),
+          sortKey: yr * 100000 + resolvedMonthIdx * 1000 + startDay,
+          matchedDayOfMonth: startDay,
           matchedMonthIdx: resolvedMonthIdx,
           matchedYear: yr,
           dayProgress: {
-            currentDayNumber: dayNum,
+            currentDayNumber: 1,
             totalDays: totalDays,
             isMultiDay: true,
-            spanLabel: `Giorno ${dayNum} di ${totalDays}`,
+            spanLabel: `Durata: ${totalDays} giorni (${startDay}-${endDay} ${monthName})`,
             fullSpanRange: spanRange,
           },
-        });
-      }
-      return days;
+        },
+      ];
     }
 
     return [
@@ -308,86 +305,28 @@ function extractLoreDaysForSession(
       const monthObj = allMonths[mIdx];
       const monthCleanName = monthObj ? monthObj.name.split('(')[0].trim() : parsed.monthName;
 
-      if (endDay && endDay > startDay && !parsed.isCrossMonth) {
+      if (endDay && endDay > startDay) {
         const totalDays = Math.min(60, endDay - startDay + 1);
-        const days: ExtractedLoreDayInfo[] = [];
-        for (let d = startDay; d <= endDay; d++) {
-          const dayNum = d - startDay + 1;
-          days.push({
-            dayKey: `lore_${yr}_${mIdx}_${d}`,
-            shortDate: `${d} ${monthCleanName}`,
-            fullDate: `${d} ${monthCleanName}, ${yr} ${yearSuffix}`.trim(),
-            dayTitle: `${d} ${monthCleanName} ${yr}`,
-            sortKey: yr * 100000 + mIdx * 1000 + d,
-            matchedDayOfMonth: d,
+        const spanRange = parsed.formatted || raw;
+        return [
+          {
+            dayKey: `lore_${yr}_${mIdx}_${startDay}`,
+            shortDate: `${startDay}-${endDay} ${monthCleanName}`,
+            fullDate: spanRange,
+            dayTitle: `${startDay} - ${endDay} ${monthCleanName} ${yr}`,
+            sortKey: yr * 100000 + mIdx * 1000 + startDay,
+            matchedDayOfMonth: startDay,
             matchedMonthIdx: mIdx,
             matchedYear: yr,
             dayProgress: {
-              currentDayNumber: dayNum,
+              currentDayNumber: 1,
               totalDays: totalDays,
               isMultiDay: true,
-              spanLabel: `Giorno ${dayNum} di ${totalDays}`,
-              fullSpanRange: parsed.formatted || raw,
+              spanLabel: `Durata: ${totalDays} giorni (${startDay}-${endDay} ${monthCleanName})`,
+              fullSpanRange: spanRange,
             },
-          });
-        }
-        return days;
-      }
-
-      if (parsed.isCrossMonth && endDay && parsed.endMonthIndex !== undefined) {
-        const daysInFirstMonth = monthObj?.days || 30;
-        const endMonthObj = allMonths[parsed.endMonthIndex];
-        const endMonthCleanName = endMonthObj ? endMonthObj.name.split('(')[0].trim() : (parsed.endMonthName || '');
-        const days: ExtractedLoreDayInfo[] = [];
-        let dayCounter = 1;
-        const endYr = parsed.endYear || yr;
-
-        for (let d = startDay; d <= daysInFirstMonth; d++) {
-          days.push({
-            dayKey: `lore_${yr}_${mIdx}_${d}`,
-            shortDate: `${d} ${monthCleanName}`,
-            fullDate: `${d} ${monthCleanName}, ${yr} ${yearSuffix}`.trim(),
-            dayTitle: `${d} ${monthCleanName} ${yr}`,
-            sortKey: yr * 100000 + mIdx * 1000 + d,
-            matchedDayOfMonth: d,
-            matchedMonthIdx: mIdx,
-            matchedYear: yr,
-            dayProgress: {
-              currentDayNumber: dayCounter++,
-              totalDays: 0,
-              isMultiDay: true,
-              spanLabel: '',
-              fullSpanRange: parsed.formatted || raw,
-            },
-          });
-        }
-        for (let d = 1; d <= endDay; d++) {
-          days.push({
-            dayKey: `lore_${endYr}_${parsed.endMonthIndex}_${d}`,
-            shortDate: `${d} ${endMonthCleanName}`,
-            fullDate: `${d} ${endMonthCleanName}, ${endYr} ${yearSuffix}`.trim(),
-            dayTitle: `${d} ${endMonthCleanName} ${endYr}`,
-            sortKey: endYr * 100000 + parsed.endMonthIndex * 1000 + d,
-            matchedDayOfMonth: d,
-            matchedMonthIdx: parsed.endMonthIndex,
-            matchedYear: endYr,
-            dayProgress: {
-              currentDayNumber: dayCounter++,
-              totalDays: 0,
-              isMultiDay: true,
-              spanLabel: '',
-              fullSpanRange: parsed.formatted || raw,
-            },
-          });
-        }
-        const total = days.length;
-        days.forEach((d) => {
-          if (d.dayProgress) {
-            d.dayProgress.totalDays = total;
-            d.dayProgress.spanLabel = `Giorno ${d.dayProgress.currentDayNumber} di ${total}`;
-          }
-        });
-        return days;
+          },
+        ];
       }
 
       return [
@@ -2152,8 +2091,13 @@ export function Storyline() {
     const sessionsToProcess = targetSessions.length > 0 ? targetSessions : sortedSessions;
 
     sessionsToProcess.forEach((s) => {
+      // Find chapter object for cover artwork fallback
+      const chapObj = chapters.find((c) => c.id === s.chapterId || c.name === s.chapterName);
+      const coverImg = (chapObj?.coverImageUrl || (s as any).coverImage || (s as any).coverImageUrl || "").trim();
+
       // 1. Gather & deduplicate images across session and all its events
       const rawImages: string[] = [
+        ...(coverImg ? [coverImg] : []),
         ...(s.images || []),
         ...(s.events || []).flatMap((e) => e.images || []),
       ].filter(Boolean);
@@ -2199,6 +2143,7 @@ export function Storyline() {
       if (uniqueImages.length > 0) {
         const totalInSession = uniqueImages.length;
         uniqueImages.forEach((imgUrl, imgIdx) => {
+          const isCover = coverImg && imgUrl === coverImg;
           slides.push({
             imageUrl: imgUrl,
             nodeId: `sess_${s._id}`,
@@ -2219,13 +2164,14 @@ export function Storyline() {
             sessionId: s._id,
             sessionObj: s,
             isPlaceholder: false,
+            isChapterCover: Boolean(isCover),
           });
           globalIdx++;
         });
       } else {
-        // Session without photos: add a single placeholder slide so every session is represented as a chapter
+        // Session without photos: add a single slide representation
         slides.push({
-          imageUrl: "",
+          imageUrl: coverImg,
           nodeId: `sess_${s._id}`,
           nodeTitle: `Capitolo #${s.number}: ${s.title}`,
           nodeDescription: recapText,
@@ -2238,12 +2184,13 @@ export function Storyline() {
           eventType: category,
           impact: impact,
           imageIndexInNode: 0,
-          nodeTotalImages: 0,
+          nodeTotalImages: coverImg ? 1 : 0,
           globalIndex: globalIdx,
           totalGlobalImages: 0,
           sessionId: s._id,
           sessionObj: s,
-          isPlaceholder: true,
+          isPlaceholder: !coverImg,
+          isChapterCover: Boolean(coverImg),
         });
         globalIdx++;
       }
@@ -2399,7 +2346,7 @@ export function Storyline() {
 
           return (
             <div className="relative w-full rounded-2xl overflow-hidden border border-surface-2 bg-surface-1 shadow-md">
-              {activeChap.coverImageUrl ? (
+              {activeChap.coverImageUrl && activeChap.coverImageUrl.trim() ? (
                 <div className="relative h-28 sm:h-36 w-full overflow-hidden">
                   <img
                     src={activeChap.coverImageUrl}

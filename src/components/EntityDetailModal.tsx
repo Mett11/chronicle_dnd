@@ -437,7 +437,7 @@ export function EntityDetailModal({
                     Ritratti &amp; Illustrazioni ({entity.images.length})
                   </h4>
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                    {entity.images.map((img, idx) => (
+                    {entity.images.filter((img) => img && typeof img === 'string' && img.trim()).map((img, idx) => (
                       <div
                         key={idx}
                         onClick={() => setActiveLightboxImg(img)}
@@ -486,7 +486,7 @@ export function EntityDetailModal({
         </div>
 
         {/* Lightbox for gallery images */}
-        {activeLightboxImg && (
+        {activeLightboxImg && activeLightboxImg.trim() && (
           <div
             className="fixed inset-0 z-60 bg-surface-0/95 backdrop-blur-md flex items-center justify-center p-4"
             onClick={() => setActiveLightboxImg(null)}

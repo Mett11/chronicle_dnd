@@ -582,8 +582,8 @@ export function Sessions() {
     }
   };
 
-  // Active Top-Level Tab: 'chapters' (arcs entry view) | 'chronicles' (master-detail) | 'events' (all events registry) | 'party' (players roster)
-  const [mainTab, setMainTab] = useState<'chronicles' | 'events' | 'chapters' | 'party'>('chronicles');
+  // Active Top-Level Tab: 'chapters' (default chapter cards view) | 'chronicles' (session list & manuscript reader)
+  const [mainTab, setMainTab] = useState<'chronicles' | 'events' | 'chapters' | 'party'>('chapters');
 
   return (
     <div className="flex-1 h-full min-h-0 flex flex-col overflow-hidden bg-surface-0 font-body">
@@ -592,6 +592,21 @@ export function Sessions() {
         <header className="bg-surface-1 border-b border-surface-2 px-3 sm:px-6 py-2.5 sm:py-3 shrink-0">
           <div className="flex items-center justify-between gap-2 sm:gap-3">
             <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+              {mainTab === 'chronicles' ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedChapterFilter('all');
+                    setMainTab('chapters');
+                  }}
+                  className="px-3 py-1.5 rounded-lg bg-surface-2 hover:bg-surface-3 border border-surface-3 text-primary hover:text-primary-hover text-xs font-mono font-semibold flex items-center gap-1.5 transition-all cursor-pointer shrink-0 shadow-xs"
+                  title="Torna alla vista Capitoli"
+                >
+                  <ChevronLeft size={16} />
+                  <span>Torna ai Capitoli</span>
+                </button>
+              ) : null}
+
               <div className="flex items-center gap-2 min-w-0">
                 {activeChapterObj && selectedChapterFilter !== 'all' && (
                   <span
@@ -600,7 +615,11 @@ export function Sessions() {
                   />
                 )}
                 <h1 className="font-serif font-bold text-sm sm:text-base md:text-lg text-content-1 tracking-tight truncate">
-                  {selectedChapterFilter !== 'all' && activeChapterObj ? activeChapterObj.name : 'Tomo delle Sessioni'}
+                  {selectedChapterFilter !== 'all' && activeChapterObj
+                    ? activeChapterObj.name
+                    : mainTab === 'chapters'
+                    ? 'Capitoli & Tomo delle Sessioni'
+                    : 'Tutte le Sessioni di Campagna'}
                 </h1>
                 <span className="text-[10px] font-mono text-content-3 shrink-0">
                   ({filteredSessions.length} {filteredSessions.length === 1 ? 'sessione' : 'sessioni'})
@@ -628,77 +647,37 @@ export function Sessions() {
             {/* Action Controls */}
             <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
               {player?.isDm && (
-                <button
-                  id="btn-create-new-session"
-                  type="button"
-                  onClick={handleOpenCreateModal}
-                  className="px-2.5 sm:px-3.5 py-1.5 rounded-[2px] font-medium text-xs bg-primary text-surface-0 hover:bg-primary-hover transition-colors shadow-xs flex items-center gap-1 cursor-pointer shrink-0"
-                  title="Nuova Sessione"
-                >
-                  <Plus size={14} className="stroke-[2.5]" />
-                  <span className="sm:hidden font-mono font-bold">+</span>
-                  <span className="hidden sm:inline">Nuova Sessione</span>
-                </button>
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingChapter(null);
+                      setNewChapName('');
+                      setNewChapDesc('');
+                      setNewChapColor('#6366f1');
+                      setNewChapCoverUrl('');
+                      setIsChapterModalOpen(true);
+                    }}
+                    className="px-2.5 sm:px-3 py-1.5 rounded-[2px] font-medium text-xs bg-surface-2 hover:bg-surface-3 text-content-1 border border-surface-3 transition-colors flex items-center gap-1 cursor-pointer shrink-0"
+                    title="Crea un nuovo Capitolo"
+                  >
+                    <FolderPlus size={14} className="text-primary" />
+                    <span className="hidden sm:inline">+ Nuovo Capitolo</span>
+                  </button>
+                  <button
+                    id="btn-create-new-session"
+                    type="button"
+                    onClick={handleOpenCreateModal}
+                    className="px-2.5 sm:px-3.5 py-1.5 rounded-[2px] font-medium text-xs bg-primary text-surface-0 hover:bg-primary-hover transition-colors shadow-xs flex items-center gap-1 cursor-pointer shrink-0"
+                    title="Nuova Sessione"
+                  >
+                    <Plus size={14} className="stroke-[2.5]" />
+                    <span className="sm:hidden font-mono font-bold">+</span>
+                    <span className="hidden sm:inline">Nuova Sessione</span>
+                  </button>
+                </>
               )}
             </div>
-          </div>
-
-          {/* Primary Navigation Tabs */}
-          <div className="flex items-center gap-4 sm:gap-6 mt-2.5 sm:mt-3 -mb-2.5 sm:-mb-3.5 border-t border-surface-2/60 pt-1 text-xs font-mono overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
-            <button
-              type="button"
-              onClick={() => {
-                setMainTab('chronicles');
-                setChronicleView('index');
-              }}
-              className={`py-2 sm:py-2.5 -mb-px border-b-2 transition-colors flex items-center gap-1.5 uppercase tracking-wider whitespace-nowrap cursor-pointer ${
-                mainTab === 'chronicles'
-                  ? 'border-primary text-content-1 font-semibold'
-                  : 'border-transparent text-content-3 hover:text-content-1'
-              }`}
-            >
-              <Scroll size={13} className={mainTab === 'chronicles' ? 'text-primary' : ''} />
-              <span>Cronache &amp; Indice ({filteredSessions.length})</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setMainTab('chapters')}
-              className={`py-2 sm:py-2.5 -mb-px border-b-2 transition-colors flex items-center gap-1.5 uppercase tracking-wider whitespace-nowrap cursor-pointer ${
-                mainTab === 'chapters'
-                  ? 'border-primary text-content-1 font-semibold'
-                  : 'border-transparent text-content-3 hover:text-content-1'
-              }`}
-            >
-              <BookMarked size={13} className={mainTab === 'chapters' ? 'text-primary' : ''} />
-              <span>Tomi &amp; Capitoli ({chapters.length})</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setMainTab('events')}
-              className={`py-2 sm:py-2.5 -mb-px border-b-2 transition-colors flex items-center gap-1.5 uppercase tracking-wider whitespace-nowrap cursor-pointer ${
-                mainTab === 'events'
-                  ? 'border-primary text-content-1 font-semibold'
-                  : 'border-transparent text-content-3 hover:text-content-1'
-              }`}
-            >
-              <Sparkles size={13} className={mainTab === 'events' ? 'text-primary' : ''} />
-              <span>Snodi Narrativi</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setMainTab('party')}
-              className={`py-2.5 -mb-px border-b-2 transition-colors flex items-center gap-1.5 uppercase tracking-wider whitespace-nowrap cursor-pointer ${
-                mainTab === 'party'
-                  ? 'border-primary text-content-1 font-semibold'
-                  : 'border-transparent text-content-3 hover:text-content-1'
-              }`}
-            >
-              <Users size={13} className={mainTab === 'party' ? 'text-primary' : ''} />
-              <span>La Compagnia ({allPlayers.length})</span>
-            </button>
           </div>
         </header>
       )}
@@ -1086,16 +1065,22 @@ export function Sessions() {
 
                     return (
                       <div
-                        onClick={() => setActiveLightboxImg(bannerUrl)}
+                        onClick={() => bannerUrl && setActiveLightboxImg(bannerUrl)}
                         className="relative w-full h-36 sm:h-52 md:h-64 rounded-xl overflow-hidden mb-5 sm:mb-6 border border-surface-2 shadow-lg group cursor-pointer"
                         title="Clicca per ingrandire la copertina"
                       >
-                        <img
-                          src={bannerUrl}
-                          alt={selectedSession.title}
-                          className="w-full h-full object-cover object-center group-hover:scale-102 transition-transform duration-700"
-                          referrerPolicy="no-referrer"
-                        />
+                        {bannerUrl && bannerUrl.trim() ? (
+                          <img
+                            src={bannerUrl}
+                            alt={selectedSession.title}
+                            className="w-full h-full object-cover object-center group-hover:scale-102 transition-transform duration-700"
+                            referrerPolicy="no-referrer"
+                          />
+                        ) : (
+                          <div className="w-full h-full bg-gradient-to-b from-surface-2 to-surface-1 flex items-center justify-center text-content-3 font-serif">
+                            <span>Nessuna copertina</span>
+                          </div>
+                        )}
                         <div className="absolute inset-0 bg-gradient-to-t from-surface-0/90 via-surface-0/30 to-transparent pointer-events-none" />
 
                         {/* Top action badge */}
@@ -1320,9 +1305,9 @@ export function Sessions() {
                           </h3>
                         </div>
                         <div className="divide-y divide-surface-2 border border-surface-2 rounded-xl bg-surface-1 overflow-hidden">
-                          {accessibleEvents.map((evt) => (
+                          {accessibleEvents.map((evt, evtIdx) => (
                             <div
-                              key={evt.id}
+                              key={evt.id || `session_evt_${evtIdx}`}
                               className={`p-3.5 space-y-1.5 ${
                                 evt.impact === 'major' ? 'border-l-2 border-primary bg-primary/5' : ''
                               }`}
@@ -1376,7 +1361,7 @@ export function Sessions() {
                         <span>Mappe &amp; Illustrazioni ({selectedSession.images.length})</span>
                       </h3>
                       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                        {selectedSession.images.map((img, idx) => (
+                        {selectedSession.images.filter((img) => img && typeof img === 'string' && img.trim()).map((img, idx) => (
                           <div
                             key={idx}
                             onClick={() => setActiveLightboxImg(img)}
@@ -1475,7 +1460,7 @@ export function Sessions() {
                                     }`}
                                     style={{ backgroundColor: p.color || '#6366f1' }}
                                   >
-                                    {p.avatarUrl ? (
+                                    {p.avatarUrl && p.avatarUrl.trim() ? (
                                       <img src={p.avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
                                     ) : (
                                       p.characterName?.charAt(0).toUpperCase() || 'P'
@@ -1594,14 +1579,14 @@ export function Sessions() {
             </p>
           </div>
 
-          {sessions.flatMap((s) => (s.events || []).map((e) => ({ ...e, sessionNumber: s.number, sessionTitle: s.title }))).length === 0 ? (
+          {sessions.flatMap((s) => (s.events || []).map((e, idx) => ({ ...e, sessionNumber: s.number, sessionTitle: s.title, uniqueKey: `${s._id}_${e.id || idx}` }))).length === 0 ? (
             <div className="p-12 border border-surface-2 rounded-[2px] bg-surface-1 text-center text-content-3 space-y-2">
               <p className="text-xs">Nessuno snodo narrativo registrato nelle sessioni.</p>
             </div>
           ) : (
             <div className="divide-y divide-surface-2 border border-surface-2 rounded-[2px] bg-surface-1">
-              {sessions.flatMap((s) => (s.events || []).map((e) => ({ ...e, sessionNumber: s.number, sessionTitle: s.title }))).map((evt) => (
-                <div key={evt.id} className="p-4 space-y-1.5">
+              {sessions.flatMap((s) => (s.events || []).map((e, idx) => ({ ...e, sessionNumber: s.number, sessionTitle: s.title, uniqueKey: `${s._id}_${e.id || idx}` }))).map((evt) => (
+                <div key={evt.uniqueKey} className="p-4 space-y-1.5">
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
                       <span className="text-[10px] font-mono text-primary font-semibold">
@@ -1717,7 +1702,7 @@ export function Sessions() {
                   >
                     {/* Large Book Tome Cover Artwork (Aspect Ratio 2/3) */}
                     <div className="relative aspect-[2/3] w-full bg-surface-2 overflow-hidden shrink-0 shadow-inner">
-                      {chap.coverImageUrl ? (
+                      {chap.coverImageUrl && chap.coverImageUrl.trim() ? (
                         <img
                           src={chap.coverImageUrl}
                           alt={chap.name}
@@ -1955,7 +1940,7 @@ export function Sessions() {
                         className="w-10 h-10 rounded-[2px] flex items-center justify-center text-white text-xs font-bold overflow-hidden shrink-0 border border-surface-2 shadow-sm"
                         style={{ backgroundColor: p.color || '#6366f1' }}
                       >
-                        {p.avatarUrl ? (
+                        {p.avatarUrl && p.avatarUrl.trim() ? (
                           <img
                             src={p.avatarUrl}
                             alt="Avatar"
@@ -2278,7 +2263,7 @@ export function Sessions() {
                           className="bg-surface-2/40 border border-surface-3 rounded-xl p-3 flex items-center justify-between gap-3"
                         >
                           <div className="flex items-center gap-3 min-w-0">
-                            {chap.coverImageUrl ? (
+                            {chap.coverImageUrl && chap.coverImageUrl.trim() ? (
                               <img
                                 src={chap.coverImageUrl}
                                 alt={chap.name}

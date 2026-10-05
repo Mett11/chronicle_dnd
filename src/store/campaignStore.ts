@@ -857,28 +857,119 @@ export class CampaignManager {
     }
   }
 
-  static generateCampaignCode(baseName?: string): string {
-    const existing = this.getCampaigns().map((c) => c.code);
-    let prefix = "REALM";
-    if (baseName && baseName.trim()) {
-      const clean = baseName
-        .trim()
-        .toUpperCase()
-        .replace(/^(IL|LO|LA|I|GLI|LE|UN|UNO|UNA|THE|A|AN)\s+/i, "")
-        .replace(/[^A-Z0-9]/g, "");
-      if (clean.length >= 3) {
-        prefix = clean.slice(0, 8);
-      }
-    }
-
-    for (let i = 0; i < 50; i++) {
-      const randomSuffix = Math.floor(1000 + Math.random() * 9000);
-      const code = `${prefix}-${randomSuffix}`;
+  static generateCampaignCode(_baseName?: string): string {
+    const existing = this.getCampaigns().map((c) => c.code.toUpperCase());
+    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    for (let i = 0; i < 100; i++) {
+      let part1 = "";
+      let part2 = "";
+      for (let j = 0; j < 4; j++) part1 += chars.charAt(Math.floor(Math.random() * chars.length));
+      for (let j = 0; j < 4; j++) part2 += chars.charAt(Math.floor(Math.random() * chars.length));
+      const code = `CHR-${part1}-${part2}`;
       if (!existing.includes(code)) {
         return code;
       }
     }
-    return `CHRONICLE-${Math.floor(1000 + Math.random() * 9000)}`;
+    return `CHR-${Date.now().toString(36).toUpperCase()}`;
+  }
+
+  static regenerateCampaignCode(currentCode: string): string | null {
+    if (!currentCode) return null;
+    const cleanCurrent = currentCode.trim().toUpperCase();
+    const campaigns = this.getCampaigns();
+    const idx = campaigns.findIndex((c) => c.code.toUpperCase() === cleanCurrent);
+    if (idx === -1) return null;
+
+    const newCode = this.generateCampaignCode();
+    const oldCode = campaigns[idx].code;
+    campaigns[idx].code = newCode;
+    this.saveCampaigns(campaigns);
+
+    if (this.getActiveCampaignCode()?.toUpperCase() === oldCode.toUpperCase()) {
+      this.setActiveCampaignCode(newCode);
+    }
+
+    const accounts = this.getAccounts();
+    let updated = false;
+    accounts.forEach((acc) => {
+      if (acc.dmCampaigns && acc.dmCampaigns.includes(oldCode)) {
+        acc.dmCampaigns = acc.dmCampaigns.map((c) => (c === oldCode ? newCode : c));
+        updated = true;
+      }
+      if (acc.joinedCampaigns && acc.joinedCampaigns.includes(oldCode)) {
+        acc.joinedCampaigns = acc.joinedCampaigns.map((c) => (c === oldCode ? newCode : c));
+        updated = true;
+      }
+      if (acc.campaignProfiles && acc.campaignProfiles[oldCode]) {
+        acc.campaignProfiles[newCode] = acc.campaignProfiles[oldCode];
+        delete acc.campaignProfiles[oldCode];
+        updated = true;
+      }
+    });
+
+    if (updated) {
+      this.saveAccounts(accounts);
+    }
+
+    if (isSupabaseConfigured()) {
+      SupabaseSyncService.updateCampaignCode(oldCode, newCode).catch((err) => {
+        console.warn('Supabase code update warning:', err);
+      });
+    }
+
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("chronicle_campaigns_updated"));
+      window.dispatchEvent(new CustomEvent("chronicle_campaign_changed"));
+    }
+
+    return newCode;
+  }
+
+  static toggleCoMaster(accountId: string, campaignCode: string): boolean {
+    const cleanCode = (campaignCode || this.getActiveCampaignCode() || "").trim().toUpperCase();
+    const accounts = this.getAccounts();
+    const index = accounts.findIndex(
+      (a) =>
+        a.id === accountId ||
+        (a.email && a.email.toLowerCase() === accountId.toLowerCase())
+    );
+    if (index === -1) return false;
+
+    const account = { ...accounts[index] };
+    if (!account.campaignProfiles) account.campaignProfiles = {};
+    const prev = account.campaignProfiles[cleanCode] || {
+      characterName: account.characterName,
+      avatarUrl: account.avatarUrl || "",
+      color: account.color || "#6366f1",
+      status: "active",
+      tags: [],
+    };
+
+    const newCoMasterState = !prev.isCoDm;
+    let updatedTags = prev.tags ? [...prev.tags] : [];
+
+    if (newCoMasterState) {
+      if (!updatedTags.includes("Co-Master")) {
+        updatedTags = ["Co-Master", ...updatedTags].slice(0, 3);
+      }
+    } else {
+      updatedTags = updatedTags.filter((t) => t !== "Co-Master");
+    }
+
+    account.campaignProfiles[cleanCode] = {
+      ...prev,
+      isCoDm: newCoMasterState,
+      isCoMaster: newCoMasterState,
+      tags: updatedTags,
+    };
+
+    accounts[index] = account;
+    this.saveAccounts(accounts);
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("chronicle_accounts_updated"));
+      window.dispatchEvent(new CustomEvent("chronicle_data_updated"));
+    }
+    return newCoMasterState;
   }
 
   static createCampaign(
@@ -980,7 +1071,10 @@ export class CampaignManager {
       console.warn('Error clearing localStorage for deleted campaign:', e);
     }
 
-    // 4. Delete document and update globals in Firestore Cloud
+    // 4. Delete document and update globals in Supabase Cloud
+    if (isSupabaseConfigured()) {
+      await SupabaseSyncService.deleteLegacyCampaign(cleanCode);
+    }
     await CloudSyncService.deleteCampaignFromCloud(cleanCode, updatedCampaigns, accounts);
 
     // 5. If active campaign was this one, clear active code and route to campaign portal
@@ -1269,6 +1363,20 @@ export class CampaignManager {
     }
   }
 
+  static saveAccount(account: UserAccount) {
+    if (!account || !account.id) return;
+    const accounts = this.getAccounts();
+    const existingIndex = accounts.findIndex((a) => a.id === account.id);
+    let updated: UserAccount[];
+    if (existingIndex >= 0) {
+      updated = [...accounts];
+      updated[existingIndex] = { ...updated[existingIndex], ...account };
+    } else {
+      updated = [...accounts, account];
+    }
+    this.saveAccounts(updated);
+  }
+
   static saveAccountsLocalOnly(accounts: UserAccount[]) {
     setCached("chronicle_global_user_accounts", accounts);
     safeLocalStorageSetItem(
@@ -1313,7 +1421,6 @@ export class CampaignManager {
     const newAccount: UserAccount = {
       id: "usr_" + Date.now(),
       email,
-      password,
       characterName,
       isDm: false,
       dmCampaigns: [],
@@ -1355,7 +1462,6 @@ export class CampaignManager {
     const newAccount: UserAccount = {
       id: "usr_pg_" + Date.now() + "_" + Math.random().toString(36).substring(2, 6),
       email: `${safeSlug || "player"}@campaign.local`,
-      password: "",
       characterName: cleanName,
       isDm: false,
       dmCampaigns: [],
@@ -1593,8 +1699,7 @@ export class CampaignManager {
     this.addDeletedAccountId(accountId);
     const rawAccounts = this.getAccounts();
     const targetAccount = rawAccounts.find((a) => a.id === accountId);
-    if (!targetAccount) return false;
-
+    
     // Filter out deleted account
     const updatedAccounts = rawAccounts.filter((a) => a.id !== accountId);
 
@@ -1633,6 +1738,10 @@ export class CampaignManager {
     CloudSyncService.syncAccountsToCloud(updatedAccounts);
     CloudSyncService.triggerCloudSave();
 
+    if (isSupabaseConfigured()) {
+      SupabaseSyncService.deleteUserAccount(accountId, targetAccount?.email).catch(() => {});
+    }
+
     if (typeof window !== "undefined") {
       window.dispatchEvent(new CustomEvent("chronicle_accounts_updated"));
       window.dispatchEvent(new CustomEvent("chronicle_campaigns_updated"));
@@ -1645,7 +1754,11 @@ export class CampaignManager {
     const cleanCode = code.trim().toUpperCase();
     const accounts = this.getAccounts();
     const idx = accounts.findIndex((a) => a.id === accountId);
+    let targetEmail: string | undefined;
     if (idx !== -1) {
+      const acc = accounts[idx];
+      targetEmail = acc.email;
+
       if (accounts[idx].joinedCampaigns) {
         accounts[idx].joinedCampaigns = accounts[idx].joinedCampaigns.filter(
           (c) => c.toUpperCase() !== cleanCode
@@ -1666,6 +1779,8 @@ export class CampaignManager {
       if (accounts[idx].lastCampaignCode?.toUpperCase() === cleanCode) {
         accounts[idx].lastCampaignCode = undefined;
       }
+
+      // Keep user account alive in system, just decouple from this campaign
       this.saveAccounts(accounts);
       CloudSyncService.syncAccountsToCloud(accounts);
     }
@@ -1698,6 +1813,10 @@ export class CampaignManager {
 
     // Immediately trigger cloud save so campaign payload is updated in Firestore
     CloudSyncService.triggerCloudSave();
+
+    if (isSupabaseConfigured()) {
+      SupabaseSyncService.removeCampaignMember(cleanCode, accountId, targetEmail).catch(() => {});
+    }
 
     if (typeof window !== "undefined") {
       window.dispatchEvent(new CustomEvent("chronicle_accounts_updated"));
@@ -1958,7 +2077,7 @@ export class CampaignManager {
 
     const accounts = this.getAccounts();
     const match = accounts.find(
-      (a) => a.email.toLowerCase() === email && a.password === password,
+      (a) => a.email.toLowerCase() === email,
     );
 
     if (!match) {
@@ -2238,11 +2357,21 @@ export class CampaignManager {
       ? profile.tags
       : (account.tags || []);
 
+    const isCoDm = Boolean(
+      profile?.isCoDm ||
+      profile?.isCoMaster ||
+      account.isCoDm ||
+      account.isCoMaster ||
+      (profile?.tags && profile.tags.includes('Co-Master'))
+    );
+
     return {
       _id: account.id,
       characterName: profile?.characterName || account.characterName,
       email: account.email,
       isDm,
+      isCoDm,
+      isCoMaster: isCoDm,
       color: resolvedColor,
       avatarUrl: profile?.avatarUrl !== undefined ? profile.avatarUrl : account.avatarUrl,
       status,
@@ -3080,6 +3209,51 @@ export class CampaignManager {
       ...s,
       events: (s.events || []).filter((e) => this.isSessionEventAccessible(e, player)),
     }));
+  }
+
+  static async loadSessionsAsync(campaignCode?: string): Promise<Session[]> {
+    const code = campaignCode || this.getActiveCampaignCode();
+    if (!code || !isSupabaseConfigured()) return this.getSessions();
+    const res = await SupabaseSyncService.fetchSessionsOnly(code);
+    if (res?.sessions) {
+      this.saveSessionsLocalOnly(res.sessions);
+      if (res.chapters) this.saveChaptersLocalOnly(res.chapters);
+      return res.sessions;
+    }
+    return this.getSessions();
+  }
+
+  static async loadNotesAsync(campaignCode?: string): Promise<Note[]> {
+    const code = campaignCode || this.getActiveCampaignCode();
+    if (!code || !isSupabaseConfigured()) return this.getNotes();
+    const notes = await SupabaseSyncService.fetchNotesOnly(code);
+    if (notes) {
+      this.saveNotesLocalOnly(notes);
+      return notes;
+    }
+    return this.getNotes();
+  }
+
+  static async loadEntitiesAsync(campaignCode?: string): Promise<Entity[]> {
+    const code = campaignCode || this.getActiveCampaignCode();
+    if (!code || !isSupabaseConfigured()) return this.getEntities();
+    const entities = await SupabaseSyncService.fetchEntitiesOnly(code);
+    if (entities) {
+      this.saveEntitiesLocalOnly(entities);
+      return entities;
+    }
+    return this.getEntities();
+  }
+
+  static async loadMapsAsync(campaignCode?: string): Promise<WorldMap[]> {
+    const code = campaignCode || this.getActiveCampaignCode();
+    if (!code || !isSupabaseConfigured()) return this.getMaps();
+    const maps = await SupabaseSyncService.fetchMapsOnly(code);
+    if (maps) {
+      this.saveMapsLocalOnly(maps);
+      return maps;
+    }
+    return this.getMaps();
   }
 
   static saveSessions(sessions: Session[]) {
@@ -4029,6 +4203,7 @@ export class CampaignManager {
         this.saveMaps(remainingMaps);
       }
     }
+    return deleteOk;
   }
 
   static getCategories(): Category[] {
@@ -4188,6 +4363,10 @@ export class CampaignManager {
 
   static saveMaps(maps: WorldMap[]) {
     this.saveMapsLocalOnly(maps);
+    if (isSupabaseConfigured()) {
+      const code = this.getActiveCampaignCode() || 'default';
+      SupabaseSyncService.saveMaps(code, maps).catch(() => {});
+    }
   }
 
   static saveMapsLocalOnly(maps: WorldMap[]) {
@@ -4357,6 +4536,7 @@ export class CampaignManager {
         this.saveEntities(updatedEnts);
       }
     }
+    return deleteOk;
   }
 
   static addPinToMap(mapId: string, pin: Omit<MapPin, "id">): MapPin | null {
@@ -5444,7 +5624,7 @@ export class CampaignManager {
     });
 
     if (hasAnyBioChanged) {
-      this.saveAllCharacterBiosLocalOnly(Array.from(biosMap.values()));
+      this.saveAllCharacterBios(Array.from(biosMap.values()));
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('chronicle_bios_updated'));
       }
@@ -5571,14 +5751,21 @@ export class CampaignManager {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
-  static async importFullBackup(jsonString: string): Promise<{ success: boolean; error?: string }> {
+  static async importFullBackup(jsonString: string): Promise<{ success: boolean; error?: string; stats?: any }> {
     try {
-      const data = JSON.parse(jsonString);
+      const data = typeof jsonString === 'string' ? JSON.parse(jsonString) : jsonString;
       if (!data || typeof data !== 'object') {
         return { success: false, error: 'Il file selezionato non è un backup JSON valido.' };
       }
 
-      const code = (data.campaignCode || data.campaignMeta?.code || this.getActiveCampaignCode() || '').trim().toUpperCase();
+      const code = (
+        data.campaignCode ||
+        data.campaignMeta?.code ||
+        data.code ||
+        this.getActiveCampaignCode() ||
+        'CHRONICLE'
+      ).trim().toUpperCase();
+
       if (!code) {
         return { success: false, error: 'Codice campagna mancante nel file di backup.' };
       }
@@ -5586,38 +5773,114 @@ export class CampaignManager {
       // Ensure active campaign code is set
       this.setActiveCampaignCode(code);
 
+      // Register or update campaign in global campaigns list
+      const existingCampaigns = this.getCampaigns();
+      const currentAccount = this.getCurrentAccount();
+      const campName = data.campaignMeta?.name || data.campaignName || `Campagna ${code}`;
+      const campMeta: CampaignMeta = {
+        code,
+        name: campName,
+        createdAt: data.campaignMeta?.createdAt || new Date().toISOString(),
+        dmId: data.campaignMeta?.dmId || currentAccount?.id || 'dm_default',
+        dmEmail: data.campaignMeta?.dmEmail || currentAccount?.email || '',
+        ...data.campaignMeta,
+      };
+
+      const cIdx = existingCampaigns.findIndex((c) => c.code === code);
+      if (cIdx >= 0) {
+        existingCampaigns[cIdx] = { ...existingCampaigns[cIdx], ...campMeta };
+      } else {
+        existingCampaigns.push(campMeta);
+      }
+      this.saveCampaignsLocalOnly(existingCampaigns);
+
       // Clear any previous tombstones so all backup data is accepted
       this.clearDeletedIds();
 
-      // Restore all collections
-      if (Array.isArray(data.sessions)) this.saveSessions(data.sessions);
-      if (Array.isArray(data.entities)) this.saveEntities(data.entities);
-      if (Array.isArray(data.notes)) this.saveNotes(data.notes);
-      if (Array.isArray(data.worldLoreArticles)) this.saveAllWorldLoreArticles(data.worldLoreArticles);
+      // Restore all collections into memoryCache, IndexedDb, and localStorage safely
+      if (Array.isArray(data.sessions)) this.saveSessionsLocalOnly(data.sessions);
+      if (Array.isArray(data.entities)) this.saveEntitiesLocalOnly(data.entities);
+      if (Array.isArray(data.notes)) this.saveNotesLocalOnly(data.notes);
+      if (Array.isArray(data.worldLoreArticles)) this.saveWorldLoreArticlesLocalOnly(data.worldLoreArticles);
       if (Array.isArray(data.chapters)) this.saveChapters(data.chapters);
       if (data.calendar) this.saveCalendar(data.calendar);
-      if (Array.isArray(data.maps)) this.saveMaps(data.maps);
-      if (Array.isArray(data.mapFolders)) this.saveMapFolders(data.mapFolders);
+      if (Array.isArray(data.maps)) this.saveMapsLocalOnly(data.maps);
+      if (Array.isArray(data.mapFolders)) this.saveMapFoldersLocalOnly(data.mapFolders);
       if (Array.isArray(data.characterBios)) this.saveAllCharacterBios(data.characterBios);
       if (Array.isArray(data.familyRelations)) this.saveAllFamilyRelations(data.familyRelations);
       if (Array.isArray(data.audioLogs)) this.saveAudioLogs(data.audioLogs);
       if (Array.isArray(data.scrapbookItems)) this.saveScrapbookItems(data.scrapbookItems);
 
-      if (data.campaignMeta) {
-        this.updateCampaignMeta(code, data.campaignMeta);
+      // Also restore players/accounts if present in backup
+      if (Array.isArray(data.players) || Array.isArray(data.accounts) || Array.isArray(data.userAccounts)) {
+        const backupAccounts = data.accounts || data.userAccounts || [];
+        if (Array.isArray(backupAccounts) && backupAccounts.length > 0) {
+          const currentAccs = this.getAccounts();
+          const merged = [...currentAccs];
+          backupAccounts.forEach((ba: any) => {
+            if (ba && ba.id && !merged.some((m) => m.id === ba.id)) {
+              merged.push(ba);
+            }
+          });
+          this.saveAccounts(merged);
+        }
       }
 
-      // Force immediate sync to Firestore cloud
-      await CloudSyncService.syncNow(true);
+      // If Supabase is configured, push the bulk payload to PostgreSQL
+      if (isSupabaseConfigured()) {
+        try {
+          await SupabaseSyncService.saveCampaign(campMeta);
+          const payload = {
+            sessions: Array.isArray(data.sessions) ? data.sessions : this.getSessions(),
+            chapters: Array.isArray(data.chapters) ? data.chapters : this.getChapters(),
+            notes: Array.isArray(data.notes) ? data.notes : this.getNotes(),
+            entities: Array.isArray(data.entities) ? data.entities : this.getEntities(),
+            maps: Array.isArray(data.maps) ? data.maps : this.getMaps(),
+            scrapbookItems: Array.isArray(data.scrapbookItems) ? data.scrapbookItems : this.getScrapbookItems(),
+            audioLogs: Array.isArray(data.audioLogs) ? data.audioLogs : this.getAudioLogs(),
+            characterBios: Array.isArray(data.characterBios) ? data.characterBios : this.getAllCharacterBios(),
+            familyRelations: Array.isArray(data.familyRelations) ? data.familyRelations : this.getAllFamilyRelations(),
+            worldLoreArticles: Array.isArray(data.worldLoreArticles) ? data.worldLoreArticles : this.getWorldLoreArticles(),
+          };
+          await SupabaseSyncService.bulkUpsertCampaignData(code, payload);
+          if (Array.isArray(data.mapFolders) && data.mapFolders.length > 0) {
+            await SupabaseSyncService.saveMapFolders(code, data.mapFolders);
+          }
+        } catch (supaErr) {
+          console.warn('[Supabase Backup Sync] Warning:', supaErr);
+        }
+      }
+
+      // Also force immediate sync to CloudSyncService (Firestore fallback if used)
+      CloudSyncService.syncNow(true).catch(() => {});
 
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('chronicle_data_updated'));
         window.dispatchEvent(new CustomEvent('chronicle_campaign_updated'));
+        window.dispatchEvent(new CustomEvent('chronicle_campaigns_updated'));
+        window.dispatchEvent(new CustomEvent('chronicle_entities_updated'));
+        window.dispatchEvent(new CustomEvent('chronicle_sessions_updated'));
+        window.dispatchEvent(new CustomEvent('chronicle_notes_updated'));
+        window.dispatchEvent(new CustomEvent('chronicle_maps_updated'));
+        window.dispatchEvent(new CustomEvent('chronicle_calendar_updated'));
+        window.dispatchEvent(new CustomEvent('chronicle_bios_updated'));
+        window.dispatchEvent(new CustomEvent('chronicle_relations_updated'));
+        window.dispatchEvent(new CustomEvent('chronicle_world_lore_updated'));
       }
 
-      return { success: true };
+      const stats = {
+        sessions: (data.sessions || []).length,
+        entities: (data.entities || []).length,
+        notes: (data.notes || []).length,
+        maps: (data.maps || []).length,
+        lore: (data.worldLoreArticles || []).length,
+        bios: (data.characterBios || []).length,
+      };
+
+      return { success: true, stats };
     } catch (e: any) {
-      return { success: false, error: e?.message || 'Errore durante la lettura del file di backup.' };
+      console.error('[Backup Import Error]:', e);
+      return { success: false, error: e?.message || 'Errore durante la lettura o il ripristino del file di backup.' };
     }
   }
 }

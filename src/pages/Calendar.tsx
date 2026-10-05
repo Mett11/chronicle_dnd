@@ -870,10 +870,16 @@ export function CalendarPage() {
                         className="w-44 p-2 bg-surface-2/50 border border-surface-2/80 rounded-[2px] flex flex-col gap-1.5 shrink-0"
                       >
                         <div
-                          onClick={() => setLightboxImage(m.imageUrl)}
+                          onClick={() => m.imageUrl && setLightboxImage(m.imageUrl)}
                           className="w-full h-24 rounded-[2px] overflow-hidden bg-surface-1 cursor-pointer"
                         >
-                          <img src={m.imageUrl} alt={m.title} className="w-full h-full object-cover hover:opacity-90 transition-opacity" />
+                          {m.imageUrl && m.imageUrl.trim() ? (
+                            <img src={m.imageUrl} alt={m.title} className="w-full h-full object-cover hover:opacity-90 transition-opacity" />
+                          ) : (
+                            <div className="w-full h-full bg-surface-2 flex items-center justify-center text-content-3">
+                              <ImageIcon size={20} />
+                            </div>
+                          )}
                         </div>
                         <p className="text-xs font-mono font-medium text-content-1 truncate">{m.title}</p>
                       </div>
@@ -1243,7 +1249,7 @@ export function CalendarPage() {
       )}
 
       {/* LIGHTBOX */}
-      {lightboxImage && (
+      {lightboxImage && lightboxImage.trim() && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-surface-0/80 backdrop-blur-sm"
           onClick={() => setLightboxImage(null)}

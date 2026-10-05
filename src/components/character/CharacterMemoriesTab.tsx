@@ -6,6 +6,7 @@ import {
   Eye,
   Calendar,
   Tag,
+  Sparkles,
 } from 'lucide-react';
 import { ScrapbookItem, CharacterSectionPrivacy } from '../../types';
 
@@ -140,13 +141,19 @@ export function CharacterMemoriesTab({
             >
               <div>
                 <div className="aspect-video bg-surface-2 overflow-hidden relative">
-                  <img
-                    src={item.imageUrl}
-                    alt={item.title}
-                    loading="lazy"
-                    decoding="async"
-                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                  />
+                  {item.imageUrl && item.imageUrl.trim() ? (
+                    <img
+                      src={item.imageUrl}
+                      alt={item.title}
+                      loading="lazy"
+                      decoding="async"
+                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                    />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center text-content-3">
+                      <Sparkles size={24} />
+                    </div>
+                  )}
                   <div className="absolute top-2 right-2 flex items-center gap-1.5">
                     <span className="px-2 py-0.5 bg-surface-0/80 backdrop-blur-sm text-white text-[10px] font-medium rounded-md uppercase tracking-wider">
                       {item.category}

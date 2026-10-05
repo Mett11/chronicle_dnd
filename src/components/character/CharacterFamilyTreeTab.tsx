@@ -674,7 +674,7 @@ export function CharacterFamilyTreeTab({
         >
           <div className="flex items-start justify-between gap-4">
             <div className="flex items-center gap-4">
-              {selectedRelationForDetail.avatarUrl ? (
+              {selectedRelationForDetail.avatarUrl && selectedRelationForDetail.avatarUrl.trim() ? (
                 <img
                   src={selectedRelationForDetail.avatarUrl}
                   alt={selectedRelationForDetail.name}
@@ -1040,7 +1040,7 @@ export function CharacterFamilyTreeTab({
               {/* TOP: Avatar, Name & Attitude badge */}
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-3 min-w-0">
-                  {card.avatarUrl ? (
+                  {card.avatarUrl && card.avatarUrl.trim() ? (
                     <img
                       src={card.avatarUrl}
                       alt={card.name}

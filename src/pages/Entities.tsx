@@ -2297,7 +2297,7 @@ export function Entities() {
                       Galleria Immagini ({detailEntity.images.length})
                     </h4>
                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                      {detailEntity.images.map((img, idx) => (
+                      {detailEntity.images.filter((img) => img && typeof img === 'string' && img.trim()).map((img, idx) => (
                         <div
                           key={idx}
                           onClick={() => setActiveLightboxImg(img)}
@@ -3960,7 +3960,7 @@ export function Entities() {
     )}
 
     {/* Zoom Lightbox */}
-    {activeLightboxImg && (
+    {activeLightboxImg && activeLightboxImg.trim() && (
       <Portal>
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-surface-0/90 backdrop-blur-md overflow-y-auto"

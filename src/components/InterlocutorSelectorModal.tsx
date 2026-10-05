@@ -366,7 +366,7 @@ export const InterlocutorSelectorModal: React.FC<InterlocutorSelectorModalProps>
                               readOnly
                               className="rounded border-surface-3 text-primary focus:ring-primary shrink-0 cursor-pointer pointer-events-none"
                             />
-                            {p.avatarUrl ? (
+                            {p.avatarUrl && p.avatarUrl.trim() ? (
                               <img
                                 src={p.avatarUrl}
                                 alt={p.characterName}

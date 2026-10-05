@@ -66,7 +66,7 @@ export function AudioPlayer({ log, onDelete, compact = false }: AudioPlayerProps
  if (compact) {
  return (
  <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-[#111] border border-surface-2 text-content-1 shadow-sm">
- <audio ref={audioRef} src={log.audioUrl} preload="metadata" />
+ <audio ref={audioRef} src={log.audioUrl && log.audioUrl.trim() ? log.audioUrl : undefined} preload="metadata" />
  <button
  type="button"
  onClick={togglePlay}
@@ -93,7 +93,7 @@ export function AudioPlayer({ log, onDelete, compact = false }: AudioPlayerProps
 
  return (
  <div className="p-3.5 rounded-2xl bg-gradient-to-br from-[#09090B] to-[#0a0a10] border border-surface-2 text-content-1 shadow-lg flex flex-col gap-2.5">
- <audio ref={audioRef} src={log.audioUrl} preload="metadata" />
+ <audio ref={audioRef} src={log.audioUrl && log.audioUrl.trim() ? log.audioUrl : undefined} preload="metadata" />
 
  {/* Header with Title & Metadata */}
  <div className="flex items-start justify-between gap-2">

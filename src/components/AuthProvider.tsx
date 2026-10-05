@@ -10,10 +10,11 @@ import {
 import { Player, UserAccount, UserPreferences } from '../types';
 import { CampaignManager } from '../store/campaignStore';
 import { CloudSyncService } from '../lib/cloudSync';
-import { UserPreferencesService } from '../lib/userPreferencesService';
+import { UserPreferencesService, DEFAULT_USER_PREFERENCES } from '../lib/userPreferencesService';
 import { UserProfileSyncService } from '../lib/userProfileSync';
 import { ApiKeyManager } from '../lib/apiKeyManager';
 import { SupabaseSyncService } from '../lib/supabaseSyncService';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { auth, googleProvider } from '../lib/firebase';
 import { onAuthStateChanged } from 'firebase/auth';
 
@@ -111,88 +112,190 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, [account?.id]);
 
-  // Authoritative Firebase Auth session state listener
+  // Authoritative Supabase Auth & fallback Firebase Auth session state listener
   useEffect(() => {
     let isMounted = true;
 
-    const unsubAuth = onAuthStateChanged(auth, async (firebaseUser) => {
-      if (!isMounted) return;
+    if (isSupabaseConfigured()) {
+      const syncSupabaseUser = async (user: any) => {
+        if (!isMounted || !user) return;
+        try {
+          const uid = user.id;
+          const userEmail = (user.email || '').trim().toLowerCase();
+          const meta = user.user_metadata || {};
+          const displayName = meta.full_name || meta.name || user.displayName || (userEmail ? userEmail.split('@')[0] : 'Player');
+          const photoURL = meta.avatar_url || meta.picture || user.photoURL || undefined;
 
-      if (firebaseUser) {
-        // Authenticated Firebase session exists
-        const userEmail = (firebaseUser.email || '').trim().toLowerCase();
-        let accounts = CampaignManager.getAccounts();
-        if (accounts.length === 0) {
-          await CloudSyncService.fetchGlobalAccountsNow();
-          accounts = CampaignManager.getAccounts();
-        }
-        let matched = accounts.find(
-          (a) =>
-            a.id === firebaseUser.uid ||
-            a.id === `usr_${firebaseUser.uid}` ||
-            a.id === `usr_g_${firebaseUser.uid}` ||
-            (userEmail && a.email && a.email.toLowerCase() === userEmail)
-        );
-
-        if (matched && matched.id !== firebaseUser.uid) {
-          matched = { ...matched, id: firebaseUser.uid };
-        }
-
-        if (!matched) {
-          const isGoogle = firebaseUser.providerData.some((p) => p.providerId === 'google.com');
-          if (isGoogle) {
-            const res = CampaignManager.handleGoogleAuthSuccess({
-              uid: firebaseUser.uid,
-              email: firebaseUser.email,
-              displayName: firebaseUser.displayName,
-              photoURL: firebaseUser.photoURL,
-            });
-            matched = res.account;
-          } else {
-            const res = CampaignManager.handleEmailAuthSuccess({
-              uid: firebaseUser.uid,
-              email: userEmail,
-              characterName: firebaseUser.displayName || userEmail.split('@')[0],
-            });
-            matched = res.account;
+          // Fetch or create user account in public.user_accounts
+          let existing = null;
+          try {
+            existing = await SupabaseSyncService.getUserAccount(uid);
+          } catch (e) {
+            console.warn('[Supabase] getUserAccount failed, creating fallback:', e);
           }
-        } else {
-          CampaignManager.setCurrentAccount(matched.id);
-        }
 
-        setAccount(matched || null);
-        refreshPlayers();
-        ApiKeyManager.preloadAllKeys(firebaseUser.uid);
-        if (matched) {
-          SupabaseSyncService.saveUserAccount(matched).catch(() => {});
+          let userAccount: UserAccount;
+
+          if (existing) {
+            userAccount = {
+              id: existing.id,
+              email: existing.email || userEmail,
+              characterName: existing.characterName || displayName,
+              color: existing.color || '#6366f1',
+              avatarUrl: existing.avatarUrl || photoURL,
+              isDm: Boolean(existing.isDm),
+              dmCampaigns: existing.dmCampaigns || [],
+              joinedCampaigns: existing.joinedCampaigns || [],
+              campaignProfiles: existing.campaignProfiles || {},
+              preferences: (existing.preferences && existing.preferences.theme) ? existing.preferences : DEFAULT_USER_PREFERENCES,
+              createdAt: existing.createdAt || new Date().toISOString(),
+            };
+          } else {
+            let dmCampaigns: string[] = [];
+            let joinedCampaigns: string[] = [];
+            try {
+              const res = await SupabaseSyncService.getUserCampaigns(uid);
+              dmCampaigns = res.dmCampaigns;
+              joinedCampaigns = res.joinedCampaigns;
+            } catch {}
+
+            userAccount = {
+              id: uid,
+              email: userEmail,
+              characterName: displayName,
+              color: '#6366f1',
+              avatarUrl: photoURL,
+              isDm: dmCampaigns.length > 0,
+              dmCampaigns,
+              joinedCampaigns,
+              campaignProfiles: {},
+              preferences: DEFAULT_USER_PREFERENCES,
+              createdAt: new Date().toISOString(),
+            };
+            SupabaseSyncService.saveUserAccount(userAccount).catch(() => {});
+          }
+
+          CampaignManager.saveAccount(userAccount);
+          CampaignManager.setCurrentAccount(userAccount.id);
+
+          setAccount(userAccount);
+          refreshPlayers();
+          ApiKeyManager.preloadAllKeys(uid);
+
           let activeCode = CampaignManager.getActiveCampaignCode();
           if (!activeCode) {
             const defaultCode =
-              matched.lastCampaignCode ||
-              (matched.joinedCampaigns && matched.joinedCampaigns[0]) ||
-              (matched.dmCampaigns && matched.dmCampaigns[0]) ||
+              userAccount.lastCampaignCode ||
+              (userAccount.joinedCampaigns && userAccount.joinedCampaigns[0]) ||
+              (userAccount.dmCampaigns && userAccount.dmCampaigns[0]) ||
               null;
             if (defaultCode) {
               CampaignManager.setActiveCampaignCode(defaultCode);
             }
           }
-          CloudSyncService.init();
-          UserProfileSyncService.syncUserProfile(matched, firebaseUser.uid);
+        } catch (err) {
+          console.error('[Supabase Auth] Error in syncSupabaseUser:', err);
+        } finally {
+          if (isMounted) setLoading(false);
         }
-      } else {
-        // No active Firebase session: strictly clear account
-        CampaignManager.clearCurrentAccount();
-        setAccount(null);
-        refreshPlayers();
-      }
+      };
 
-      setLoading(false);
-    });
+      // Check current session
+      supabase.auth.getSession().then(({ data: { session } }) => {
+        if (!isMounted) return;
+        if (session?.user) {
+          syncSupabaseUser(session.user);
+        } else {
+          setLoading(false);
+        }
+      });
 
-    return () => {
-      isMounted = false;
-      unsubAuth();
-    };
+      // Listen for auth state changes
+      const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+        if (!isMounted) return;
+        if (session?.user) {
+          await syncSupabaseUser(session.user);
+        } else if (event === 'SIGNED_OUT') {
+          CampaignManager.clearCurrentAccount();
+          setAccount(null);
+          refreshPlayers();
+          setLoading(false);
+        }
+      });
+
+      return () => {
+        isMounted = false;
+        subscription.unsubscribe();
+      };
+    } else {
+      // Authoritative Firebase Auth session state listener (fallback)
+      const unsubAuth = onAuthStateChanged(auth, async (firebaseUser) => {
+        if (!isMounted) return;
+
+        if (firebaseUser) {
+          const userEmail = (firebaseUser.email || '').trim().toLowerCase();
+          let accounts = CampaignManager.getAccounts();
+          if (accounts.length === 0) {
+            await CloudSyncService.fetchGlobalAccountsNow();
+            accounts = CampaignManager.getAccounts();
+          }
+          let matched = accounts.find((a) => a.id === firebaseUser.uid);
+
+          if (!matched) {
+            const isGoogle = firebaseUser.providerData.some((p) => p.providerId === 'google.com');
+            if (isGoogle) {
+              const res = CampaignManager.handleGoogleAuthSuccess({
+                uid: firebaseUser.uid,
+                email: firebaseUser.email,
+                displayName: firebaseUser.displayName,
+                photoURL: firebaseUser.photoURL,
+              });
+              matched = res.account;
+            } else {
+              const res = CampaignManager.handleEmailAuthSuccess({
+                uid: firebaseUser.uid,
+                email: userEmail,
+                characterName: firebaseUser.displayName || userEmail.split('@')[0],
+              });
+              matched = res.account;
+            }
+          } else {
+            CampaignManager.setCurrentAccount(matched.id);
+          }
+
+          setAccount(matched || null);
+          refreshPlayers();
+          ApiKeyManager.preloadAllKeys(firebaseUser.uid);
+          if (matched) {
+            SupabaseSyncService.saveUserAccount(matched).catch(() => {});
+            let activeCode = CampaignManager.getActiveCampaignCode();
+            if (!activeCode) {
+              const defaultCode =
+                matched.lastCampaignCode ||
+                (matched.joinedCampaigns && matched.joinedCampaigns[0]) ||
+                (matched.dmCampaigns && matched.dmCampaigns[0]) ||
+                null;
+              if (defaultCode) {
+                CampaignManager.setActiveCampaignCode(defaultCode);
+              }
+            }
+            CloudSyncService.init();
+            UserProfileSyncService.syncUserProfile(matched, firebaseUser.uid);
+          }
+        } else {
+          CampaignManager.clearCurrentAccount();
+          setAccount(null);
+          refreshPlayers();
+        }
+
+        setLoading(false);
+      });
+
+      return () => {
+        isMounted = false;
+        unsubAuth();
+      };
+    }
   }, [refreshPlayers]);
 
   const login = useCallback(
@@ -327,42 +430,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const loginWithGoogle = useCallback(async (): Promise<{ success: boolean; error?: string }> => {
     setError(null);
     try {
-      await CloudSyncService.fetchGlobalAccountsNow();
-      const userCredential = await signInWithPopup(auth, googleProvider);
-      const user = userCredential.user;
-      const result = CampaignManager.handleGoogleAuthSuccess({
-        uid: user.uid,
-        email: user.email,
-        displayName: user.displayName,
-        photoURL: user.photoURL,
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: window.location.origin,
+        },
       });
-      setAccount(result.account);
-      refreshPlayers();
-      SupabaseSyncService.saveUserAccount(result.account).catch(() => {});
-      UserProfileSyncService.syncUserProfile(result.account, user.uid);
+      if (error) {
+        console.error('[Supabase] Google Sign-in error:', error);
+        setError(error.message);
+        return { success: false, error: error.message };
+      }
       return { success: true };
     } catch (err: any) {
-      console.error('Google Sign-in error:', err);
-      if (err?.code === 'auth/popup-closed-by-user') {
-        return { success: false, error: 'Accesso con Google annullato.' };
-      }
-      if (err?.code === 'auth/popup-blocked') {
-        return {
-          success: false,
-          error: 'Il popup di Google è stato bloccato dal browser. Abilita i popup per questo sito.',
-        };
-      }
-      if (err?.code === 'auth/unauthorized-domain') {
-        const domain = typeof window !== 'undefined' ? window.location.hostname : 'questo dominio';
-        const msg = `Il dominio "${domain}" non è ancora presente tra i Domini Autorizzati in Firebase Console (Authentication > Impostazioni > Domini autorizzati). Puoi accedere o registrarti subito con Email e Password tramite il modulo sottostante.`;
-        setError(msg);
-        return { success: false, error: msg };
-      }
-      const msg = err?.message || "Errore durante l'accesso con Google.";
+      console.error('Supabase Google Sign-in error:', err);
+      const msg = err?.message || "Errore durante l'accesso con Google tramite Supabase.";
       setError(msg);
       return { success: false, error: msg };
     }
-  }, [refreshPlayers]);
+  }, []);
 
   const changePassword = useCallback(
     async (newPassword: string): Promise<{ success: boolean; error?: string }> => {
@@ -391,6 +477,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   );
 
   const logout = useCallback(async () => {
+    if (isSupabaseConfigured()) {
+      try {
+        await supabase.auth.signOut();
+      } catch (e) {
+        console.warn('[Supabase] Sign out warning:', e);
+      }
+    }
     try {
       await signOut(auth);
     } catch (e) {

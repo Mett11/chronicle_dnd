@@ -350,7 +350,7 @@ export function Layout() {
               className="w-8 h-8 rounded-lg bg-surface-2 border flex items-center justify-center shrink-0 overflow-hidden group-hover:border-primary transition-colors shadow-xs"
               style={{ borderColor: player.color || '#6366f1' }}
             >
-              {player.avatarUrl ? (
+              {player.avatarUrl && player.avatarUrl.trim() ? (
                 <img src={player.avatarUrl} alt={player.characterName} className="w-full h-full object-cover" />
               ) : (
                 <span className="font-heading font-semibold text-xs text-content-1">

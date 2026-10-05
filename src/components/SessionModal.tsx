@@ -748,7 +748,7 @@ export function SessionModal({
                                 className="w-7 h-7 rounded-lg flex items-center justify-center text-white text-[11px] font-bold overflow-hidden shrink-0 border border-surface-3"
                                 style={{ backgroundColor: p.color || '#6366f1' }}
                               >
-                                {p.avatarUrl ? (
+                                {p.avatarUrl && p.avatarUrl.trim() ? (
                                   <img src={p.avatarUrl} alt="" className="w-full h-full object-cover" />
                                 ) : (
                                   p.characterName?.charAt(0).toUpperCase() || 'P'
@@ -937,12 +937,18 @@ export function SessionModal({
                                     }`}
                                   >
                                     <div className="w-full h-16 rounded-lg overflow-hidden bg-surface-3 relative">
-                                      <img
-                                        src={map.imageUrl}
-                                        alt={map.title}
-                                        className="w-full h-full object-cover group-hover:scale-105 transition-transform"
-                                        referrerPolicy="no-referrer"
-                                      />
+                                      {map.imageUrl && map.imageUrl.trim() ? (
+                                        <img
+                                          src={map.imageUrl}
+                                          alt={map.title}
+                                          className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                                          referrerPolicy="no-referrer"
+                                        />
+                                      ) : (
+                                        <div className="w-full h-full flex items-center justify-center text-content-3">
+                                          <ImageIcon size={18} />
+                                        </div>
+                                      )}
                                       {isSelected && (
                                         <div className="absolute top-1 right-1 w-5 h-5 rounded-full bg-primary text-surface-0 flex items-center justify-center shadow-xs">
                                           <Check size={12} strokeWidth={3} />
@@ -988,12 +994,18 @@ export function SessionModal({
                                     }`}
                                   >
                                     <div className="w-full h-16 rounded-lg overflow-hidden bg-surface-3 relative">
-                                      <img
-                                        src={firstImg}
-                                        alt={ent.name}
-                                        className="w-full h-full object-cover group-hover:scale-105 transition-transform"
-                                        referrerPolicy="no-referrer"
-                                      />
+                                      {firstImg && firstImg.trim() ? (
+                                        <img
+                                          src={firstImg}
+                                          alt={ent.name}
+                                          className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                                          referrerPolicy="no-referrer"
+                                        />
+                                      ) : (
+                                        <div className="w-full h-full flex items-center justify-center text-content-3">
+                                          <ImageIcon size={18} />
+                                        </div>
+                                      )}
                                       {isSelected && (
                                         <div className="absolute top-1 right-1 w-5 h-5 rounded-full bg-primary text-surface-0 flex items-center justify-center shadow-xs">
                                           <Check size={12} strokeWidth={3} />
@@ -1207,7 +1219,7 @@ export function SessionModal({
                     </div>
 
                     {/* Quick suggestion banner if location has an image */}
-                    {selectedLocationImageMatch && !selectedLocationImageMatch.isAlreadyAttached && (
+                    {selectedLocationImageMatch && !selectedLocationImageMatch.isAlreadyAttached && selectedLocationImageMatch.imageUrl && selectedLocationImageMatch.imageUrl.trim() && (
                       <div className="p-2.5 bg-primary/10 border border-primary/30 rounded-xl flex items-center justify-between gap-3 text-xs animate-fade-in">
                         <div className="flex items-center gap-2 min-w-0">
                           <img

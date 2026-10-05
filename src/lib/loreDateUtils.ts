@@ -343,56 +343,7 @@ export function matchesLoreDayAndMonth(
     return checkMonthMatch(mInput, targetMonth, targetMonthIndex);
   };
 
-  // 1. Direct Structured Match (Highest Priority)
-  if (item.loreMonth || item.loreStartDay !== undefined) {
-    const startMonthMatches = !item.loreMonth || isTargetMonth(item.loreMonth);
-    const endMonthMatches = item.loreEndMonth ? isTargetMonth(item.loreEndMonth) : startMonthMatches;
-
-    const sMonthIdx = item.loreMonth
-      ? allMonths.findIndex((m, idx) => checkMonthMatch(item.loreMonth, m, idx))
-      : targetMonthIndex;
-    const eMonthIdx = item.loreEndMonth
-      ? allMonths.findIndex((m, idx) => checkMonthMatch(item.loreEndMonth, m, idx))
-      : sMonthIdx;
-
-    // Cross-month range
-    if (sMonthIdx !== -1 && eMonthIdx !== -1 && sMonthIdx !== eMonthIdx) {
-      if (startMonthMatches) {
-        if (item.loreStartDay !== undefined) {
-          return targetDay >= item.loreStartDay;
-        }
-        return true;
-      }
-      if (endMonthMatches) {
-        if (item.loreEndDay !== undefined) {
-          return targetDay <= item.loreEndDay;
-        }
-        return true;
-      }
-      // Intervening month
-      if (sMonthIdx < eMonthIdx && targetMonthIndex > sMonthIdx && targetMonthIndex < eMonthIdx) {
-        return true;
-      }
-      if (sMonthIdx > eMonthIdx && (targetMonthIndex > sMonthIdx || targetMonthIndex < eMonthIdx)) {
-        return true;
-      }
-    } else if (startMonthMatches) {
-      // Same month or month omitted
-      if (item.loreStartDay !== undefined) {
-        if (item.loreEndDay !== undefined && item.loreEndDay >= item.loreStartDay) {
-          if (targetDay >= item.loreStartDay && targetDay <= item.loreEndDay) {
-            return true;
-          }
-        } else if (item.loreStartDay === targetDay) {
-          return true;
-        }
-      } else {
-        return true;
-      }
-    }
-  }
-
-  // 2. Free-text parse match
+  // 1. Text-based Lore Date Match (Highest accuracy for human-readable dates like "Giorno 22 di Operam")
   if (item.loreDate && item.loreDate.trim()) {
     const parsed = parseLoreDateString(item.loreDate, allMonths);
     if (parsed) {
@@ -400,70 +351,63 @@ export function matchesLoreDayAndMonth(
         const startMonthMatches = parsed.monthIndex === targetMonthIndex;
         const endMonthMatches = parsed.endMonthIndex === targetMonthIndex;
 
-        if (startMonthMatches) {
-          return targetDay >= parsed.startDay;
-        }
-        if (endMonthMatches) {
-          return targetDay <= (parsed.endDay || 32);
-        }
+        if (startMonthMatches) return targetDay >= parsed.startDay;
+        if (endMonthMatches) return targetDay <= (parsed.endDay || 32);
 
         if (parsed.monthIndex < parsed.endMonthIndex) {
-          if (targetMonthIndex > parsed.monthIndex && targetMonthIndex < parsed.endMonthIndex) {
-            return true;
-          }
+          if (targetMonthIndex > parsed.monthIndex && targetMonthIndex < parsed.endMonthIndex) return true;
         } else if (parsed.monthIndex > parsed.endMonthIndex) {
-          if (targetMonthIndex > parsed.monthIndex || targetMonthIndex < parsed.endMonthIndex) {
-            return true;
-          }
+          if (targetMonthIndex > parsed.monthIndex || targetMonthIndex < parsed.endMonthIndex) return true;
         }
-      } else {
-        const monthMatches =
-          parsed.monthIndex === targetMonthIndex ||
-          normalizeText(parsed.monthName) === targetMonthFullName ||
-          (targetMonthMainName && normalizeText(parsed.monthName).includes(targetMonthMainName)) ||
-          normalizeText(parsed.monthName).includes(targetMonthMainName);
-
-        if (monthMatches) {
-          if (parsed.endDay && parsed.endDay >= parsed.startDay) {
-            if (targetDay >= parsed.startDay && targetDay <= parsed.endDay) {
-              return true;
-            }
-          } else if (parsed.startDay === targetDay) {
-            return true;
-          }
-        }
+        return false;
       }
-    } else {
-      // Fallback substring checks on free text
-      const normDate = normalizeText(item.loreDate);
-      const textMentionsMonth =
-        normDate.includes(targetMonthFullName) ||
-        (targetMonthMainName && normDate.includes(targetMonthMainName)) ||
-        (targetMonthSubtitle && normDate.includes(targetMonthSubtitle)) ||
-        normDate.includes(`mese ${targetMonthIndex + 1}`) ||
-        normDate.includes(`mese #${targetMonthIndex + 1}`);
 
-      if (textMentionsMonth) {
-        const textNoYear = normDate.replace(/\b(1\d{3}|[1-9]\d{2})\b/g, ' ');
+      // Single month match
+      const monthMatches =
+        parsed.monthIndex === targetMonthIndex ||
+        checkMonthMatch(parsed.monthName, targetMonth, targetMonthIndex);
 
-        const range = textNoYear.match(/(\d{1,2})\s*(?:-|–|—|\.\.|al)\s*(\d{1,2})/);
-        if (range) {
-          const s = parseInt(range[1], 10);
-          const e = parseInt(range[2], 10);
-          if (!isNaN(s) && !isNaN(e) && targetDay >= s && targetDay <= e) {
-            return true;
-          }
-        }
+      if (!monthMatches) return false; // Strictly restrict to the matched month!
 
-        const singleNum = textNoYear.match(new RegExp(`\\b0?${targetDay}\\b`));
-        if (singleNum) {
-          return true;
-        }
-
-        if (!/\d{1,2}/.test(textNoYear) && targetDay === 1) {
-          return true;
-        }
+      if (parsed.endDay && parsed.endDay >= parsed.startDay) {
+        return targetDay >= parsed.startDay && targetDay <= parsed.endDay;
       }
+      return parsed.startDay === targetDay;
+    }
+  }
+
+  // 2. Structured Properties Match
+  if (item.loreMonth || item.loreStartDay !== undefined) {
+    if (!item.loreMonth) {
+      // If loreMonth is completely omitted and text didn't match, do not repeat across all months
+      return false;
+    }
+
+    const startMonthMatches = isTargetMonth(item.loreMonth);
+    const endMonthMatches = item.loreEndMonth ? isTargetMonth(item.loreEndMonth) : startMonthMatches;
+
+    const sMonthIdx = allMonths.findIndex((m, idx) => checkMonthMatch(item.loreMonth, m, idx));
+    const eMonthIdx = item.loreEndMonth
+      ? allMonths.findIndex((m, idx) => checkMonthMatch(item.loreEndMonth, m, idx))
+      : sMonthIdx;
+
+    if (sMonthIdx !== -1 && eMonthIdx !== -1 && sMonthIdx !== eMonthIdx) {
+      if (startMonthMatches) {
+        return item.loreStartDay !== undefined ? targetDay >= item.loreStartDay : true;
+      }
+      if (endMonthMatches) {
+        return item.loreEndDay !== undefined ? targetDay <= item.loreEndDay : true;
+      }
+      if (sMonthIdx < eMonthIdx && targetMonthIndex > sMonthIdx && targetMonthIndex < eMonthIdx) return true;
+      if (sMonthIdx > eMonthIdx && (targetMonthIndex > sMonthIdx || targetMonthIndex < eMonthIdx)) return true;
+    } else if (startMonthMatches) {
+      if (item.loreStartDay !== undefined) {
+        if (item.loreEndDay !== undefined && item.loreEndDay >= item.loreStartDay) {
+          return targetDay >= item.loreStartDay && targetDay <= item.loreEndDay;
+        }
+        return item.loreStartDay === targetDay;
+      }
+      return true;
     }
   }
 

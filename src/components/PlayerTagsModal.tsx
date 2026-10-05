@@ -93,10 +93,17 @@ export function PlayerTagsModal({
 
   if (!isOpen || !player) return null;
 
+  const [tagLimitMsg, setTagLimitMsg] = useState<string | null>(null);
+
   const handleTogglePreset = (preset: string) => {
+    setTagLimitMsg(null);
     setCurrentTags((prev) => {
       if (prev.includes(preset)) {
         return prev.filter((t) => t !== preset);
+      }
+      if (prev.length >= 3) {
+        setTagLimitMsg('Puoi assegnare un massimo di 3 etichette per giocatore.');
+        return prev;
       }
       return [...prev, preset];
     });
@@ -104,8 +111,14 @@ export function PlayerTagsModal({
 
   const handleAddCustomTag = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
+    setTagLimitMsg(null);
     const clean = customInput.trim();
     if (!clean) return;
+
+    if (currentTags.length >= 3) {
+      setTagLimitMsg('Puoi assegnare un massimo di 3 etichette per giocatore.');
+      return;
+    }
 
     if (!currentTags.some((t) => t.toLowerCase() === clean.toLowerCase())) {
       setCurrentTags((prev) => [...prev, clean]);
@@ -141,7 +154,7 @@ export function PlayerTagsModal({
               className="w-9 h-9 rounded-md flex items-center justify-center text-white text-xs font-bold overflow-hidden shrink-0 border border-surface-3 shadow-xs"
               style={{ backgroundColor: player.color || '#6366f1' }}
             >
-              {player.avatarUrl ? (
+              {player.avatarUrl && player.avatarUrl.trim() ? (
                 <img
                   src={player.avatarUrl}
                   alt={player.characterName}
@@ -175,6 +188,11 @@ export function PlayerTagsModal({
 
         {/* Content Body */}
         <div className="p-5 overflow-y-auto custom-scrollbar space-y-5 text-xs font-sans">
+          {tagLimitMsg && (
+            <div className="p-2.5 bg-amber-500/10 border border-amber-500/30 text-amber-400 rounded-lg text-xs font-mono">
+              {tagLimitMsg}
+            </div>
+          )}
           {/* Current Assigned Tags */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">

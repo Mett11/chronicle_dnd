@@ -650,7 +650,7 @@ export function VisualSocialGraph({
           >
             <div className="relative">
               <div className="w-16 h-16 sm:w-18 sm:h-18 rounded-full border-3 border-primary shadow-lg shadow-primary/30 overflow-hidden bg-surface-2 p-0.5 flex items-center justify-center">
-                {centerHero.avatarUrl ? (
+                {centerHero.avatarUrl && centerHero.avatarUrl.trim() ? (
                   <img
                     src={centerHero.avatarUrl}
                     alt={centerHero.name}
@@ -715,7 +715,7 @@ export function VisualSocialGraph({
                     }`}
                     style={{ borderColor }}
                   >
-                    {node.avatarUrl ? (
+                    {node.avatarUrl && node.avatarUrl.trim() ? (
                       <img
                         src={node.avatarUrl}
                         alt={node.name}
@@ -778,7 +778,7 @@ export function VisualSocialGraph({
             <div className="flex items-start justify-between gap-3 mb-2.5">
               <div className="flex items-center gap-2.5 min-w-0">
                 <div className="w-10 h-10 rounded-full overflow-hidden border border-surface-3 shrink-0 bg-surface-2 flex items-center justify-center">
-                  {selectedNode.avatarUrl ? (
+                  {selectedNode.avatarUrl && selectedNode.avatarUrl.trim() ? (
                     <img
                       src={selectedNode.avatarUrl}
                       alt={selectedNode.name}
