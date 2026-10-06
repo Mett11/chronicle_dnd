@@ -2824,7 +2824,7 @@ export class CampaignManager {
     this.saveNotesLocalOnly(updated);
     if (isSupabaseConfigured() && targetNote) {
       const code = this.getActiveCampaignCode() || 'default';
-      SupabaseSyncService.saveNote(code, targetNote);
+      SupabaseSyncService.patchNoteFields(code, noteId, { dm_reply: (targetNote as Note).dmResponse });
     }
   }
 
@@ -2841,7 +2841,7 @@ export class CampaignManager {
     this.saveNotesLocalOnly(updated);
     if (isSupabaseConfigured() && targetNote) {
       const code = this.getActiveCampaignCode() || 'default';
-      SupabaseSyncService.saveNote(code, targetNote);
+      SupabaseSyncService.patchNoteFields(code, noteId, { ask_dm: askDm });
     }
   }
 
@@ -2859,7 +2859,7 @@ export class CampaignManager {
     this.saveNotesLocalOnly(updated);
     if (isSupabaseConfigured() && targetNote) {
       const code = this.getActiveCampaignCode() || 'default';
-      SupabaseSyncService.saveNote(code, targetNote);
+      SupabaseSyncService.patchNoteFields(code, noteId, { is_dm_only: true });
     }
     this.dismissNotification(noteId);
     this.deleteCampaignNotification(noteId);
@@ -2888,7 +2888,7 @@ export class CampaignManager {
     this.saveNotesLocalOnly(updated);
     if (isSupabaseConfigured() && targetNote) {
       const code = this.getActiveCampaignCode() || 'default';
-      SupabaseSyncService.saveNote(code, targetNote);
+      SupabaseSyncService.patchNoteFields(code, noteId, { visibility: 'private' });
     }
     this.dismissNotification(noteId, playerId);
     this.deleteCampaignNotification(noteId);
@@ -2911,7 +2911,7 @@ export class CampaignManager {
     this.saveNotesLocalOnly(updated);
     if (isSupabaseConfigured() && targetNote) {
       const code = this.getActiveCampaignCode() || 'default';
-      SupabaseSyncService.saveNote(code, targetNote);
+      SupabaseSyncService.patchNoteFields(code, noteId, { dm_reply: null });
     }
     if (typeof window !== "undefined") {
       window.dispatchEvent(new CustomEvent("chronicle_notifications_updated"));
@@ -2932,7 +2932,7 @@ export class CampaignManager {
     this.saveNotesLocalOnly(updated);
     if (isSupabaseConfigured() && targetNote) {
       const code = this.getActiveCampaignCode() || 'default';
-      SupabaseSyncService.saveNote(code, targetNote);
+      SupabaseSyncService.patchNoteFields(code, noteId, { ask_dm: false, dm_reply: null });
     }
     this.deleteCampaignNotification(noteId);
     if (typeof window !== "undefined") {

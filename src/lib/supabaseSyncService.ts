@@ -1217,6 +1217,108 @@ export class SupabaseSyncService {
   }
 
   /**
+   * Partially updates specific columns of a session (e.g. calendar_date) without resending the entire heavy payload
+   */
+  static async patchSessionFields(campaignCode: string, sessionId: string, patch: Record<string, any>): Promise<boolean> {
+    if (!isSupabaseConfigured() || !sessionId) return false;
+    try {
+      const code = (campaignCode || '').trim().toUpperCase();
+      const payload = {
+        ...patch,
+        updated_at: new Date().toISOString(),
+      };
+      const { error } = await supabase.from('sessions').update(payload).eq('id', sessionId);
+      if (error) return handleSupabaseError('Error patching session fields', error);
+      if (code) this.invalidateCampaignDataCache(code);
+      return true;
+    } catch (err) {
+      return handleSupabaseError('Failed to patch session fields', err);
+    }
+  }
+
+  /**
+   * Partially updates specific columns of a note (e.g. is_pinned, visibility) without resending markdown content or images
+   */
+  static async patchNoteFields(campaignCode: string, noteId: string, patch: Record<string, any>): Promise<boolean> {
+    if (!isSupabaseConfigured() || !noteId) return false;
+    try {
+      const code = (campaignCode || '').trim().toUpperCase();
+      const payload = {
+        ...patch,
+        updated_at: new Date().toISOString(),
+      };
+      const { error } = await supabase.from('notes').update(payload).eq('id', noteId);
+      if (error) return handleSupabaseError('Error patching note fields', error);
+      if (code) this.invalidateCampaignDataCache(code);
+      return true;
+    } catch (err) {
+      return handleSupabaseError('Failed to patch note fields', err);
+    }
+  }
+
+  /**
+   * Partially updates specific columns of an entity (e.g. status) without resending description or gallery
+   */
+  static async patchEntityFields(campaignCode: string, entityId: string, patch: Record<string, any>): Promise<boolean> {
+    if (!isSupabaseConfigured() || !entityId) return false;
+    try {
+      const code = (campaignCode || '').trim().toUpperCase();
+      const payload = {
+        ...patch,
+        updated_at: new Date().toISOString(),
+      };
+      const { error } = await supabase.from('entities').update(payload).eq('id', entityId);
+      if (error) return handleSupabaseError('Error patching entity fields', error);
+      if (code) this.invalidateCampaignDataCache(code);
+      return true;
+    } catch (err) {
+      return handleSupabaseError('Failed to patch entity fields', err);
+    }
+  }
+
+  /**
+   * Partially updates specific columns of a character bio without resending lore memories
+   */
+  static async patchCharacterBioFields(campaignCode: string, playerId: string, patch: Record<string, any>): Promise<boolean> {
+    if (!isSupabaseConfigured() || !playerId) return false;
+    try {
+      const code = (campaignCode || '').trim().toUpperCase();
+      const payload = {
+        ...patch,
+        updated_at: new Date().toISOString(),
+      };
+      let query = supabase.from('character_bios').update(payload).eq('player_id', playerId);
+      if (code) query = query.eq('campaign_code', code);
+      const { error } = await query;
+      if (error) return handleSupabaseError('Error patching character bio fields', error);
+      if (code) this.invalidateCampaignDataCache(code);
+      return true;
+    } catch (err) {
+      return handleSupabaseError('Failed to patch character bio fields', err);
+    }
+  }
+
+  /**
+   * Partially updates specific columns of a map without resending map image assets
+   */
+  static async patchMapFields(campaignCode: string, mapId: string, patch: Record<string, any>): Promise<boolean> {
+    if (!isSupabaseConfigured() || !mapId) return false;
+    try {
+      const code = (campaignCode || '').trim().toUpperCase();
+      const payload = {
+        ...patch,
+        updated_at: new Date().toISOString(),
+      };
+      const { error } = await supabase.from('maps').update(payload).eq('id', mapId);
+      if (error) return handleSupabaseError('Error patching map fields', error);
+      if (code) this.invalidateCampaignDataCache(code);
+      return true;
+    } catch (err) {
+      return handleSupabaseError('Failed to patch map fields', err);
+    }
+  }
+
+  /**
    * Save or update a single session with complete metadata and image persistence
    */
   static async saveSession(campaignCode: string, session: Session): Promise<boolean> {

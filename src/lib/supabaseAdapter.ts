@@ -248,9 +248,17 @@ export function sessionModelToRow(
 ): Record<string, any> {
   const cleanCode = campaignCode.trim().toUpperCase();
   const sessionDate = session.date || new Date().toISOString().split('T')[0];
-  const summaryStr = typeof session.recap === 'string'
-    ? session.recap
-    : (Array.isArray(session.recap) ? session.recap.join('\n') : '');
+  let summaryStr = '';
+  if (typeof (session as any).summary === 'string') {
+    summaryStr = (session as any).summary;
+  } else if (typeof session.recap === 'string') {
+    summaryStr = session.recap;
+  } else if (Array.isArray(session.recap)) {
+    summaryStr = session.recap
+      .map((item) => (typeof item === 'string' ? item : (item?.children?.[0]?.text || '')))
+      .filter(Boolean)
+      .join('\n');
+  }
 
   const rawRecap: any = (session as any).recap;
   const recapArray = Array.isArray(rawRecap)
