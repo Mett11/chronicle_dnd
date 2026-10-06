@@ -42,7 +42,7 @@ import {
 } from "../lib/mockData";
 import { HARPTOS_CALENDAR } from "../lib/calendarPresets";
 import { parseLoreDateString, formatLoreDate } from "../lib/loreDateUtils";
-import { CloudSyncService } from "../lib/cloudSync";
+import { CloudSyncService, markLocalWrite } from "../lib/cloudSync";
 import { UserPreferencesService } from "../lib/userPreferencesService";
 import { IndexedDbStorage } from "../lib/indexedDbStorage";
 import { SupabaseSyncService } from "../lib/supabaseSyncService";
@@ -2670,6 +2670,7 @@ export class CampaignManager {
     this.saveNotesLocalOnly(updated);
     if (isSupabaseConfigured()) {
       const code = this.getActiveCampaignCode() || 'default';
+      markLocalWrite(newNote._id);
       SupabaseSyncService.saveNote(code, newNote);
     }
 
@@ -2720,6 +2721,7 @@ export class CampaignManager {
     this.saveNotesLocalOnly(notes);
     if (isSupabaseConfigured()) {
       const code = this.getActiveCampaignCode() || 'default';
+      markLocalWrite(updatedNote._id || id);
       SupabaseSyncService.saveNote(code, updatedNote);
     }
     return updatedNote;
@@ -3396,6 +3398,7 @@ export class CampaignManager {
     this.saveSessionsLocalOnly(updated);
     if (isSupabaseConfigured()) {
       const code = this.getActiveCampaignCode() || 'default';
+      markLocalWrite(newSession._id);
       SupabaseSyncService.saveSession(code, newSession);
     }
 
@@ -3461,6 +3464,7 @@ export class CampaignManager {
     this.saveSessionsLocalOnly(sessions);
     if (isSupabaseConfigured()) {
       const code = this.getActiveCampaignCode() || 'default';
+      markLocalWrite(updatedSession._id || id);
       SupabaseSyncService.saveSession(code, updatedSession);
     }
     return sessions[index];
@@ -3582,6 +3586,7 @@ export class CampaignManager {
     this.saveChaptersLocalOnly(updated);
     if (isSupabaseConfigured()) {
       const code = this.getActiveCampaignCode() || 'default';
+      markLocalWrite(newChapter.id);
       SupabaseSyncService.saveChapter(code, newChapter);
     }
     return newChapter;
@@ -3600,6 +3605,7 @@ export class CampaignManager {
     this.saveChaptersLocalOnly(chapters);
     if (isSupabaseConfigured()) {
       const code = this.getActiveCampaignCode() || 'default';
+      markLocalWrite(updated.id || id);
       SupabaseSyncService.saveChapter(code, updated);
     }
 
@@ -3933,6 +3939,7 @@ export class CampaignManager {
     this.saveEntitiesLocalOnly(updated);
     if (isSupabaseConfigured()) {
       const code = this.getActiveCampaignCode() || 'default';
+      markLocalWrite(newEntity._id);
       SupabaseSyncService.saveEntity(code, newEntity);
     }
 
@@ -4073,6 +4080,7 @@ export class CampaignManager {
     this.saveEntitiesLocalOnly(entities);
     if (isSupabaseConfigured()) {
       const code = this.getActiveCampaignCode() || 'default';
+      markLocalWrite(updatedEntity._id || id);
       SupabaseSyncService.saveEntity(code, updatedEntity);
     }
 

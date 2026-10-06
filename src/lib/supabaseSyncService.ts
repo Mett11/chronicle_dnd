@@ -222,11 +222,32 @@ export class SupabaseSyncService {
     }
   }
 
+  private static campaignDataCache = new Map<string, { data: Record<string, any>; timestamp: number }>();
+
+  static invalidateCampaignDataCache(campaignCode?: string) {
+    if (campaignCode) {
+      const clean = campaignCode.trim().toUpperCase();
+      for (const key of this.campaignDataCache.keys()) {
+        if (key.includes(clean)) this.campaignDataCache.delete(key);
+      }
+    } else {
+      this.campaignDataCache.clear();
+    }
+  }
+
   /**
    * Fetches all campaign relational data from Supabase in parallel
    */
-  static async fetchCampaignData(campaignCode: string, campaignTitleOrSlug?: string): Promise<Record<string, any> | null> {
+  static async fetchCampaignData(campaignCode: string, campaignTitleOrSlug?: string, force = false): Promise<Record<string, any> | null> {
     if (!isSupabaseConfigured() || !campaignCode) return null;
+
+    const cacheKey = `${campaignCode}_${campaignTitleOrSlug || ''}`.toUpperCase();
+    if (!force) {
+      const cached = this.campaignDataCache.get(cacheKey);
+      if (cached && Date.now() - cached.timestamp < 30000) {
+        return cached.data;
+      }
+    }
 
     try {
       const candidates = new Set<string>();
@@ -526,7 +547,7 @@ export class SupabaseSyncService {
         worldLoreArticles = dossier.worldLoreArticles;
       }
 
-      return {
+      const result = {
         campaignCode: campRow.code || campaignCode,
         title: campRow.title || campaignCode,
         subtitle: campRow.subtitle || '',
@@ -570,6 +591,9 @@ export class SupabaseSyncService {
         scrapbookItems,
         audioLogs,
       };
+
+      this.campaignDataCache.set(cacheKey, { data: result, timestamp: Date.now() });
+      return result;
     } catch (err) {
       handleSupabaseError('Failed to fetch campaign data', err);
       return null;
@@ -1040,6 +1064,7 @@ export class SupabaseSyncService {
       const { error } = await safeUpsert('sessions', payload, { onConflict: 'id' });
       if (error) return handleSupabaseError('Error saving session', error);
 
+      this.invalidateCampaignDataCache(code);
       return true;
     } catch (err) {
       return handleSupabaseError('Failed to save session', err);
@@ -1053,6 +1078,7 @@ export class SupabaseSyncService {
     if (!isSupabaseConfigured() || !sessionId) return false;
     try {
       const { error } = await supabase.from('sessions').delete().eq('id', sessionId);
+      if (campaignCode) this.invalidateCampaignDataCache(campaignCode);
       return !error;
     } catch {
       return false;
@@ -1072,6 +1098,7 @@ export class SupabaseSyncService {
       const { error } = await safeUpsert('notes', payload, { onConflict: 'id' });
       if (error) return handleSupabaseError('Error saving note', error);
 
+      this.invalidateCampaignDataCache(code);
       return true;
     } catch (err) {
       return handleSupabaseError('Failed to save note', err);
@@ -1085,6 +1112,7 @@ export class SupabaseSyncService {
     if (!isSupabaseConfigured() || !noteId) return false;
     try {
       const { error } = await supabase.from('notes').delete().eq('id', noteId);
+      if (campaignCode) this.invalidateCampaignDataCache(campaignCode);
       return !error;
     } catch {
       return false;
@@ -1103,6 +1131,7 @@ export class SupabaseSyncService {
 
       const { error } = await safeUpsert('entities', payload, { onConflict: 'id' });
       if (error) return handleSupabaseError('Error saving entity', error);
+      this.invalidateCampaignDataCache(code);
       return true;
     } catch (err) {
       return handleSupabaseError('Failed to save entity', err);

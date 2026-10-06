@@ -37,6 +37,22 @@ let pendingRemoteSnapshot: { data: any; code: string } | null = null;
 let lastSyncedPayloadHash = '';
 let lastSyncedMediaHash = '';
 
+// Local write timestamps to suppress Realtime WebSocket echoes
+const localWriteTimestamps = new Map<string, number>();
+
+export function markLocalWrite(id: string) {
+  if (id) {
+    localWriteTimestamps.set(String(id), Date.now());
+  }
+}
+
+export function isRecentlyWrittenLocally(id: string, windowMs = 3000): boolean {
+  if (!id) return false;
+  const ts = localWriteTimestamps.get(String(id));
+  if (!ts) return false;
+  return Date.now() - ts < windowMs;
+}
+
 function checkIsQuotaExhausted(): boolean {
   try {
     const stored = localStorage.getItem('chronicle_firestore_quota_exhausted');
@@ -1116,6 +1132,7 @@ export class CloudSyncService {
             const row = payload.new;
             if (row.campaign_code && row.campaign_code.trim().toUpperCase() !== cleanActiveCode) return;
             const cleanSess = sessionRowToModel(row);
+            if (cleanSess._id && isRecentlyWrittenLocally(cleanSess._id)) return;
             const idx = sessions.findIndex((s) => s._id === cleanSess._id);
             const updated = idx !== -1 ? sessions.map((s) => s._id === cleanSess._id ? cleanSess : s) : [cleanSess, ...sessions];
             CampaignManager.saveSessionsLocalOnly(updated);
@@ -1137,6 +1154,7 @@ export class CloudSyncService {
             const row = payload.new;
             if (row.campaign_code && row.campaign_code.trim().toUpperCase() !== cleanActiveCode) return;
             const cleanChap = chapterRowToModel(row);
+            if (cleanChap.id && isRecentlyWrittenLocally(cleanChap.id)) return;
             const idx = chaps.findIndex((c) => c.id === cleanChap.id);
             const updated = idx !== -1 ? chaps.map((c) => c.id === cleanChap.id ? cleanChap : c) : [...chaps, cleanChap];
             CampaignManager.saveChaptersLocalOnly(updated);
@@ -1158,6 +1176,7 @@ export class CloudSyncService {
             const row = payload.new;
             if (row.campaign_code && row.campaign_code.trim().toUpperCase() !== cleanActiveCode) return;
             const cleanNote = noteRowToModel(row);
+            if (cleanNote._id && isRecentlyWrittenLocally(cleanNote._id)) return;
             const idx = notes.findIndex((n) => n._id === cleanNote._id);
             const updated = idx !== -1 ? notes.map((n) => n._id === cleanNote._id ? cleanNote : n) : [cleanNote, ...notes];
             CampaignManager.saveNotesLocalOnly(updated);
@@ -1179,6 +1198,7 @@ export class CloudSyncService {
             const row = payload.new;
             if (row.campaign_code && row.campaign_code.trim().toUpperCase() !== cleanActiveCode) return;
             const cleanEnt = entityRowToModel(row);
+            if (cleanEnt._id && isRecentlyWrittenLocally(cleanEnt._id)) return;
             const idx = entities.findIndex((e) => e._id === cleanEnt._id);
             const updated = idx !== -1 ? entities.map((e) => e._id === cleanEnt._id ? cleanEnt : e) : [cleanEnt, ...entities];
             CampaignManager.saveEntitiesLocalOnly(updated);
@@ -1200,6 +1220,7 @@ export class CloudSyncService {
             const row = payload.new;
             if (row.campaign_code && row.campaign_code.trim().toUpperCase() !== cleanActiveCode) return;
             const cleanBio = characterBioRowToModel(row);
+            if (cleanBio.playerId && isRecentlyWrittenLocally(cleanBio.playerId)) return;
             const idx = bios.findIndex((b) => b.playerId === cleanBio.playerId);
             const updated = idx !== -1 ? bios.map((b) => b.playerId === cleanBio.playerId ? cleanBio : b) : [cleanBio, ...bios];
             CampaignManager.saveAllCharacterBiosLocalOnly(updated);
@@ -1241,6 +1262,7 @@ export class CloudSyncService {
               order: row.order_index || 0,
               updatedAt: row.updated_at || new Date().toISOString(),
             };
+            if (cleanRel.id && isRecentlyWrittenLocally(cleanRel.id)) return;
             const idx = rels.findIndex((r) => r.id === cleanRel.id);
             const updated = idx !== -1 ? rels.map((r) => r.id === cleanRel.id ? cleanRel : r) : [cleanRel, ...rels];
             CampaignManager.saveAllFamilyRelationsLocalOnly(updated);
@@ -1277,6 +1299,7 @@ export class CloudSyncService {
               relatedEntityIds: row.related_entity_ids || [],
               order: row.order_index || 0,
             };
+            if (cleanArt._id && isRecentlyWrittenLocally(cleanArt._id)) return;
             const idx = arts.findIndex((a) => a._id === cleanArt._id);
             const updated = idx !== -1 ? arts.map((a) => a._id === cleanArt._id ? cleanArt : a) : [cleanArt, ...arts];
             CampaignManager.saveAllWorldLoreArticlesLocalOnly(updated);
@@ -1319,19 +1342,27 @@ export class CloudSyncService {
   }
 
   /**
-   * Pushes the current complete state to Cloud Firestore (with debouncing & hash check)
+   * Pushes the current complete state to Cloud with debouncing & hash check
    */
   static triggerCloudSave() {
     if (isApplyingRemoteUpdate || checkIsQuotaExhausted() || !this.isCampaignHydrated) return;
 
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem('hasPendingUpload', 'true');
-    }
-
     if (syncTimeout) clearTimeout(syncTimeout);
     syncTimeout = setTimeout(() => {
-      this.uploadLocalToCloud();
-    }, 1500);
+      // In Supabase relational mode, individual mutations (sessions, notes, entities, chapters)
+      // are persisted granularly and immediately to their respective tables.
+      // We update the local sync status without triggering a costly 11-table bulk dump.
+      const nowIso = new Date().toISOString();
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem('hasPendingUpload', 'false');
+        localStorage.setItem('chronicle_last_cloud_sync_time', nowIso);
+      }
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent('chronicle_cloud_sync_status', { detail: { status: 'synced', time: nowIso } })
+        );
+      }
+    }, 600);
   }
 
   static getLastSyncTime(): string | null {
