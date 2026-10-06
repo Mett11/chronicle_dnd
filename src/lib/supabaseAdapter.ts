@@ -248,15 +248,21 @@ export function sessionModelToRow(
     ? session.recap
     : (Array.isArray(session.recap) ? session.recap.join('\n') : '');
 
-  const recapText = typeof session.recap === 'string'
-    ? session.recap
-    : JSON.stringify(session.recap || []);
+  const rawRecap: any = (session as any).recap;
+  const recapArray = Array.isArray(rawRecap)
+    ? rawRecap
+    : (typeof rawRecap === 'string' && rawRecap.trim()
+        ? [rawRecap]
+        : []);
 
+  let loreDateFormatted: string | null = null;
   let loreDateJson: any = null;
   if (session.loreDate) {
     if (typeof session.loreDate === 'object') {
       loreDateJson = session.loreDate;
+      loreDateFormatted = (session.loreDate as any).formatted || null;
     } else {
+      loreDateFormatted = String(session.loreDate);
       loreDateJson = {
         formatted: session.loreDate,
         day: session.loreStartDay || null,
@@ -269,6 +275,8 @@ export function sessionModelToRow(
   const excludedPlayerIds = Array.isArray(session.excludedPlayerIds) ? session.excludedPlayerIds : [];
   const attendeePlayerIds = Array.isArray(session.attendeePlayerIds) ? session.attendeePlayerIds : [];
   const attendees = Array.isArray(session.attendees) ? session.attendees : [];
+  const coverImage = (session as any).coverImageUrl || (session as any).coverImage || (Array.isArray(session.images) && session.images[0]) || null;
+  const audioUrl = (session as any).audioUrl || null;
 
   return {
     id: session._id,
@@ -277,22 +285,16 @@ export function sessionModelToRow(
     number: session.number || 1,
     title: session.title || `Sessione ${session.number || 1}`,
     date: sessionDate,
-    lore_date: loreDateJson,
-    recap: recapText,
-    events: Array.isArray(session.events) ? session.events : [],
-    images: Array.isArray(session.images) ? session.images : [],
-    audio_url: (session as any).audioUrl || (typeof session.coverImage === 'string' ? session.coverImage : null),
-    entities_extracted: Boolean(session.entitiesExtracted),
-    memory_synced: Boolean(session.memorySynced),
-    created_at: (session as any).createdAt || (session as any)._createdAt || new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-    lore_day: session.loreStartDay || null,
-    lore_month: session.loreMonth ? parseInt(String(session.loreMonth)) || null : null,
-    lore_year: session.loreYear || null,
-    lore_formatted: typeof session.loreDate === 'string' ? session.loreDate : (loreDateJson?.formatted || null),
+    date_str: sessionDate,
     calendar_date: sessionDate,
+    lore_date: loreDateFormatted || loreDateJson?.formatted || null,
+    recap: recapArray,
     summary: summaryStr,
     plot_events: Array.isArray(session.events) ? session.events : [],
+    events: Array.isArray(session.events) ? session.events : [],
+    images: Array.isArray(session.images) ? session.images : [],
+    cover_image_url: coverImage,
+    audio_url: audioUrl,
     session_type: session.sessionType || 'mixed',
     quotes: Array.isArray((session as any).quotes) ? (session as any).quotes : [],
     audio_logs: Array.isArray(session.audioLogs) ? session.audioLogs : [],
@@ -300,8 +302,16 @@ export function sessionModelToRow(
     attendee_player_ids: attendeePlayerIds,
     attendees: attendees,
     tags: Array.isArray((session as any).tags) ? (session as any).tags : [],
+    entities_extracted: Boolean(session.entitiesExtracted),
+    memory_synced: Boolean(session.memorySynced),
     entities_extracted_at: (session as any).entitiesExtractedAt || null,
     memory_synced_at: (session as any).memorySyncedAt || null,
+    created_at: (session as any).createdAt || (session as any)._createdAt || new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    lore_day: session.loreStartDay || null,
+    lore_month: session.loreMonth ? parseInt(String(session.loreMonth)) || null : null,
+    lore_year: session.loreYear || null,
+    lore_formatted: loreDateFormatted,
     gazette_config: (session as any).gazetteConfig || {},
     chapter_name: (session as any).chapterName || null,
     linked_entity_ids: Array.isArray(session.linkedEntityIds) ? session.linkedEntityIds : [],
@@ -457,6 +467,16 @@ export function noteModelToRow(
   campaignCode: string
 ): Record<string, any> {
   const cleanCode = campaignCode.trim().toUpperCase();
+  const categoryVal = (note as any).categoryId || (note as any).category || 'general';
+  let loreDateFormatted: string | null = null;
+  if ((note as any).loreDate) {
+    if (typeof (note as any).loreDate === 'object') {
+      loreDateFormatted = (note as any).loreDate.formatted || JSON.stringify((note as any).loreDate);
+    } else {
+      loreDateFormatted = String((note as any).loreDate);
+    }
+  }
+
   return {
     id: note._id,
     campaign_code: cleanCode,
@@ -464,7 +484,8 @@ export function noteModelToRow(
     author_name: note.author?.characterName || 'Giocatore',
     title: note.title || 'Nota',
     content: note.content || '',
-    category_id: (note as any).categoryId || (note as any).category || null,
+    category: categoryVal,
+    category_id: categoryVal,
     session_id: (note as any).sessionId || null,
     visibility: note.visibility || 'group',
     is_dm_only: Boolean(note.dmOnly),
@@ -472,7 +493,7 @@ export function noteModelToRow(
     canon_state: note.canonState || 'canon',
     tags: Array.isArray(note.tags) ? note.tags : [],
     images: Array.isArray(note.images) ? note.images : [],
-    lore_date: (note as any).loreDate ? (typeof (note as any).loreDate === 'object' ? (note as any).loreDate : { formatted: (note as any).loreDate }) : null,
+    lore_date: loreDateFormatted,
     created_at: (note as any)._createdAt || (note as any).createdAt || new Date().toISOString(),
     updated_at: new Date().toISOString(),
     author_is_dm: Boolean(note.author?.isDm),
@@ -702,25 +723,36 @@ export function characterBioModelToRow(bio: CharacterBio, campaignCode?: string)
     : (typeof (bio as any).personality === 'string' && (bio as any).personality.trim()
       ? (bio as any).personality.split(',').map((s: string) => s.trim()).filter(Boolean)
       : []);
+  const classVal = bio.characterClass || (bio as any).classLevel || '';
+  const alignmentVal = bio.characterAlignment || (bio as any).alignment || '';
+  const bgVal = bio.backstoryMarkdown || bio.notes || bio.bio || '';
+  const personalityStr = personalityTraitsArray.join(', ');
 
   return {
     player_id: bio.playerId,
     campaign_code: cleanCode,
+    name: charName,
     character_name: charName,
     avatar_url: bio.avatarUrl || null,
     color: bio.color || '#6366f1',
     bio: bio.bio || bio.notes || null,
-    background: bio.backstoryMarkdown || bio.notes || bio.bio || '',
+    background: bgVal,
+    class_level: classVal,
+    character_class: classVal,
+    alignment: alignmentVal,
+    character_alignment: alignmentVal,
+    personality: personalityStr,
+    personality_traits: personalityTraitsArray,
     traits: Array.isArray(bio.traits) ? bio.traits : [],
     stats: (bio.stats && typeof bio.stats === 'object') ? bio.stats : {},
     secrets: typeof bio.secrets === 'string' ? bio.secrets : JSON.stringify(bio.secrets || ''),
     privacy_settings: bio.privacySettings || { isBioPublic: true, isStatsPublic: true, isBackgroundPublic: false, isSecretsPublic: false },
     timeline_memories: Array.isArray(bio.timelineMemories) ? bio.timelineMemories : [],
     evolving_beliefs: Array.isArray(bio.evolvingBeliefs) ? bio.evolvingBeliefs : [],
+    inter_party_relations: (bio.interPartyRelations && typeof bio.interPartyRelations === 'object') ? bio.interPartyRelations : {},
+    known_lore_bites: Array.isArray(bio.knownLoreBites) ? bio.knownLoreBites : [],
     character_title: bio.characterTitle || '',
-    character_class: bio.characterClass || '',
     character_race: bio.characterRace || '',
-    character_alignment: bio.characterAlignment || '',
     deity_or_patron: bio.deityOrPatron || '',
     hometown: bio.hometown || '',
     birth_date_formatted: bio.birthDateFormatted || '',
@@ -729,12 +761,18 @@ export function characterBioModelToRow(bio: CharacterBio, campaignCode?: string)
     birth_year: typeof bio.birthYear === 'number' ? bio.birthYear : 1492,
     appearance_description: bio.appearanceDescription || '',
     current_status: bio.currentStatus || '',
-    personality_traits: personalityTraitsArray,
     ideals: bio.ideals || '',
     bonds: bio.bonds || '',
     flaws: bio.flaws || '',
-    inter_party_relations: (bio.interPartyRelations && typeof bio.interPartyRelations === 'object') ? bio.interPartyRelations : {},
-    known_lore_bites: Array.isArray(bio.knownLoreBites) ? bio.knownLoreBites : [],
+    extra_data: {
+      ...bio,
+      characterName: charName,
+      characterClass: classVal,
+      characterAlignment: alignmentVal,
+      backstoryMarkdown: bgVal,
+      personalityTraits: personalityTraitsArray,
+      updatedAt: new Date().toISOString(),
+    },
     updated_at: new Date().toISOString(),
   };
 }

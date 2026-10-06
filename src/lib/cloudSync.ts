@@ -563,7 +563,7 @@ export class CloudSyncService {
   static async fetchGlobalAccountsNow(force = false): Promise<void> {
     if (!isSupabaseConfigured()) return;
     const now = Date.now();
-    if (!force && now - this.lastGlobalAccountsFetchTime < 3000) {
+    if (!force && now - this.lastGlobalAccountsFetchTime < 60000) {
       return;
     }
     if (this.globalAccountsFetchInFlight) {

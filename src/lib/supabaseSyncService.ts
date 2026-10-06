@@ -169,13 +169,19 @@ export async function safeUpsert(
       }
     }
 
-    // 3. Missing column in schema cache handling (PGRST204)
+    // 3. Missing column in schema cache or SQL error (PGRST204 or 42703)
     if (
       res.error.code === 'PGRST204' ||
+      res.error.code === '42703' ||
       res.error.message?.includes('schema cache') ||
-      res.error.message?.includes('Could not find the')
+      res.error.message?.includes('Could not find the') ||
+      res.error.message?.includes('does not exist')
     ) {
-      const match = res.error.message.match(/Could not find the '([^']+)' column/i);
+      const match =
+        res.error.message.match(/Could not find the '([^']+)' column/i) ||
+        res.error.message.match(/column "([^"]+)" of relation/i) ||
+        res.error.message.match(/column "([^"]+)" does not exist/i);
+
       if (match && match[1]) {
         const missingCol = match[1];
         knownMissingColumns.add(`${currentTable}.${missingCol}`);
@@ -188,6 +194,25 @@ export async function safeUpsert(
         } else {
           delete currentPayload[missingCol];
         }
+        continue;
+      }
+    }
+
+    // 4. ON CONFLICT specification mismatch (42P10) -> Retry with alternative conflict target or standard upsert
+    if (
+      res.error.code === '42P10' ||
+      res.error.message?.includes('there is no unique or exclusion constraint') ||
+      res.error.message?.includes('ON CONFLICT')
+    ) {
+      if (options?.onConflict && options.onConflict.includes(',')) {
+        // Fallback from composite key (campaign_code,player_id) to single column (player_id or id)
+        const parts = options.onConflict.split(',');
+        const fallbackCol = parts.find((p) => p.trim() === 'player_id' || p.trim() === 'id') || parts[0].trim();
+        options.onConflict = fallbackCol;
+        continue;
+      } else if (options?.onConflict) {
+        // Retry without explicit onConflict
+        delete options.onConflict;
         continue;
       }
     }
@@ -261,20 +286,23 @@ export class SupabaseSyncService {
       const rawCode = campaignCode.trim();
       const { data, error } = await supabase
         .from('campaigns')
-        .select('code, title, created_at, dm_id, dossier')
+        .select('code, title, created_at, dm_id, active_players')
         .or(`code.eq.${cleanCode},code.eq.${rawCode}`)
         .maybeSingle();
 
       if (error || !data) return null;
+      const activePlayers = Array.isArray(data.active_players) ? data.active_players : [];
+      const dmPlayer = activePlayers.find((p: any) => p && (p.isDm || (data.dm_id && p.id === data.dm_id)));
+
       return {
         code: data.code,
         name: data.title || data.code,
         createdAt: data.created_at || new Date().toISOString(),
-        dmId: data.dm_id || data.dossier?.dmId || undefined,
-        dmEmail: data.dossier?.dmEmail || data.dossier?.creatorEmail || undefined,
-        dmName: data.dossier?.dmName || data.dossier?.creatorName || undefined,
-        dmIsPlayer: data.dossier?.dmIsPlayer !== undefined ? Boolean(data.dossier.dmIsPlayer) : undefined,
-        expelledAccountIds: Array.isArray(data.dossier?.expelledAccountIds) ? data.dossier.expelledAccountIds : [],
+        dmId: data.dm_id || dmPlayer?.id || undefined,
+        dmEmail: dmPlayer?.email || undefined,
+        dmName: dmPlayer?.characterName || undefined,
+        dmIsPlayer: dmPlayer ? Boolean(dmPlayer.isDm) : undefined,
+        expelledAccountIds: [],
       };
     } catch {
       return null;
@@ -490,12 +518,25 @@ export class SupabaseSyncService {
       const characterBiosRows = characterBiosRes?.data || [];
       const familyRelationsRows = familyRelationsRes?.data || [];
 
-      let characterBios: any[] = [];
-      if (characterBiosRows && characterBiosRows.length > 0) {
-        characterBios = characterBiosRows.map((row: any) => characterBioRowToModel(row));
-      } else if ((characterBiosRes as any)?.error && Array.isArray(dossier.characterBios) && dossier.characterBios.length > 0) {
-        characterBios = dossier.characterBios;
+      // Resilient character bios merge: combine dossier fallback with character_bios table
+      const biosMap = new Map<string, any>();
+      if (Array.isArray(dossier.characterBios)) {
+        dossier.characterBios.forEach((b: any) => {
+          if (b && (b.playerId || b.id)) {
+            biosMap.set(b.playerId || b.id, b);
+          }
+        });
       }
+      if (characterBiosRows && characterBiosRows.length > 0) {
+        characterBiosRows.forEach((row: any) => {
+          const model = characterBioRowToModel(row);
+          if (model && model.playerId) {
+            const existing = biosMap.get(model.playerId) || {};
+            biosMap.set(model.playerId, { ...existing, ...model });
+          }
+        });
+      }
+      const characterBios: any[] = Array.from(biosMap.values());
 
       let familyRelations: any[] = [];
       if (familyRelationsRows && familyRelationsRows.length > 0) {
@@ -1845,23 +1886,28 @@ export class SupabaseSyncService {
 
     this.inFlightAllCampaignsFetch = (async () => {
       try {
-        const { data, error } = await supabase.from('campaigns').select('code, title, created_at, dm_id, dossier');
+        const { data, error } = await supabase
+          .from('campaigns')
+          .select('code, title, subtitle, description, system, dm_id, active_players, created_at, updated_at');
         if (error || !Array.isArray(data)) return [];
         const result = data.map((c) => {
-          const activePlayers = Array.isArray(c.dossier?.activePlayers) ? c.dossier.activePlayers : [];
-          const dmPlayer = activePlayers.find((p: any) => p && (p.isDm || (c.dm_id && p.id === c.dm_id)));
+          const activePlayers = Array.isArray(c.active_players) ? c.active_players : [];
+          const dmPlayer = activePlayers.find((p: any) => p && (p.isDm || (c.dm_id && (p.id === c.dm_id || p._id === c.dm_id))));
           const activePlayerEmails = activePlayers.map((p: any) => (p?.email || '').toLowerCase().trim()).filter(Boolean);
 
           return {
             code: c.code,
             name: c.title || c.code,
+            subtitle: c.subtitle || '',
+            description: c.description || '',
+            system: c.system || 'D&D 5e',
             createdAt: c.created_at || new Date().toISOString(),
-            dmId: c.dm_id || c.dossier?.dmId || dmPlayer?.id || undefined,
-            dmEmail: c.dossier?.dmEmail || c.dossier?.creatorEmail || dmPlayer?.email || undefined,
-            dmName: c.dossier?.dmName || c.dossier?.creatorName || dmPlayer?.characterName || undefined,
-            dmIsPlayer: c.dossier?.dmIsPlayer !== undefined ? Boolean(c.dossier.dmIsPlayer) : undefined,
+            dmId: c.dm_id || dmPlayer?.id || undefined,
+            dmEmail: dmPlayer?.email || undefined,
+            dmName: dmPlayer?.characterName || undefined,
+            dmIsPlayer: dmPlayer ? Boolean(dmPlayer.isDm) : undefined,
             activePlayerEmails,
-            expelledAccountIds: Array.isArray(c.dossier?.expelledAccountIds) ? c.dossier.expelledAccountIds : [],
+            expelledAccountIds: [],
           };
         });
         this.allCampaignsCache = { data: result, timestamp: Date.now() };
@@ -1930,7 +1976,7 @@ export class SupabaseSyncService {
   }
 
   /**
-   * Persists a single character bio to character_bios table
+   * Persists a single character bio to character_bios table with dossier backup
    */
   static async saveCharacterBio(campaignCode: string, bio: any): Promise<boolean> {
     if (!isSupabaseConfigured() || !campaignCode || !bio || !bio.playerId) return false;
@@ -1939,8 +1985,28 @@ export class SupabaseSyncService {
       const payload = characterBioModelToRow(bio, code);
       const { error } = await safeUpsert('character_bios', payload, { onConflict: 'campaign_code,player_id' });
       if (error) {
-        return handleSupabaseError('Error saving character bio', error);
+        console.warn('[Supabase] Warning saving to character_bios table, falling back to dossier:', error.message);
       }
+
+      // Dossier backup persistence
+      try {
+        const { data: camp } = await supabase.from('campaigns').select('dossier').eq('code', code).maybeSingle();
+        const dossier = camp?.dossier || {};
+        const currentBios: any[] = Array.isArray(dossier.characterBios) ? [...dossier.characterBios] : [];
+        const idx = currentBios.findIndex((b: any) => b && (b.playerId === bio.playerId || b.id === bio.playerId));
+        if (idx !== -1) {
+          currentBios[idx] = { ...currentBios[idx], ...bio };
+        } else {
+          currentBios.push(bio);
+        }
+        await supabase.from('campaigns').update({
+          dossier: { ...dossier, characterBios: currentBios },
+          updated_at: new Date().toISOString(),
+        }).eq('code', code);
+      } catch (dErr) {
+        console.warn('[Supabase] Dossier bio backup warning:', dErr);
+      }
+
       return true;
     } catch (err) {
       return handleSupabaseError('Failed to save single character bio', err);
@@ -1948,7 +2014,7 @@ export class SupabaseSyncService {
   }
 
   /**
-   * Persists character bios into separate character_bios table atomically
+   * Persists character bios into separate character_bios table atomically with dossier backup
    */
   static async saveCharacterBios(campaignCode: string, bios: any[]): Promise<boolean> {
     if (!isSupabaseConfigured() || !campaignCode) return false;
@@ -1958,12 +2024,25 @@ export class SupabaseSyncService {
         .filter((bio) => bio && bio.playerId)
         .map((bio) => characterBioModelToRow(bio, code));
 
-      if (payloads.length === 0) return true;
-
-      const { error } = await safeUpsert('character_bios', payloads, { onConflict: 'campaign_code,player_id' });
-      if (error) {
-        return handleSupabaseError('Error saving character bios', error);
+      if (payloads.length > 0) {
+        const { error } = await safeUpsert('character_bios', payloads, { onConflict: 'campaign_code,player_id' });
+        if (error) {
+          console.warn('[Supabase] Warning bulk saving character_bios:', error.message);
+        }
       }
+
+      // Dossier backup persistence
+      try {
+        const { data: camp } = await supabase.from('campaigns').select('dossier').eq('code', code).maybeSingle();
+        const dossier = camp?.dossier || {};
+        await supabase.from('campaigns').update({
+          dossier: { ...dossier, characterBios: bios || [] },
+          updated_at: new Date().toISOString(),
+        }).eq('code', code);
+      } catch (dErr) {
+        console.warn('[Supabase] Dossier bulk bios backup warning:', dErr);
+      }
+
       return true;
     } catch (err) {
       return handleSupabaseError('Failed to save character bios', err);
