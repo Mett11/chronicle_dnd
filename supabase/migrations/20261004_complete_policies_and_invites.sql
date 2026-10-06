@@ -32,18 +32,21 @@ DECLARE
 BEGIN
   FOREACH t IN ARRAY candidate_tables LOOP
     IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = t) THEN
-      -- Drop existing select/insert/update policies to prevent duplicates or restrictive checks
+      -- Drop existing select/insert/update/delete policies to prevent duplicates or restrictive checks
       EXECUTE format('DROP POLICY IF EXISTS "%s_select" ON public.%I;', t, t);
       EXECUTE format('DROP POLICY IF EXISTS "%s_insert" ON public.%I;', t, t);
       EXECUTE format('DROP POLICY IF EXISTS "%s_update" ON public.%I;', t, t);
+      EXECUTE format('DROP POLICY IF EXISTS "%s_delete" ON public.%I;', t, t);
       EXECUTE format('DROP POLICY IF EXISTS "allow_all_select_%s" ON public.%I;', t, t);
       EXECUTE format('DROP POLICY IF EXISTS "allow_all_insert_%s" ON public.%I;', t, t);
       EXECUTE format('DROP POLICY IF EXISTS "allow_all_update_%s" ON public.%I;', t, t);
+      EXECUTE format('DROP POLICY IF EXISTS "allow_all_delete_%s" ON public.%I;', t, t);
 
-      -- Create open read and write policies
+      -- Create open read and write policies (including DELETE)
       EXECUTE format('CREATE POLICY "allow_all_select_%s" ON public.%I FOR SELECT TO public USING (true);', t, t);
       EXECUTE format('CREATE POLICY "allow_all_insert_%s" ON public.%I FOR INSERT TO public WITH CHECK (true);', t, t);
       EXECUTE format('CREATE POLICY "allow_all_update_%s" ON public.%I FOR UPDATE TO public USING (true) WITH CHECK (true);', t, t);
+      EXECUTE format('CREATE POLICY "allow_all_delete_%s" ON public.%I FOR DELETE TO public USING (true);', t, t);
     END IF;
   END LOOP;
 END $$;

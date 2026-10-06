@@ -1258,6 +1258,23 @@ export class SupabaseSyncService {
   }
 
   /**
+   * Bulk saves entities with a single batch request
+   */
+  static async saveEntities(campaignCode: string, entities: Entity[]): Promise<boolean> {
+    if (!isSupabaseConfigured() || !campaignCode || !Array.isArray(entities) || entities.length === 0) return true;
+    try {
+      const code = campaignCode.trim().toUpperCase();
+      const payloads = entities.map((e) => entityModelToRow(e, code));
+      const { error } = await safeUpsert('entities', payloads, { onConflict: 'id' });
+      if (error) return handleSupabaseError('Error saving entities in bulk', error);
+      this.invalidateCampaignDataCache(code);
+      return true;
+    } catch (err) {
+      return handleSupabaseError('Failed to save entities in bulk', err);
+    }
+  }
+
+  /**
    * Delete a single entity
    */
   static async deleteEntity(entityId: string): Promise<boolean> {
@@ -2290,16 +2307,20 @@ export class SupabaseSyncService {
   }
 
   /**
-   * Delete a single chapter and clean up dossier.chaptersMeta
+   * Delete a single chapter and clean up dossier.chaptersMeta and cache
    */
   static async deleteChapter(chapterId: string, campaignCode?: string): Promise<boolean> {
-    if (!isSupabaseConfigured()) return false;
+    if (!isSupabaseConfigured() || !chapterId) return false;
     try {
-      await supabase.from('chapters').delete().eq('id', chapterId);
+      const { error } = await supabase.from('chapters').delete().eq('id', chapterId);
+      if (error) {
+        console.warn('[Supabase] Error deleting chapter:', error.message);
+      }
       if (campaignCode) {
+        this.invalidateCampaignDataCache(campaignCode);
         this.removeChapterMeta(campaignCode, chapterId).catch(() => {});
       }
-      return true;
+      return !error;
     } catch {
       return false;
     }

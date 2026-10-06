@@ -12,6 +12,8 @@ import {
 } from '../types';
 import { ApiKeyManager } from './apiKeyManager';
 import { CampaignManager } from '../store/campaignStore';
+import { isSupabaseConfigured } from './supabase';
+import { SupabaseSyncService } from './supabaseSyncService';
 
 export interface SyncSessionMemoryOptions {
   session: Session;
@@ -961,7 +963,7 @@ export class SessionMemorySyncService {
 
   /**
    * Applies approved memory, belief, and relationship proposals for both
-   * Party Players and Codex Entities.
+   * Party Players and Codex Entities in a single atomic batch.
    */
   static async applyApprovedProposals(
     proposals: EntityMemoryProposal[],
@@ -971,14 +973,17 @@ export class SessionMemorySyncService {
     let updatedCount = 0;
     const updatedEntityNames: string[] = [];
 
-    const allEntities = CampaignManager.getEntities();
+    const allEntities = [...CampaignManager.getEntities()];
+    const changedEntities: Entity[] = [];
     const currentSession = CampaignManager.getSessions().find((s) => s._id === sessionId);
+    const activeCode = CampaignManager.getActiveCampaignCode() || 'default';
 
-    // 1. Apply Entity proposals
+    // 1. Process Entity proposals in memory
     for (const prop of proposals) {
-      const entity = allEntities.find((e) => e._id === prop.entityId);
-      if (!entity) continue;
+      const entIndex = allEntities.findIndex((e) => e._id === prop.entityId);
+      if (entIndex === -1) continue;
 
+      const entity = allEntities[entIndex];
       let changed = false;
       const currentAiConfig = { ...(entity.aiConfig || {}) };
 
@@ -1053,7 +1058,6 @@ export class SessionMemorySyncService {
             notes: '',
           };
 
-          // Append to progression timeline
           const newProgression = [...(prev.progression || [])];
           const milestoneText = (relUpdate.milestoneEvent || relUpdate.newNotes || relUpdate.reason || '').trim();
           if (milestoneText && !newProgression.some((m) => m.sessionId === sessionId && m.event === milestoneText)) {
@@ -1149,20 +1153,27 @@ export class SessionMemorySyncService {
           currentAiConfig.enabled = true;
         }
 
-        await CampaignManager.updateEntity(entity._id, {
+        const updatedEntity: Entity = {
+          ...entity,
           aiConfig: currentAiConfig,
-        });
+        };
+        allEntities[entIndex] = updatedEntity;
+        changedEntities.push(updatedEntity);
 
         updatedCount++;
         updatedEntityNames.push(entity.name);
       }
     }
 
-    // 2. Apply Player Character proposals (PG)
+    // 2. Process Player Character proposals in memory
+    const allBios = [...CampaignManager.getAllCharacterBios()];
+    const changedBios: CharacterBio[] = [];
+
     if (Array.isArray(playerProposals)) {
       for (const pp of playerProposals) {
         if (!pp.playerId || pp.playerId.startsWith('unregistered_')) continue;
-        const currentBio = CampaignManager.getCharacterBio(pp.playerId) || { playerId: pp.playerId };
+        let bioIndex = allBios.findIndex((b) => b.playerId === pp.playerId);
+        const currentBio = bioIndex !== -1 ? allBios[bioIndex] : { playerId: pp.playerId };
         let bioChanged = false;
         let updatedBio = { ...currentBio };
 
@@ -1246,27 +1257,49 @@ export class SessionMemorySyncService {
         }
 
         if (bioChanged) {
-          await CampaignManager.saveCharacterBio(updatedBio);
+          if (bioIndex !== -1) {
+            allBios[bioIndex] = updatedBio;
+          } else {
+            allBios.push(updatedBio);
+          }
+          changedBios.push(updatedBio);
           updatedCount++;
           updatedEntityNames.push(`${pp.characterName} (Memoria PG)`);
         }
       }
     }
 
-    // 3. Reconcile unregistered relations
-    const currentPlayers = CampaignManager.getPlayers();
-    currentPlayers.forEach((p) => {
-      if (p._id && p.characterName) {
-        CampaignManager.reconcileUnregisteredRelations(p._id, p.characterName);
-      }
-    });
+    // 3. Batch save local in 1 step
+    if (changedEntities.length > 0) {
+      CampaignManager.saveEntitiesLocalOnly(allEntities);
+    }
+    if (changedBios.length > 0) {
+      CampaignManager.saveAllCharacterBiosLocalOnly(allBios);
+    }
 
-    // 4. Mark this session as memory-synchronized ONLY AFTER all writes succeed
+    // 4. Batch save to Supabase Cloud in single requests
+    if (isSupabaseConfigured()) {
+      try {
+        await Promise.all([
+          changedEntities.length > 0 ? SupabaseSyncService.saveEntities(activeCode, changedEntities) : Promise.resolve(true),
+          changedBios.length > 0 ? SupabaseSyncService.saveCharacterBios(activeCode, changedBios) : Promise.resolve(true),
+        ]);
+      } catch (err) {
+        console.warn('[SessionMemorySync] Batch cloud sync warning:', err);
+      }
+    }
+
+    // 5. Mark this session as memory-synchronized and dispatch single UI update
     if (sessionId) {
       await CampaignManager.updateSession(sessionId, {
         memorySynced: true,
         memorySyncedAt: new Date().toISOString(),
       });
+    }
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('chronicle_entities_updated'));
+      window.dispatchEvent(new CustomEvent('chronicle_data_updated'));
     }
 
     return {
