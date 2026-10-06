@@ -2518,35 +2518,6 @@ export class CampaignManager {
         cal.months = HARPTOS_CALENDAR.months;
       }
 
-      // Safely auto-reconcile with sessions by reading raw sessions directly from localStorage to avoid circular recursion
-      try {
-        const rawSessionsStr = localStorage.getItem(this.getStorageKey("sessions"));
-        if (rawSessionsStr) {
-          const rawSessions = JSON.parse(rawSessionsStr);
-          if (Array.isArray(rawSessions) && rawSessions.length > 0) {
-            for (const s of rawSessions) {
-              if (s && s.loreYear && s.loreMonth && s.loreStartDay !== undefined) {
-                const monthIdx = cal.months.findIndex(
-                  (m) => m && m.name && m.name.toLowerCase().trim() === String(s.loreMonth).toLowerCase().trim()
-                );
-                const targetDay = s.loreEndDay || s.loreStartDay || 1;
-
-                // If session date is higher than current calendar date, advance calendar
-                if (
-                  s.loreYear > cal.currentYear ||
-                  (s.loreYear === cal.currentYear && monthIdx > cal.currentMonthIndex) ||
-                  (s.loreYear === cal.currentYear && monthIdx === cal.currentMonthIndex && targetDay > cal.currentDay)
-                ) {
-                  cal.currentYear = s.loreYear;
-                  if (monthIdx !== -1) cal.currentMonthIndex = monthIdx;
-                  cal.currentDay = targetDay;
-                }
-              }
-            }
-          }
-        }
-      } catch {}
-
       return cal;
     });
   }
@@ -5047,18 +5018,60 @@ export class CampaignManager {
   static getCharacterBio(playerId: string): CharacterBio | null {
     if (!playerId) return null;
     const bios = this.getAllCharacterBios();
-    const found = bios.find((b) => b.playerId === playerId);
+    let found = bios.find((b) => b && b.playerId === playerId);
     if (found) return found;
 
-    // Fallback: check localStorage for legacy/individual key
+    // Smart fallback 1: Match by characterName or email from players pool
+    const players = this.getPlayers();
+    const targetPlayer = players.find((p) => p && (p._id === playerId || p.email === playerId));
+    const targetName = (targetPlayer?.characterName || '').trim().toLowerCase();
+    const targetEmail = (targetPlayer?.email || '').trim().toLowerCase();
+
+    if (targetName || targetEmail) {
+      found = bios.find((b) => {
+        if (!b) return false;
+        const bName = (b.characterName || (b as any).name || '').trim().toLowerCase();
+        const bEmail = ((b as any).email || '').trim().toLowerCase();
+        return (targetName && bName === targetName) || (targetEmail && bEmail === targetEmail);
+      });
+      if (found) {
+        // Auto-link the playerId to ensure smooth caching without creating duplicates
+        return { ...found, playerId };
+      }
+    }
+
+    // Smart fallback 2: Check localStorage for legacy/individual key
     const indKey = this.getStorageKey(`char_bio_${playerId}`);
     const indSaved = localStorage.getItem(indKey);
     if (indSaved) {
       try {
         const parsed = JSON.parse(indSaved);
-        return parsed;
+        if (parsed && typeof parsed === 'object') return parsed;
       } catch {}
     }
+
+    // Smart fallback 3: Check any global or un-prefixed bio matching character name
+    if (targetName) {
+      try {
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && k.includes('character_bios')) {
+            const raw = localStorage.getItem(k);
+            if (raw) {
+              const list = JSON.parse(raw);
+              if (Array.isArray(list)) {
+                const match = list.find((b: any) => {
+                  const n = (b?.characterName || b?.name || '').trim().toLowerCase();
+                  return n === targetName;
+                });
+                if (match) return { ...match, playerId };
+              }
+            }
+          }
+        }
+      } catch {}
+    }
+
     return null;
   }
 

@@ -546,12 +546,15 @@ Rispondi ESCLUSIVAMENTE in formato JSON valido conforme al seguente schema:
   "existingDetected": ["string"]
 }`;
 
-    const candidateModels = [
-      'gemini-flash-latest',
-      'gemini-3.8-flash',
-      'gemini-3.7-flash',
-      'gemini-3.1-flash-lite',
-    ];
+    const requestedModel = (activeModelId && typeof activeModelId === 'string' && activeModelId.trim()) ? activeModelId.trim() : 'gemini-flash-latest';
+    const candidateModels = Array.from(
+      new Set([
+        requestedModel,
+        'gemini-flash-latest',
+        'gemini-3.7-flash',
+        'gemini-3.1-flash-lite',
+      ].filter(Boolean))
+    );
     let lastError: any = null;
 
     for (const modelName of candidateModels) {

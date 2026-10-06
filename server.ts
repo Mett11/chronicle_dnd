@@ -179,7 +179,6 @@ Linee guida:
 
           const candidateModels = [
             'gemini-flash-latest',
-            'gemini-3.8-flash',
             'gemini-3.7-flash',
             'gemini-3.1-flash-lite',
           ];
@@ -580,7 +579,6 @@ Rispondi ESCLUSIVAMENTE in formato JSON valido conforme al seguente schema:
         new Set([
           requestedModel,
           'gemini-flash-latest',
-          'gemini-3.8-flash',
           'gemini-3.7-flash',
           'gemini-3.1-flash-lite',
         ].filter(Boolean))

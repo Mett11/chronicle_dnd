@@ -619,6 +619,42 @@ export function characterBioRowToModel(row: any): CharacterBio {
     personalityTraits = extra.personalityTraits;
   }
 
+  let timelineMemories: any[] = [];
+  if (Array.isArray(row.timeline_memories)) {
+    timelineMemories = row.timeline_memories;
+  } else if (typeof row.timeline_memories === 'string' && row.timeline_memories.trim()) {
+    try { timelineMemories = JSON.parse(row.timeline_memories); } catch {}
+  } else if (Array.isArray(extra.timelineMemories)) {
+    timelineMemories = extra.timelineMemories;
+  }
+
+  let evolvingBeliefs: any[] = [];
+  if (Array.isArray(row.evolving_beliefs)) {
+    evolvingBeliefs = row.evolving_beliefs;
+  } else if (typeof row.evolving_beliefs === 'string' && row.evolving_beliefs.trim()) {
+    try { evolvingBeliefs = JSON.parse(row.evolving_beliefs); } catch {}
+  } else if (Array.isArray(extra.evolvingBeliefs)) {
+    evolvingBeliefs = extra.evolvingBeliefs;
+  }
+
+  let knownLoreBites: any[] = [];
+  if (Array.isArray(row.known_lore_bites)) {
+    knownLoreBites = row.known_lore_bites;
+  } else if (typeof row.known_lore_bites === 'string' && row.known_lore_bites.trim()) {
+    try { knownLoreBites = JSON.parse(row.known_lore_bites); } catch {}
+  } else if (Array.isArray(extra.knownLoreBites)) {
+    knownLoreBites = extra.knownLoreBites;
+  }
+
+  let interPartyRelations: Record<string, any> = {};
+  if (row.inter_party_relations && typeof row.inter_party_relations === 'object') {
+    interPartyRelations = row.inter_party_relations;
+  } else if (typeof row.inter_party_relations === 'string' && row.inter_party_relations.trim()) {
+    try { interPartyRelations = JSON.parse(row.inter_party_relations); } catch {}
+  } else if (extra.interPartyRelations && typeof extra.interPartyRelations === 'object') {
+    interPartyRelations = extra.interPartyRelations;
+  }
+
   return {
     playerId: row.player_id,
     campaignCode: row.campaign_code || undefined,
@@ -649,18 +685,10 @@ export function characterBioRowToModel(row: any): CharacterBio {
     traits: Array.isArray(row.traits) ? row.traits : (Array.isArray(extra.traits) ? extra.traits : []),
     stats: (row.stats && typeof row.stats === 'object') ? row.stats : (extra.stats || {}),
     privacySettings: row.privacy_settings || extra.privacySettings || { isBioPublic: true, isStatsPublic: true, isBackgroundPublic: false, isSecretsPublic: false },
-    timelineMemories: Array.isArray(row.timeline_memories) 
-      ? row.timeline_memories 
-      : (Array.isArray(extra.timelineMemories) ? extra.timelineMemories : []),
-    evolvingBeliefs: Array.isArray(row.evolving_beliefs) 
-      ? row.evolving_beliefs 
-      : (Array.isArray(extra.evolvingBeliefs) ? extra.evolvingBeliefs : []),
-    interPartyRelations: (row.inter_party_relations && typeof row.inter_party_relations === 'object') 
-      ? row.inter_party_relations 
-      : (extra.interPartyRelations || {}),
-    knownLoreBites: Array.isArray(row.known_lore_bites) 
-      ? row.known_lore_bites 
-      : (Array.isArray(extra.knownLoreBites) ? extra.knownLoreBites : []),
+    timelineMemories,
+    evolvingBeliefs,
+    interPartyRelations,
+    knownLoreBites,
     updatedAt: row.updated_at || extra.updatedAt || new Date().toISOString(),
   };
 }
