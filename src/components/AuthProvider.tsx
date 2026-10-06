@@ -114,7 +114,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         if (isSupabaseConfigured()) {
           try {
-            existingSupa = await SupabaseSyncService.getUserAccount(uid);
+            existingSupa = await SupabaseSyncService.getUserAccount(uid, userEmail);
           } catch (e) {
             console.warn('[Supabase] getUserAccount failed:', e);
           }
@@ -124,17 +124,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         if (existingSupa) {
           userAccount = {
-            id: existingSupa.id,
+            id: existingSupa.id || uid,
             email: existingSupa.email || userEmail,
-            characterName: existingSupa.characterName || displayName || (userEmail ? userEmail.split('@')[0] : 'Player'),
+            characterName: existingSupa.characterName || existingSupa.character_name || displayName || (userEmail ? userEmail.split('@')[0] : 'Player'),
             color: existingSupa.color || '#6366f1',
-            avatarUrl: existingSupa.avatarUrl || photoURL || '',
-            isDm: Boolean(existingSupa.isDm),
+            avatarUrl: existingSupa.avatarUrl || existingSupa.avatar_url || photoURL || '',
+            isDm: Boolean(existingSupa.isDm || existingSupa.is_dm || (existingSupa.dmCampaigns && existingSupa.dmCampaigns.length > 0)),
             dmCampaigns: Array.isArray(existingSupa.dmCampaigns) ? existingSupa.dmCampaigns : [],
             joinedCampaigns: Array.isArray(existingSupa.joinedCampaigns) ? existingSupa.joinedCampaigns : [],
-            campaignProfiles: existingSupa.campaignProfiles || {},
+            campaignProfiles: existingSupa.campaignProfiles || existingSupa.campaign_profiles || {},
             preferences: (existingSupa.preferences && existingSupa.preferences.theme) ? existingSupa.preferences : DEFAULT_USER_PREFERENCES,
-            createdAt: existingSupa.createdAt || new Date().toISOString(),
+            createdAt: existingSupa.createdAt || existingSupa.created_at || new Date().toISOString(),
           };
         } else {
           let accounts = CampaignManager.getAccounts();
@@ -146,7 +146,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             let joinedCampaigns: string[] = [];
             if (isSupabaseConfigured()) {
               try {
-                const res = await SupabaseSyncService.getUserCampaigns(uid);
+                const res = await SupabaseSyncService.getUserCampaigns(uid, userEmail);
                 dmCampaigns = res.dmCampaigns;
                 joinedCampaigns = res.joinedCampaigns;
               } catch {}

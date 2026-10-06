@@ -782,10 +782,6 @@ export class CloudSyncService {
 
     if (hasAccountChanges) {
       CampaignManager.saveAccountsLocalOnly(finalAccounts);
-      if (modified || finalAccounts.length < rawAccounts.length) {
-        // Sync the deduplicated list back to cloud to fix duplicates in Firestore
-        this.syncAccountsToCloud(finalAccounts);
-      }
 
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('chronicle_accounts_updated'));
@@ -1032,9 +1028,6 @@ export class CloudSyncService {
                   localStorage.setItem(`chronicle_${cleanCode}_dm_is_player`, String(remoteDmIsPlayer));
                   localStorage.setItem('chronicle_reading_include_dm', String(remoteDmIsPlayer));
                   localStorage.setItem('chronicle_include_dm_as_player', String(remoteDmIsPlayer));
-                  window.dispatchEvent(new CustomEvent('chronicle_campaign_updated', { detail: { code: cleanCode, dmIsPlayer: remoteDmIsPlayer } }));
-                  window.dispatchEvent(new CustomEvent('chronicle_campaigns_updated'));
-                  window.dispatchEvent(new CustomEvent('chronicle_data_updated'));
                 }
               } catch (e) {
                 console.warn('[Supabase] meta hydration warn:', e);

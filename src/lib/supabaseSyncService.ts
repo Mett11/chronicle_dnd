@@ -259,7 +259,7 @@ export class SupabaseSyncService {
       const rawCode = campaignCode.trim();
       const { data, error } = await supabase
         .from('campaigns')
-        .select('code, title, created_at, dm_id, dossier, expelled_account_ids')
+        .select('code, title, created_at, dm_id, dossier')
         .or(`code.eq.${cleanCode},code.eq.${rawCode}`)
         .maybeSingle();
 
@@ -272,9 +272,7 @@ export class SupabaseSyncService {
         dmEmail: data.dossier?.dmEmail || data.dossier?.creatorEmail || undefined,
         dmName: data.dossier?.dmName || data.dossier?.creatorName || undefined,
         dmIsPlayer: data.dossier?.dmIsPlayer !== undefined ? Boolean(data.dossier.dmIsPlayer) : undefined,
-        expelledAccountIds: Array.isArray(data.expelled_account_ids)
-          ? data.expelled_account_ids
-          : (Array.isArray(data.dossier?.expelledAccountIds) ? data.dossier.expelledAccountIds : []),
+        expelledAccountIds: Array.isArray(data.dossier?.expelledAccountIds) ? data.dossier.expelledAccountIds : [],
       };
     } catch {
       return null;
@@ -1066,9 +1064,9 @@ export class SupabaseSyncService {
 
       await supabase.from('campaign_members').delete().eq('campaign_code', code).or(`user_id.eq.${userId}${cleanEmail ? `,user_id.eq.${cleanEmail}` : ''}`);
 
-      const { data: camp } = await supabase.from('campaigns').select('dossier, active_players, expelled_account_ids').eq('code', code).maybeSingle();
+      const { data: camp } = await supabase.from('campaigns').select('dossier, active_players').eq('code', code).maybeSingle();
       if (camp) {
-        const currentExpelled: string[] = Array.isArray(camp.expelled_account_ids) ? [...camp.expelled_account_ids] : [];
+        const currentExpelled: string[] = Array.isArray(camp.dossier?.expelledAccountIds) ? [...camp.dossier.expelledAccountIds] : [];
         if (!currentExpelled.includes(userId)) {
           currentExpelled.push(userId);
         }
@@ -1091,7 +1089,6 @@ export class SupabaseSyncService {
             expelledAccountIds: currentExpelled,
           },
           active_players: activePlayers,
-          expelled_account_ids: currentExpelled,
           updated_at: new Date().toISOString(),
         }).eq('code', code);
       }
@@ -1370,12 +1367,7 @@ export class SupabaseSyncService {
       const code = campaignCode.trim();
       const sanitized = Array.isArray(accounts) ? accounts.filter((a) => a && a.id) : [];
 
-      // 1. Sync each account to the dedicated public.user_accounts table
-      for (const acc of sanitized) {
-        this.saveUserAccount(acc).catch(() => {});
-      }
-
-      // 2. Fetch existing active_players from campaigns to avoid wiping out fellow party members
+      // Fetch existing active_players from campaigns to avoid wiping out fellow party members
       const { data: camp } = await supabase.from('campaigns').select('active_players, dossier, expelled_account_ids').eq('code', code).maybeSingle();
       const existingPlayers: any[] = Array.isArray(camp?.active_players) ? camp.active_players : [];
 
@@ -1465,35 +1457,44 @@ export class SupabaseSyncService {
   /**
    * Fetches a specific user account from public.user_accounts
    */
-  static async getUserAccount(userId: string, force = false): Promise<any | null> {
-    if (!isSupabaseConfigured() || !userId) return null;
+  static async getUserAccount(userId: string, email?: string, force = false): Promise<any | null> {
+    if (!isSupabaseConfigured() || (!userId && !email)) return null;
 
+    const cacheKey = (userId || email || '').trim().toLowerCase();
     if (!force) {
-      const cached = this.userAccountCache.get(userId);
+      const cached = this.userAccountCache.get(cacheKey);
       if (cached && Date.now() - cached.timestamp < 60000) { // 60s TTL
         return cached.data;
       }
     }
 
-    const inFlight = this.inFlightUserAccount.get(userId);
+    const inFlight = this.inFlightUserAccount.get(cacheKey);
     if (inFlight) return inFlight;
 
     const fetchPromise = (async () => {
       try {
-        const { data, error } = await supabase
-          .from('user_accounts')
-          .select('*')
-          .eq('id', userId)
-          .maybeSingle();
+        const cleanEmail = (email || '').trim().toLowerCase();
+        let query = supabase.from('user_accounts').select('*');
+        if (userId && cleanEmail) {
+          query = query.or(`id.eq.${userId},email.eq.${cleanEmail}`);
+        } else if (userId) {
+          query = query.eq('id', userId);
+        } else if (cleanEmail) {
+          query = query.eq('email', cleanEmail);
+        }
 
-        if (error) {
+        const { data, error } = await query.maybeSingle();
+
+        if (error && error.code !== 'PGRST116') {
           console.warn('[Supabase] getUserAccount error:', error.message);
           return null;
         }
         if (!data) return null;
 
+        const effectiveUserId = data.id || userId;
+
         // Also get memberships from campaign_members (verified against real campaigns)
-        const memberRes = await this.getUserCampaigns(userId);
+        const memberRes = await this.getUserCampaigns(effectiveUserId, cleanEmail || data.email);
         const dmCampaigns = Array.from(new Set([...(Array.isArray(data.dm_campaigns) ? data.dm_campaigns : []), ...memberRes.dmCampaigns]));
         const joinedCampaigns = Array.from(new Set([...(Array.isArray(data.joined_campaigns) ? data.joined_campaigns : []), ...memberRes.joinedCampaigns]));
 
@@ -1521,28 +1522,35 @@ export class SupabaseSyncService {
                   campaign_profiles: cleanProfiles,
                   updated_at: new Date().toISOString(),
                 })
-                .eq('id', userId);
+                .eq('id', data.id);
             } catch {}
           })();
         }
 
         const result = {
           ...data,
+          id: data.id || userId,
+          characterName: data.character_name || data.characterName,
+          avatarUrl: data.avatar_url || data.avatarUrl,
+          isDm: Boolean(data.is_dm || dmCampaigns.length > 0),
           dmCampaigns,
           joinedCampaigns,
           campaignProfiles: cleanProfiles,
         };
 
-        this.userAccountCache.set(userId, { data: result, timestamp: Date.now() });
+        this.userAccountCache.set(cacheKey, { data: result, timestamp: Date.now() });
+        if (data.id && data.id !== cacheKey) {
+          this.userAccountCache.set(data.id, { data: result, timestamp: Date.now() });
+        }
         return result;
       } catch {
         return null;
       } finally {
-        this.inFlightUserAccount.delete(userId);
+        this.inFlightUserAccount.delete(cacheKey);
       }
     })();
 
-    this.inFlightUserAccount.set(userId, fetchPromise);
+    this.inFlightUserAccount.set(cacheKey, fetchPromise);
     return fetchPromise;
   }
 
@@ -1550,29 +1558,63 @@ export class SupabaseSyncService {
    * Fetches campaigns associated with a user from campaign_members table,
    * verifying against the active campaigns table and pruning orphaned records.
    */
-  static async getUserCampaigns(userId: string): Promise<{ dmCampaigns: string[]; joinedCampaigns: string[] }> {
-    if (!isSupabaseConfigured() || !userId) return { dmCampaigns: [], joinedCampaigns: [] };
+  static async getUserCampaigns(userId: string, email?: string): Promise<{ dmCampaigns: string[]; joinedCampaigns: string[] }> {
+    if (!isSupabaseConfigured() || (!userId && !email)) return { dmCampaigns: [], joinedCampaigns: [] };
     try {
-      const { data, error } = await supabase
-        .from('campaign_members')
-        .select('campaign_code, role')
-        .eq('user_id', userId);
+      const candidateUserIds = new Set<string>();
+      if (userId) candidateUserIds.add(userId);
+      const cleanEmail = (email || '').trim().toLowerCase();
 
-      if (error || !Array.isArray(data)) {
-        return { dmCampaigns: [], joinedCampaigns: [] };
+      // Check user_accounts to resolve any canonical user IDs for this email
+      if (cleanEmail) {
+        try {
+          const { data: uRows } = await supabase
+            .from('user_accounts')
+            .select('id, dm_campaigns, joined_campaigns')
+            .eq('email', cleanEmail);
+          if (Array.isArray(uRows)) {
+            uRows.forEach((r) => {
+              if (r.id) candidateUserIds.add(r.id);
+            });
+          }
+        } catch {}
+      }
+
+      const idList = Array.from(candidateUserIds);
+
+      // 1. Fetch from campaign_members
+      let memberRows: any[] = [];
+      if (idList.length > 0) {
+        const orFilter = idList.map((id) => `user_id.eq.${id}`).join(',');
+        const { data: memData } = await supabase
+          .from('campaign_members')
+          .select('campaign_code, role')
+          .or(orFilter);
+        if (Array.isArray(memData)) {
+          memberRows = memData;
+        }
       }
 
       // Check against real active campaigns so orphaned campaign_members are never loaded or presented
       const { data: realCampaigns } = await supabase
         .from('campaigns')
-        .select('code');
+        .select('code, dm_id');
       const realCodes = new Set((realCampaigns || []).map((rc: any) => (rc.code || '').trim().toUpperCase()));
 
       const dmCampaigns: string[] = [];
       const joinedCampaigns: string[] = [];
       const orphanCodes: string[] = [];
 
-      for (const row of data) {
+      // Check if user is DM of any campaign directly via dm_id
+      (realCampaigns || []).forEach((rc: any) => {
+        const code = (rc.code || '').trim().toUpperCase();
+        if (code && rc.dm_id && idList.includes(rc.dm_id)) {
+          if (!dmCampaigns.includes(code)) dmCampaigns.push(code);
+          if (!joinedCampaigns.includes(code)) joinedCampaigns.push(code);
+        }
+      });
+
+      for (const row of memberRows) {
         const code = (row.campaign_code || '').trim().toUpperCase();
         if (!code) continue;
         if (!realCodes.has(code)) {
@@ -1581,6 +1623,7 @@ export class SupabaseSyncService {
         }
         if (row.role === 'dm') {
           if (!dmCampaigns.includes(code)) dmCampaigns.push(code);
+          if (!joinedCampaigns.includes(code)) joinedCampaigns.push(code);
         } else {
           if (!joinedCampaigns.includes(code)) joinedCampaigns.push(code);
         }
@@ -1732,20 +1775,25 @@ export class SupabaseSyncService {
 
     this.inFlightAllCampaignsFetch = (async () => {
       try {
-        const { data, error } = await supabase.from('campaigns').select('code, title, created_at, dm_id, dossier, expelled_account_ids');
+        const { data, error } = await supabase.from('campaigns').select('code, title, created_at, dm_id, dossier');
         if (error || !Array.isArray(data)) return [];
-        const result = data.map((c) => ({
-          code: c.code,
-          name: c.title || c.code,
-          createdAt: c.created_at || new Date().toISOString(),
-          dmId: c.dm_id || c.dossier?.dmId || undefined,
-          dmEmail: c.dossier?.dmEmail || c.dossier?.creatorEmail || undefined,
-          dmName: c.dossier?.dmName || c.dossier?.creatorName || undefined,
-          dmIsPlayer: c.dossier?.dmIsPlayer !== undefined ? Boolean(c.dossier.dmIsPlayer) : undefined,
-          expelledAccountIds: Array.isArray(c.expelled_account_ids)
-            ? c.expelled_account_ids
-            : (Array.isArray(c.dossier?.expelledAccountIds) ? c.dossier.expelledAccountIds : []),
-        }));
+        const result = data.map((c) => {
+          const activePlayers = Array.isArray(c.dossier?.activePlayers) ? c.dossier.activePlayers : [];
+          const dmPlayer = activePlayers.find((p: any) => p && (p.isDm || (c.dm_id && p.id === c.dm_id)));
+          const activePlayerEmails = activePlayers.map((p: any) => (p?.email || '').toLowerCase().trim()).filter(Boolean);
+
+          return {
+            code: c.code,
+            name: c.title || c.code,
+            createdAt: c.created_at || new Date().toISOString(),
+            dmId: c.dm_id || c.dossier?.dmId || dmPlayer?.id || undefined,
+            dmEmail: c.dossier?.dmEmail || c.dossier?.creatorEmail || dmPlayer?.email || undefined,
+            dmName: c.dossier?.dmName || c.dossier?.creatorName || dmPlayer?.characterName || undefined,
+            dmIsPlayer: c.dossier?.dmIsPlayer !== undefined ? Boolean(c.dossier.dmIsPlayer) : undefined,
+            activePlayerEmails,
+            expelledAccountIds: Array.isArray(c.dossier?.expelledAccountIds) ? c.dossier.expelledAccountIds : [],
+          };
+        });
         this.allCampaignsCache = { data: result, timestamp: Date.now() };
         return result;
       } catch {

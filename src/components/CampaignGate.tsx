@@ -91,13 +91,14 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
       ...profileCodes.map((c) => c.toUpperCase()),
     ]);
     const campMap = new Map<string, CampaignMeta>();
+    const userEmail = (acc.email || '').toLowerCase().trim();
     all.forEach((c) => {
       if (c && c.code && !expelledCodes.has(c.code.toUpperCase())) {
         const clean = c.code.toUpperCase();
         const cDmEmail = (c.dmEmail || '').toLowerCase().trim();
-        const userEmail = (acc.email || '').toLowerCase().trim();
         const isUserDm = c.dmId === acc.id || (cDmEmail && userEmail && cDmEmail === userEmail);
-        if (validCodesSet.has(clean) || isUserDm) {
+        const isUserActivePlayer = Array.isArray((c as any).activePlayerEmails) && (c as any).activePlayerEmails.includes(userEmail);
+        if (validCodesSet.has(clean) || isUserDm || isUserActivePlayer) {
           campMap.set(clean, c);
         }
       }
@@ -166,7 +167,10 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
 
       if (isSupabaseConfigured()) {
         try {
-          const remoteCamps = await SupabaseSyncService.fetchAllCampaigns();
+          const [remoteCamps, userCamps] = await Promise.all([
+            SupabaseSyncService.fetchAllCampaigns(),
+            SupabaseSyncService.getUserCampaigns(account.id, account.email),
+          ]);
           if (remoteCamps && Array.isArray(remoteCamps)) {
             // When Supabase is connected, database campaigns are authoritative
             const remoteMap = new Map<string, CampaignMeta>();
@@ -183,6 +187,7 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
                   dmEmail: rc.dmEmail || existingLocal?.dmEmail,
                   dmName: rc.dmName || existingLocal?.dmName,
                   dmIsPlayer: dmIsPlayer,
+                  activePlayerEmails: rc.activePlayerEmails || (existingLocal as any)?.activePlayerEmails || [],
                   expelledAccountIds: rc.expelledAccountIds || existingLocal?.expelledAccountIds || [],
                 });
                 if (dmIsPlayer !== undefined && typeof window !== 'undefined') {
@@ -193,6 +198,27 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
             // Update local store: remove any obsolete campaigns that no longer exist in Supabase
             allCamp = Array.from(remoteMap.values());
             CampaignManager.saveCampaignsLocalOnly(allCamp);
+          }
+
+          if (userCamps) {
+            let userUpdated = false;
+            if (Array.isArray(userCamps.joinedCampaigns) && userCamps.joinedCampaigns.length > 0) {
+              const mergedJoined = Array.from(new Set([...(account.joinedCampaigns || []), ...userCamps.joinedCampaigns]));
+              if (mergedJoined.length !== (account.joinedCampaigns || []).length) {
+                account.joinedCampaigns = mergedJoined;
+                userUpdated = true;
+              }
+            }
+            if (Array.isArray(userCamps.dmCampaigns) && userCamps.dmCampaigns.length > 0) {
+              const mergedDm = Array.from(new Set([...(account.dmCampaigns || []), ...userCamps.dmCampaigns]));
+              if (mergedDm.length !== (account.dmCampaigns || []).length) {
+                account.dmCampaigns = mergedDm;
+                userUpdated = true;
+              }
+            }
+            if (userUpdated) {
+              CampaignManager.saveAccount(account);
+            }
           }
         } catch (e) {
           console.warn('Error fetching remote campaigns:', e);
@@ -256,9 +282,10 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
           const clean = c.code.toUpperCase();
           const cDmEmail = (c.dmEmail || '').toLowerCase().trim();
           const isUserDm = c.dmId === account.id || (cDmEmail && userEmail && cDmEmail === userEmail);
+          const isUserActivePlayer = Array.isArray((c as any).activePlayerEmails) && (c as any).activePlayerEmails.includes(userEmail);
 
           // Only display campaigns the user is actually DM of or member of
-          if (validCodesSet.has(clean) || isUserDm) {
+          if (validCodesSet.has(clean) || isUserDm || isUserActivePlayer) {
             campMap.set(clean, c);
           }
         }
@@ -301,7 +328,7 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
       window.removeEventListener('chronicle_campaigns_updated', handleUpdate);
       window.removeEventListener('chronicle_accounts_updated', handleUpdate);
     };
-  }, [account?.id]);
+  }, [account?.id, account?.email, account?.joinedCampaigns?.length, account?.dmCampaigns?.length]);
 
   const isDmOf = (camp: CampaignMeta) => {
     if (!account) return false;
