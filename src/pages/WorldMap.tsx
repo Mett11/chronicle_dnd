@@ -1,5 +1,7 @@
 import React, { useState, useRef, useMemo, useEffect } from 'react';
 import { CampaignManager } from '../store/campaignStore';
+import { isSupabaseConfigured } from '../lib/supabase';
+import { SupabaseSyncService } from '../lib/supabaseSyncService';
 import { WorldMap as WorldMapType, type MapPin, Entity, MapFolder, Session } from '../types';
 import { useAuth } from '../components/AuthProvider';
 import { SingleImageUploader } from '../components/SingleImageUploader';
@@ -183,6 +185,16 @@ export function WorldMap() {
 
   // Listen to store updates
   useEffect(() => {
+    const code = CampaignManager.getActiveCampaignCode();
+    if (code && isSupabaseConfigured() && CampaignManager.getMaps().length === 0) {
+      SupabaseSyncService.fetchMapsOnly(code).then((remoteMaps) => {
+        if (remoteMaps && Array.isArray(remoteMaps) && remoteMaps.length > 0) {
+          CampaignManager.saveMapsLocalOnly(remoteMaps);
+          setMaps(remoteMaps);
+        }
+      }).catch(() => {});
+    }
+
     const handleMapsUpdated = () => {
       setMaps(CampaignManager.getMaps());
     };

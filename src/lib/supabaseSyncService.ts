@@ -230,6 +230,8 @@ export class SupabaseSyncService {
   private static inFlightAllCampaignsFetch: Promise<any[]> | null = null;
   private static userAccountCache = new Map<string, { data: any; timestamp: number }>();
   private static inFlightUserAccount = new Map<string, Promise<any>>();
+  private static userCampaignsCache = new Map<string, { data: any; timestamp: number }>();
+  private static inFlightUserCampaigns = new Map<string, Promise<any>>();
   private static sessionsOnlyCache = new Map<string, { data: any; timestamp: number }>();
   private static inFlightSessionsOnly = new Map<string, Promise<any>>();
 
@@ -367,12 +369,8 @@ export class SupabaseSyncService {
           sessionsRes,
           entitiesRes,
           notesRes,
-          mapsRes,
-          scrapbookRes,
-          audioRes,
           characterBiosRes,
           familyRelationsRes,
-          worldLoreArticlesRes,
         ] = await Promise.all([
           supabase
             .from('chapters')
@@ -392,30 +390,12 @@ export class SupabaseSyncService {
             .select('*')
             .or(activeOrCampFilter),
           supabase
-            .from('maps')
-            .select('*')
-            .or(activeOrCampFilter),
-          supabase
-            .from('scrapbook')
-            .select('*')
-            .or(activeOrCampFilter),
-          supabase
-            .from('audio_logs')
-            .select('*')
-            .or(activeOrCampFilter)
-            .order('created_at', { ascending: false }),
-          supabase
             .from('character_bios')
             .select('*')
             .or(activeOrCampFilter)
             .then(res => res, () => ({ data: [] })),
           supabase
             .from('family_relations')
-            .select('*')
-            .or(activeOrCampFilter)
-            .then(res => res, () => ({ data: [] })),
-          supabase
-            .from('world_lore_articles')
             .select('*')
             .or(activeOrCampFilter)
             .then(res => res, () => ({ data: [] })),
@@ -436,12 +416,8 @@ export class SupabaseSyncService {
         (sessionsRes.data && sessionsRes.data.length > 0) ||
         (entitiesRes.data && entitiesRes.data.length > 0) ||
         (notesRes.data && notesRes.data.length > 0) ||
-        (mapsRes.data && mapsRes.data.length > 0) ||
-        (scrapbookRes.data && scrapbookRes.data.length > 0) ||
-        (audioRes.data && audioRes.data.length > 0) ||
         (characterBiosRes.data && characterBiosRes.data.length > 0) ||
-        (familyRelationsRes.data && familyRelationsRes.data.length > 0) ||
-        (worldLoreArticlesRes.data && worldLoreArticlesRes.data.length > 0)
+        (familyRelationsRes.data && familyRelationsRes.data.length > 0)
       );
 
       if (!hasAnyData) {
@@ -451,7 +427,6 @@ export class SupabaseSyncService {
       const campRow = campaignRes.data || {};
       const dossier = campRow.dossier || {};
       const chaptersMeta = dossier.chaptersMeta || {};
-      const mapsMeta = dossier.mapsMeta || {};
       const sessionsMeta = dossier.sessionsMeta || {};
       const mapFolders = Array.isArray(dossier.mapFolders) ? dossier.mapFolders : [];
 
@@ -505,18 +480,15 @@ export class SupabaseSyncService {
         noteRowToModel(row, notesMeta)
       );
 
-      const maps: WorldMap[] = (mapsRes.data || []).map((row) =>
-        mapRowToModel(row, mapsMeta)
-      );
-
-      const scrapbookItems: ScrapbookItem[] = (scrapbookRes.data || []).map(scrapbookRowToModel);
-
-      const audioLogs: AudioLog[] = (audioRes.data || []).map(audioLogRowToModel);
+      // Heavy media/articles are lazy loaded on demand
+      const maps: WorldMap[] | undefined = undefined;
+      const scrapbookItems: ScrapbookItem[] | undefined = undefined;
+      const audioLogs: AudioLog[] | undefined = undefined;
+      const worldLoreArticles: any[] | undefined = undefined;
 
       // --- HYDRATION & AUTO-MIGRATION LAYER FOR NEW TABLES ---
       const characterBiosRows = characterBiosRes?.data || [];
       const familyRelationsRows = familyRelationsRes?.data || [];
-      const worldLoreArticlesRows = worldLoreArticlesRes?.data || [];
 
       let characterBios: any[] = [];
       if (characterBiosRows && characterBiosRows.length > 0) {
@@ -551,29 +523,6 @@ export class SupabaseSyncService {
         }));
       } else if ((familyRelationsRes as any)?.error && Array.isArray(dossier.familyRelations) && dossier.familyRelations.length > 0) {
         familyRelations = dossier.familyRelations;
-      }
-
-      let worldLoreArticles: any[] = [];
-      if (worldLoreArticlesRows && worldLoreArticlesRows.length > 0) {
-        worldLoreArticles = worldLoreArticlesRows.map((row: any) => ({
-          _id: row.id,
-          _createdAt: row.updated_at || new Date().toISOString(),
-          title: row.title || 'Senza Titolo',
-          subtitle: row.subtitle || '',
-          summary: row.summary || '',
-          fullContentMarkdown: row.content || '',
-          category: row.category_id || 'general',
-          images: Array.isArray(row.images) ? row.images : [],
-          dmOnly: Boolean(row.is_draft),
-          bites: Array.isArray(row.bites) ? row.bites : [],
-          authorPlayerId: row.author_player_id || '',
-          authorName: row.author_name || '',
-          tags: Array.isArray(row.tags) ? row.tags : [],
-          relatedEntityIds: Array.isArray(row.related_entity_ids) ? row.related_entity_ids : [],
-          order: row.order_index || 0,
-        }));
-      } else if ((worldLoreArticlesRes as any)?.error && Array.isArray(dossier.worldLoreArticles) && dossier.worldLoreArticles.length > 0) {
-        worldLoreArticles = dossier.worldLoreArticles;
       }
 
       const result = {
@@ -814,6 +763,97 @@ export class SupabaseSyncService {
       return (data || []).map((row: any) => mapRowToModel(row));
     } catch (e) {
       console.warn('[Supabase] fetchMapsOnly error:', e);
+      return null;
+    }
+  }
+
+  /**
+   * Granular On-Demand Fetch: Scrapbook
+   */
+  static async fetchScrapbookOnly(campaignCode: string): Promise<ScrapbookItem[] | null> {
+    if (!isSupabaseConfigured() || !campaignCode) return null;
+    try {
+      const cleanCode = campaignCode.trim().toUpperCase();
+      const { data, error } = await supabase
+        .from('scrapbook')
+        .select('*')
+        .eq('campaign_code', cleanCode)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.warn('[Supabase] Warning reading scrapbook in fetchScrapbookOnly:', error.message);
+        return null;
+      }
+
+      return (data || []).map(scrapbookRowToModel);
+    } catch (e) {
+      console.warn('[Supabase] fetchScrapbookOnly error:', e);
+      return null;
+    }
+  }
+
+  /**
+   * Granular On-Demand Fetch: Audio Logs
+   */
+  static async fetchAudioLogsOnly(campaignCode: string): Promise<AudioLog[] | null> {
+    if (!isSupabaseConfigured() || !campaignCode) return null;
+    try {
+      const cleanCode = campaignCode.trim().toUpperCase();
+      const { data, error } = await supabase
+        .from('audio_logs')
+        .select('*')
+        .eq('campaign_code', cleanCode)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.warn('[Supabase] Warning reading audio_logs in fetchAudioLogsOnly:', error.message);
+        return null;
+      }
+
+      return (data || []).map(audioLogRowToModel);
+    } catch (e) {
+      console.warn('[Supabase] fetchAudioLogsOnly error:', e);
+      return null;
+    }
+  }
+
+  /**
+   * Granular On-Demand Fetch: World Lore Articles
+   */
+  static async fetchWorldLoreOnly(campaignCode: string): Promise<any[] | null> {
+    if (!isSupabaseConfigured() || !campaignCode) return null;
+    try {
+      const cleanCode = campaignCode.trim().toUpperCase();
+      const { data, error } = await supabase
+        .from('world_lore_articles')
+        .select('*')
+        .eq('campaign_code', cleanCode)
+        .order('order_index', { ascending: true });
+
+      if (error) {
+        console.warn('[Supabase] Warning reading world_lore_articles in fetchWorldLoreOnly:', error.message);
+        return null;
+      }
+
+      return (data || []).map((row: any) => ({
+        _id: row.id,
+        _createdAt: row.updated_at || new Date().toISOString(),
+        title: row.title || 'Senza Titolo',
+        subtitle: row.subtitle || '',
+        summary: row.summary || '',
+        fullContentMarkdown: row.content || '',
+        category: row.category_id || 'general',
+        images: Array.isArray(row.images) ? row.images : [],
+        dmOnly: Boolean(row.is_draft),
+        bites: Array.isArray(row.bites) ? row.bites : [],
+        authorPlayerId: row.author_player_id || '',
+        authorName: row.author_name || '',
+        tags: Array.isArray(row.tags) ? row.tags : [],
+        relatedEntityIds: Array.isArray(row.related_entity_ids) ? row.related_entity_ids : [],
+        order: Number(row.order_index ?? 0),
+      }));
+    } catch (e) {
+      console.warn('[Supabase] fetchWorldLoreOnly error:', e);
       return null;
     }
   }
@@ -1558,93 +1598,106 @@ export class SupabaseSyncService {
    * Fetches campaigns associated with a user from campaign_members table,
    * verifying against the active campaigns table and pruning orphaned records.
    */
-  static async getUserCampaigns(userId: string, email?: string): Promise<{ dmCampaigns: string[]; joinedCampaigns: string[] }> {
+  static async getUserCampaigns(userId: string, email?: string, force = false): Promise<{ dmCampaigns: string[]; joinedCampaigns: string[] }> {
     if (!isSupabaseConfigured() || (!userId && !email)) return { dmCampaigns: [], joinedCampaigns: [] };
-    try {
-      const candidateUserIds = new Set<string>();
-      if (userId) candidateUserIds.add(userId);
-      const cleanEmail = (email || '').trim().toLowerCase();
 
-      // Check user_accounts to resolve any canonical user IDs for this email
-      if (cleanEmail) {
-        try {
-          const { data: uRows } = await supabase
-            .from('user_accounts')
-            .select('id, dm_campaigns, joined_campaigns')
-            .eq('email', cleanEmail);
-          if (Array.isArray(uRows)) {
-            uRows.forEach((r) => {
-              if (r.id) candidateUserIds.add(r.id);
-            });
-          }
-        } catch {}
+    const cacheKey = (userId || email || '').trim().toLowerCase();
+    if (!force) {
+      const cached = this.userCampaignsCache.get(cacheKey);
+      if (cached && Date.now() - cached.timestamp < 60000) {
+        return cached.data;
       }
-
-      const idList = Array.from(candidateUserIds);
-
-      // 1. Fetch from campaign_members
-      let memberRows: any[] = [];
-      if (idList.length > 0) {
-        const orFilter = idList.map((id) => `user_id.eq.${id}`).join(',');
-        const { data: memData } = await supabase
-          .from('campaign_members')
-          .select('campaign_code, role')
-          .or(orFilter);
-        if (Array.isArray(memData)) {
-          memberRows = memData;
-        }
-      }
-
-      // Check against real active campaigns so orphaned campaign_members are never loaded or presented
-      const { data: realCampaigns } = await supabase
-        .from('campaigns')
-        .select('code, dm_id');
-      const realCodes = new Set((realCampaigns || []).map((rc: any) => (rc.code || '').trim().toUpperCase()));
-
-      const dmCampaigns: string[] = [];
-      const joinedCampaigns: string[] = [];
-      const orphanCodes: string[] = [];
-
-      // Check if user is DM of any campaign directly via dm_id
-      (realCampaigns || []).forEach((rc: any) => {
-        const code = (rc.code || '').trim().toUpperCase();
-        if (code && rc.dm_id && idList.includes(rc.dm_id)) {
-          if (!dmCampaigns.includes(code)) dmCampaigns.push(code);
-          if (!joinedCampaigns.includes(code)) joinedCampaigns.push(code);
-        }
-      });
-
-      for (const row of memberRows) {
-        const code = (row.campaign_code || '').trim().toUpperCase();
-        if (!code) continue;
-        if (!realCodes.has(code)) {
-          orphanCodes.push(row.campaign_code);
-          continue;
-        }
-        if (row.role === 'dm') {
-          if (!dmCampaigns.includes(code)) dmCampaigns.push(code);
-          if (!joinedCampaigns.includes(code)) joinedCampaigns.push(code);
-        } else {
-          if (!joinedCampaigns.includes(code)) joinedCampaigns.push(code);
-        }
-      }
-
-      // Auto-cleanup orphan memberships from campaign_members in the background
-      if (orphanCodes.length > 0) {
-        (async () => {
-          try {
-            await supabase
-              .from('campaign_members')
-              .delete()
-              .in('campaign_code', orphanCodes);
-          } catch {}
-        })();
-      }
-
-      return { dmCampaigns, joinedCampaigns };
-    } catch {
-      return { dmCampaigns: [], joinedCampaigns: [] };
     }
+
+    const inFlight = this.inFlightUserCampaigns.get(cacheKey);
+    if (inFlight) return inFlight;
+
+    const fetchPromise = (async () => {
+      try {
+        const candidateUserIds = new Set<string>();
+        if (userId) candidateUserIds.add(userId);
+        const cleanEmail = (email || '').trim().toLowerCase();
+
+        // Check user_accounts to resolve any canonical user IDs for this email
+        if (cleanEmail) {
+          try {
+            const { data: uRows } = await supabase
+              .from('user_accounts')
+              .select('id, dm_campaigns, joined_campaigns')
+              .eq('email', cleanEmail);
+            if (Array.isArray(uRows)) {
+              uRows.forEach((r) => {
+                if (r.id) candidateUserIds.add(r.id);
+              });
+            }
+          } catch {}
+        }
+
+        const idList = Array.from(candidateUserIds);
+
+        // 1. Fetch from campaign_members
+        let memberRows: any[] = [];
+        if (idList.length > 0) {
+          const orFilter = idList.map((id) => `user_id.eq.${id}`).join(',');
+          const { data: memData } = await supabase
+            .from('campaign_members')
+            .select('campaign_code, role')
+            .or(orFilter);
+          if (Array.isArray(memData)) {
+            memberRows = memData;
+          }
+        }
+
+        // Check against real active campaigns so orphaned campaign_members are never loaded or presented
+        const { data: realCampaigns } = await supabase
+          .from('campaigns')
+          .select('code, dm_id');
+        const realCodes = new Set((realCampaigns || []).map((rc: any) => (rc.code || '').trim().toUpperCase()));
+
+        const dmCampaigns: string[] = [];
+        const joinedCampaigns: string[] = [];
+        const orphanCodes: string[] = [];
+
+        // Check if user is DM of any campaign directly via dm_id
+        (realCampaigns || []).forEach((rc: any) => {
+          const code = (rc.code || '').trim().toUpperCase();
+          if (code && rc.dm_id && idList.includes(rc.dm_id)) {
+            if (!dmCampaigns.includes(code)) dmCampaigns.push(code);
+            if (!joinedCampaigns.includes(code)) joinedCampaigns.push(code);
+          }
+        });
+
+        memberRows.forEach((row: any) => {
+          const code = (row.campaign_code || '').trim().toUpperCase();
+          if (!code) return;
+          if (realCodes.has(code)) {
+            if (row.role === 'dm' && !dmCampaigns.includes(code)) {
+              dmCampaigns.push(code);
+            }
+            if (!joinedCampaigns.includes(code)) {
+              joinedCampaigns.push(code);
+            }
+          } else {
+            orphanCodes.push(code);
+          }
+        });
+
+        const result = {
+          dmCampaigns: Array.from(new Set(dmCampaigns)),
+          joinedCampaigns: Array.from(new Set(joinedCampaigns)),
+        };
+
+        this.userCampaignsCache.set(cacheKey, { data: result, timestamp: Date.now() });
+        return result;
+      } catch {
+        return { dmCampaigns: [], joinedCampaigns: [] };
+      } finally {
+        this.inFlightUserCampaigns.delete(cacheKey);
+      }
+    })();
+
+    this.inFlightUserCampaigns.set(cacheKey, fetchPromise);
+    return fetchPromise;
   }
 
   /**

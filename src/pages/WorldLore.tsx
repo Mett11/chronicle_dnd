@@ -45,6 +45,8 @@ import { ApiKeyManager } from '../lib/apiKeyManager';
 import { cleanOpenRouterModelId } from '../lib/openrouterUtils';
 import { UserPreferencesService } from '../lib/userPreferencesService';
 import { LlmCatalogModal, LlmProviderType } from '../components/OpenRouterCatalogModal';
+import { isSupabaseConfigured } from '../lib/supabase';
+import { SupabaseSyncService } from '../lib/supabaseSyncService';
 import {
   WorldLoreArticle,
   WorldLoreBite,
@@ -177,6 +179,16 @@ export function WorldLore() {
 
   // Reload store when events fire
   useEffect(() => {
+    const code = CampaignManager.getActiveCampaignCode();
+    if (code && isSupabaseConfigured() && CampaignManager.getWorldLoreArticles().length === 0) {
+      SupabaseSyncService.fetchWorldLoreOnly(code).then((remoteArticles) => {
+        if (remoteArticles && Array.isArray(remoteArticles) && remoteArticles.length > 0) {
+          CampaignManager.saveAllWorldLoreArticlesLocalOnly(remoteArticles);
+          setArticles(remoteArticles);
+        }
+      }).catch(() => {});
+    }
+
     const handleUpdate = () => {
       setArticles(CampaignManager.getWorldLoreArticles());
       setAllPlayers(CampaignManager.getPlayers());
