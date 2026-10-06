@@ -115,7 +115,7 @@ function AppContent() {
   useEffect(() => {
     let safetyTimer: any = null;
     if (campaignCode) {
-      if (lastHydratedCampaignRef.current === campaignCode && CloudSyncService.isHydrated()) {
+      if (lastHydratedCampaignRef.current === campaignCode) {
         setIsCampaignHydrating(false);
         return;
       }
@@ -134,8 +134,6 @@ function AppContent() {
       CloudSyncService.init(() => {
         if (safetyTimer) clearTimeout(safetyTimer);
         setIsCampaignHydrating(false);
-        // Trigger subtle local UI refresh when new updates arrive from cloud
-        setForceTick((prev) => prev + 1);
       });
     } else {
       lastHydratedCampaignRef.current = null;

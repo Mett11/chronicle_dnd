@@ -921,6 +921,7 @@ export class CloudSyncService {
    */
   private static currentSyncRequestId = 0;
   private static currentActiveCode: string | null = null;
+  private static inFlightInitPromise: Promise<void> | null = null;
 
   static isHydrated(): boolean {
     return this.isCampaignHydrated;
@@ -939,8 +940,15 @@ export class CloudSyncService {
       return;
     }
 
-    // If already initialized and hydrated for this exact campaign, do not re-fetch all tables
+    // 1. If already hydrated for this active campaign, do not re-fetch all tables
     if (this.currentActiveCode === cleanActiveCode && this.isCampaignHydrated && this.isInitialized) {
+      if (onCloudUpdated) onCloudUpdated();
+      return;
+    }
+
+    // 2. If an init is ALREADY IN FLIGHT for this same campaign, await it instead of firing a second query
+    if (this.currentActiveCode === cleanActiveCode && this.inFlightInitPromise) {
+      await this.inFlightInitPromise;
       if (onCloudUpdated) onCloudUpdated();
       return;
     }
@@ -956,154 +964,160 @@ export class CloudSyncService {
 
     this.isInitialized = true;
 
-    try {
-      const activeCode = CampaignManager.getActiveCampaignCode();
-      if (!activeCode || activeCode === '__NONE__') {
+    this.inFlightInitPromise = (async () => {
+      try {
+        const activeCode = CampaignManager.getActiveCampaignCode();
+        if (!activeCode || activeCode === '__NONE__') {
+          this.isCampaignHydrated = true;
+          if (onCloudUpdated) onCloudUpdated();
+          return;
+        }
+
+        if (isSupabaseConfigured()) {
+          try {
+            const supaData = await SupabaseSyncService.fetchCampaignData(activeCode);
+            
+            // Discard response if a newer sync request was initiated (e.g. campaign switch)
+            if (this.currentSyncRequestId !== syncId) {
+              console.log('[CloudSync] Sync request superseded, discarding response.');
+              return;
+            }
+
+            if (supaData) {
+              console.log(`[CloudSync] Hydrated from Supabase: ${supaData.sessions?.length || 0} sessions, ${supaData.notes?.length || 0} notes, ${supaData.entities?.length || 0} entities`);
+              
+              if (supaData.title) {
+                try {
+                  const allCamps = CampaignManager.getCampaigns();
+                  const idx = allCamps.findIndex((c) => c.code.toUpperCase() === activeCode.toUpperCase());
+                  const remoteDmIsPlayer = supaData.dmIsPlayer !== undefined
+                    ? Boolean(supaData.dmIsPlayer)
+                    : (supaData.dossier?.dmIsPlayer !== undefined ? Boolean(supaData.dossier.dmIsPlayer) : undefined);
+
+                  if (idx !== -1) {
+                    allCamps[idx] = {
+                      ...allCamps[idx],
+                      name: supaData.title || allCamps[idx].name,
+                      subtitle: supaData.subtitle !== undefined ? supaData.subtitle : allCamps[idx].subtitle,
+                      description: supaData.description !== undefined ? supaData.description : allCamps[idx].description,
+                      dmId: supaData.dmId || allCamps[idx].dmId,
+                      dmIsPlayer: remoteDmIsPlayer !== undefined ? remoteDmIsPlayer : allCamps[idx].dmIsPlayer,
+                      expelledAccountIds: supaData.expelledAccountIds || allCamps[idx].expelledAccountIds,
+                    };
+                    CampaignManager.saveCampaignsLocalOnly(allCamps);
+                  } else {
+                    allCamps.push({
+                      code: activeCode,
+                      name: supaData.title,
+                      subtitle: supaData.subtitle || '',
+                      description: supaData.description || '',
+                      dmId: supaData.dmId || '',
+                      dmIsPlayer: remoteDmIsPlayer,
+                      expelledAccountIds: supaData.expelledAccountIds || [],
+                      createdAt: new Date().toISOString(),
+                    });
+                    CampaignManager.saveCampaignsLocalOnly(allCamps);
+                  }
+
+                  if (remoteDmIsPlayer !== undefined && typeof window !== 'undefined') {
+                    const cleanCode = activeCode.trim().toUpperCase();
+                    localStorage.setItem(`chronicle_${cleanCode}_dm_is_player`, String(remoteDmIsPlayer));
+                    localStorage.setItem('chronicle_reading_include_dm', String(remoteDmIsPlayer));
+                    localStorage.setItem('chronicle_include_dm_as_player', String(remoteDmIsPlayer));
+                  }
+                } catch (e) {
+                  console.warn('[Supabase] meta hydration warn:', e);
+                }
+              }
+
+              // Strictly apply Supabase data as single source of truth without auto-reuploading stale local cache
+              if (Array.isArray(supaData.sessions)) {
+                CampaignManager.saveSessionsLocalOnly(supaData.sessions);
+              }
+              if (Array.isArray(supaData.chapters)) {
+                CampaignManager.saveChaptersLocalOnly(supaData.chapters);
+              }
+              if (Array.isArray(supaData.notes)) {
+                CampaignManager.saveNotesLocalOnly(supaData.notes);
+              }
+              if (Array.isArray(supaData.entities)) {
+                CampaignManager.saveEntitiesLocalOnly(supaData.entities);
+              }
+              if (Array.isArray(supaData.maps)) {
+                CampaignManager.saveMapsLocalOnly(supaData.maps);
+              }
+              if (Array.isArray(supaData.mapFolders)) {
+                CampaignManager.saveMapFoldersLocalOnly(supaData.mapFolders);
+              }
+              if (Array.isArray(supaData.scrapbookItems)) {
+                CampaignManager.saveScrapbookItemsLocalOnly(supaData.scrapbookItems);
+              }
+              if (Array.isArray(supaData.audioLogs)) {
+                CampaignManager.saveAudioLogsLocalOnly(supaData.audioLogs);
+              }
+              if (Array.isArray(supaData.characterBios)) {
+                CampaignManager.saveAllCharacterBiosLocalOnly(supaData.characterBios);
+              }
+              if (Array.isArray(supaData.familyRelations)) {
+                CampaignManager.saveAllFamilyRelationsLocalOnly(supaData.familyRelations);
+              }
+              if (Array.isArray(supaData.worldLoreArticles)) {
+                CampaignManager.saveAllWorldLoreArticlesLocalOnly(supaData.worldLoreArticles);
+              }
+              if (Array.isArray(supaData.activePlayers)) {
+                try { this.mergeRemoteAccounts(supaData.activePlayers); } catch (e) { console.warn(e); }
+              }
+
+              if (supaData.calendarSystem && typeof supaData.calendarSystem === 'object' && Object.keys(supaData.calendarSystem).length > 0) {
+                try {
+                  CampaignManager.saveCalendarLocalOnly(supaData.calendarSystem);
+                } catch (e) {
+                  console.warn('[CloudSync] Calendar hydration warn:', e);
+                }
+              }
+
+              if (supaData.dossier?.aiKeys || supaData.aiConfig?.aiKeys) {
+                try {
+                  ApiKeyManager.hydrateCampaignKeysFromRemote(activeCode, supaData.dossier?.aiKeys || supaData.aiConfig?.aiKeys);
+                } catch (e) {
+                  console.warn('[CloudSync] AI keys hydration warn:', e);
+                }
+              }
+
+              this.isCampaignHydrated = true;
+              this.setupSupabaseRealtime(activeCode);
+
+              if (typeof window !== 'undefined') {
+                window.dispatchEvent(new CustomEvent('chronicle_campaign_updated'));
+                window.dispatchEvent(new CustomEvent('chronicle_sessions_updated', { detail: { sessions: supaData.sessions } }));
+                window.dispatchEvent(new CustomEvent('chronicle_chapters_updated'));
+                window.dispatchEvent(new CustomEvent('chronicle_data_updated'));
+              }
+            }
+          } catch (err) {
+            console.warn('[Supabase] Initial fetch warning:', err);
+          } finally {
+            this.isCampaignHydrated = true;
+            if (typeof localStorage !== 'undefined') {
+              localStorage.setItem('hasPendingUpload', 'false');
+            }
+            if (onCloudUpdated) {
+              try { onCloudUpdated(); } catch {}
+            }
+          }
+          return;
+        }
         this.isCampaignHydrated = true;
         if (onCloudUpdated) onCloudUpdated();
-        return;
+      } catch (e) {
+        this.isCampaignHydrated = true;
+        console.warn('Could not initialize Cloud Sync:', e);
+      } finally {
+        this.inFlightInitPromise = null;
       }
+    })();
 
-      if (isSupabaseConfigured()) {
-        try {
-          const supaData = await SupabaseSyncService.fetchCampaignData(activeCode);
-          
-          // Discard response if a newer sync request was initiated (e.g. campaign switch)
-          if (this.currentSyncRequestId !== syncId) {
-            console.log('[CloudSync] Sync request superseded, discarding response.');
-            return;
-          }
-
-          if (supaData) {
-            console.log(`[CloudSync] Hydrated from Supabase: ${supaData.sessions?.length || 0} sessions, ${supaData.notes?.length || 0} notes, ${supaData.entities?.length || 0} entities`);
-            
-            if (supaData.title) {
-              try {
-                const allCamps = CampaignManager.getCampaigns();
-                const idx = allCamps.findIndex((c) => c.code.toUpperCase() === activeCode.toUpperCase());
-                const remoteDmIsPlayer = supaData.dmIsPlayer !== undefined
-                  ? Boolean(supaData.dmIsPlayer)
-                  : (supaData.dossier?.dmIsPlayer !== undefined ? Boolean(supaData.dossier.dmIsPlayer) : undefined);
-
-                if (idx !== -1) {
-                  allCamps[idx] = {
-                    ...allCamps[idx],
-                    name: supaData.title || allCamps[idx].name,
-                    subtitle: supaData.subtitle !== undefined ? supaData.subtitle : allCamps[idx].subtitle,
-                    description: supaData.description !== undefined ? supaData.description : allCamps[idx].description,
-                    dmId: supaData.dmId || allCamps[idx].dmId,
-                    dmIsPlayer: remoteDmIsPlayer !== undefined ? remoteDmIsPlayer : allCamps[idx].dmIsPlayer,
-                    expelledAccountIds: supaData.expelledAccountIds || allCamps[idx].expelledAccountIds,
-                  };
-                  CampaignManager.saveCampaignsLocalOnly(allCamps);
-                } else {
-                  allCamps.push({
-                    code: activeCode,
-                    name: supaData.title,
-                    subtitle: supaData.subtitle || '',
-                    description: supaData.description || '',
-                    dmId: supaData.dmId || '',
-                    dmIsPlayer: remoteDmIsPlayer,
-                    expelledAccountIds: supaData.expelledAccountIds || [],
-                    createdAt: new Date().toISOString(),
-                  });
-                  CampaignManager.saveCampaignsLocalOnly(allCamps);
-                }
-
-                if (remoteDmIsPlayer !== undefined && typeof window !== 'undefined') {
-                  const cleanCode = activeCode.trim().toUpperCase();
-                  localStorage.setItem(`chronicle_${cleanCode}_dm_is_player`, String(remoteDmIsPlayer));
-                  localStorage.setItem('chronicle_reading_include_dm', String(remoteDmIsPlayer));
-                  localStorage.setItem('chronicle_include_dm_as_player', String(remoteDmIsPlayer));
-                }
-              } catch (e) {
-                console.warn('[Supabase] meta hydration warn:', e);
-              }
-            }
-
-            // Strictly apply Supabase data as single source of truth without auto-reuploading stale local cache
-            if (Array.isArray(supaData.sessions)) {
-              CampaignManager.saveSessionsLocalOnly(supaData.sessions);
-            }
-            if (Array.isArray(supaData.chapters)) {
-              CampaignManager.saveChaptersLocalOnly(supaData.chapters);
-            }
-            if (Array.isArray(supaData.notes)) {
-              CampaignManager.saveNotesLocalOnly(supaData.notes);
-            }
-            if (Array.isArray(supaData.entities)) {
-              CampaignManager.saveEntitiesLocalOnly(supaData.entities);
-            }
-            if (Array.isArray(supaData.maps)) {
-              CampaignManager.saveMapsLocalOnly(supaData.maps);
-            }
-            if (Array.isArray(supaData.mapFolders)) {
-              CampaignManager.saveMapFoldersLocalOnly(supaData.mapFolders);
-            }
-            if (Array.isArray(supaData.scrapbookItems)) {
-              CampaignManager.saveScrapbookItemsLocalOnly(supaData.scrapbookItems);
-            }
-            if (Array.isArray(supaData.audioLogs)) {
-              CampaignManager.saveAudioLogsLocalOnly(supaData.audioLogs);
-            }
-            if (Array.isArray(supaData.characterBios)) {
-              CampaignManager.saveAllCharacterBiosLocalOnly(supaData.characterBios);
-            }
-            if (Array.isArray(supaData.familyRelations)) {
-              CampaignManager.saveAllFamilyRelationsLocalOnly(supaData.familyRelations);
-            }
-            if (Array.isArray(supaData.worldLoreArticles)) {
-              CampaignManager.saveAllWorldLoreArticlesLocalOnly(supaData.worldLoreArticles);
-            }
-            if (Array.isArray(supaData.activePlayers)) {
-              try { this.mergeRemoteAccounts(supaData.activePlayers); } catch (e) { console.warn(e); }
-            }
-
-            if (supaData.calendarSystem && typeof supaData.calendarSystem === 'object' && Object.keys(supaData.calendarSystem).length > 0) {
-              try {
-                CampaignManager.saveCalendarLocalOnly(supaData.calendarSystem);
-              } catch (e) {
-                console.warn('[CloudSync] Calendar hydration warn:', e);
-              }
-            }
-
-            if (supaData.dossier?.aiKeys || supaData.aiConfig?.aiKeys) {
-              try {
-                ApiKeyManager.hydrateCampaignKeysFromRemote(activeCode, supaData.dossier?.aiKeys || supaData.aiConfig?.aiKeys);
-              } catch (e) {
-                console.warn('[CloudSync] AI keys hydration warn:', e);
-              }
-            }
-
-            this.isCampaignHydrated = true;
-            this.setupSupabaseRealtime(activeCode);
-
-            if (typeof window !== 'undefined') {
-              window.dispatchEvent(new CustomEvent('chronicle_campaign_updated'));
-              window.dispatchEvent(new CustomEvent('chronicle_sessions_updated', { detail: { sessions: supaData.sessions } }));
-              window.dispatchEvent(new CustomEvent('chronicle_chapters_updated'));
-              window.dispatchEvent(new CustomEvent('chronicle_data_updated'));
-            }
-          }
-        } catch (err) {
-          console.warn('[Supabase] Initial fetch warning:', err);
-        } finally {
-          this.isCampaignHydrated = true;
-          if (typeof localStorage !== 'undefined') {
-            localStorage.setItem('hasPendingUpload', 'false');
-          }
-          if (onCloudUpdated) {
-            try { onCloudUpdated(); } catch {}
-          }
-        }
-        return;
-      }
-      this.isCampaignHydrated = true;
-      if (onCloudUpdated) onCloudUpdated();
-    } catch (e) {
-      this.isCampaignHydrated = true;
-      console.warn('Could not initialize Cloud Sync:', e);
-    }
+    return this.inFlightInitPromise;
   }
 
   private static realtimeUnsubscribe: (() => void) | null = null;
