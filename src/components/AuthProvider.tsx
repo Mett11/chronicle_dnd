@@ -67,7 +67,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const handleDataUpdated = () => {
       refreshAccount();
-      ApiKeyManager.preloadAllKeys();
     };
 
     window.addEventListener('chronicle_accounts_updated', handleDataUpdated);

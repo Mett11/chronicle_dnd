@@ -288,7 +288,7 @@ export class SupabaseSyncService {
     const cacheKey = campaignCode.trim().toUpperCase();
     if (!force) {
       const cached = this.campaignDataCache.get(cacheKey);
-      if (cached && Date.now() - cached.timestamp < 180000) { // 3 minutes TTL
+      if (cached && Date.now() - cached.timestamp < 600000) { // 10 minutes TTL
         return cached.data;
       }
     }

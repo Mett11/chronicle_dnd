@@ -511,38 +511,22 @@ export class CloudSyncService {
   private static accountsSyncDebounceTimer: any = null;
 
   /**
-   * Directly syncs accounts array to Supabase with debounce
+   * Directly syncs accounts array to Supabase only on explicit user actions
    */
   static async syncAccountsToCloud(accounts: UserAccount[]) {
-    if (!isSupabaseConfigured() || !Array.isArray(accounts) || accounts.length === 0) return;
+    if (!isSupabaseConfigured() || !Array.isArray(accounts) || accounts.length === 0 || isApplyingRemoteUpdate) return;
 
     if (this.accountsSyncDebounceTimer) {
       clearTimeout(this.accountsSyncDebounceTimer);
     }
 
     this.accountsSyncDebounceTimer = setTimeout(() => {
-      // Always persist to central public.user_accounts table
-      SupabaseSyncService.saveAllUserAccounts(accounts).catch(() => {});
-
-      const activeCode = CampaignManager.getActiveCampaignCode();
-      if (activeCode && activeCode !== '__NONE__') {
-        const cleanCode = activeCode.trim().toUpperCase();
-        const camp = CampaignManager.getCampaigns().find((c) => c.code.toUpperCase() === cleanCode);
-        const expelledSet = new Set<string>((camp?.expelledAccountIds || []).map((id) => id.toLowerCase()));
-        const deletedSet = new Set<string>(CampaignManager.getDeletedAccountIds().map((id) => id.toLowerCase()));
-        const allowedAccounts = accounts.filter(
-          (a) =>
-            a &&
-            a.id &&
-            !expelledSet.has(a.id.toLowerCase()) &&
-            !deletedSet.has(a.id.toLowerCase()) &&
-            (a.joinedCampaigns?.some((c) => c.toUpperCase() === cleanCode) ||
-              a.dmCampaigns?.some((c) => c.toUpperCase() === cleanCode) ||
-              camp?.dmId === a.id)
-        );
-        SupabaseSyncService.saveActivePlayers(activeCode, allowedAccounts).catch(() => {});
+      // Only sync the current active user's own profile to user_accounts table without touching campaigns table
+      const currentAcc = CampaignManager.getCurrentAccount();
+      if (currentAcc && currentAcc.id) {
+        SupabaseSyncService.saveUserAccount(currentAcc).catch(() => {});
       }
-    }, 400);
+    }, 1000);
   }
 
   /**
@@ -1331,7 +1315,7 @@ export class CloudSyncService {
             }
             const dmIsPlayer = row.dossier?.dmIsPlayer !== undefined ? Boolean(row.dossier.dmIsPlayer) : undefined;
             if (row.title || row.dm_id || dmIsPlayer !== undefined) {
-              CampaignManager.updateCampaignMeta(activeCode, {
+              CampaignManager.updateCampaignMetaLocalOnly(activeCode, {
                 name: row.title || undefined,
                 dmId: row.dm_id || undefined,
                 dmIsPlayer: dmIsPlayer,

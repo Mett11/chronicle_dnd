@@ -735,6 +735,31 @@ export class CampaignManager {
     );
   }
 
+  static updateCampaignMetaLocalOnly(
+    code: string,
+    updates: Partial<CampaignMeta>,
+  ): CampaignMeta | null {
+    if (!code) return null;
+    const cleanCode = code.trim().toUpperCase();
+    const campaigns = CampaignManager.getCampaigns();
+    const index = campaigns.findIndex((c) => c.code.toUpperCase() === cleanCode);
+    let targetCampaign: CampaignMeta;
+    if (index === -1) {
+      targetCampaign = {
+        code: cleanCode,
+        name: updates.name || cleanCode,
+        createdAt: new Date().toISOString(),
+        ...updates,
+      };
+      campaigns.push(targetCampaign);
+    } else {
+      campaigns[index] = { ...campaigns[index], ...updates };
+      targetCampaign = campaigns[index];
+    }
+    CampaignManager.saveCampaignsLocalOnly(campaigns);
+    return targetCampaign;
+  }
+
   static updateCampaignMeta(
     code: string,
     updates: Partial<CampaignMeta>,
