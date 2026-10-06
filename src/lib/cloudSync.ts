@@ -11,6 +11,9 @@ import {
   noteRowToModel,
   entityRowToModel,
   characterBioRowToModel,
+  mapRowToModel,
+  scrapbookRowToModel,
+  audioLogRowToModel,
 } from './supabaseAdapter';
 import {
   UserAccount,
@@ -1304,6 +1307,72 @@ export class CloudSyncService {
           }
         } catch (e) {
           console.warn('[Realtime] Lore update error:', e);
+        }
+      },
+      onMapsChange: (payload) => {
+        try {
+          const maps = CampaignManager.getMaps();
+          if (payload.eventType === 'DELETE') {
+            const delId = payload.old?.id;
+            if (delId) {
+              const updated = maps.filter((m) => m.id !== delId);
+              CampaignManager.saveMapsLocalOnly(updated);
+            }
+          } else if (payload.new) {
+            const row = payload.new;
+            if (row.campaign_code && row.campaign_code.trim().toUpperCase() !== cleanActiveCode) return;
+            const cleanMap = mapRowToModel(row);
+            if (cleanMap.id && isRecentlyWrittenLocally(cleanMap.id)) return;
+            const idx = maps.findIndex((m) => m.id === cleanMap.id);
+            const updated = idx !== -1 ? maps.map((m) => m.id === cleanMap.id ? cleanMap : m) : [...maps, cleanMap];
+            CampaignManager.saveMapsLocalOnly(updated);
+          }
+        } catch (e) {
+          console.warn('[Realtime] Map update error:', e);
+        }
+      },
+      onScrapbookChange: (payload) => {
+        try {
+          const items = CampaignManager.getScrapbookItems();
+          if (payload.eventType === 'DELETE') {
+            const delId = payload.old?.id;
+            if (delId) {
+              const updated = items.filter((s) => s.id !== delId);
+              CampaignManager.saveScrapbookItemsLocalOnly(updated);
+            }
+          } else if (payload.new) {
+            const row = payload.new;
+            if (row.campaign_code && row.campaign_code.trim().toUpperCase() !== cleanActiveCode) return;
+            const cleanItem = scrapbookRowToModel(row);
+            if (cleanItem.id && isRecentlyWrittenLocally(cleanItem.id)) return;
+            const idx = items.findIndex((s) => s.id === cleanItem.id);
+            const updated = idx !== -1 ? items.map((s) => s.id === cleanItem.id ? cleanItem : s) : [cleanItem, ...items];
+            CampaignManager.saveScrapbookItemsLocalOnly(updated);
+          }
+        } catch (e) {
+          console.warn('[Realtime] Scrapbook update error:', e);
+        }
+      },
+      onAudioLogsChange: (payload) => {
+        try {
+          const logs = CampaignManager.getAudioLogs();
+          if (payload.eventType === 'DELETE') {
+            const delId = payload.old?.id;
+            if (delId) {
+              const updated = logs.filter((l) => l.id !== delId);
+              CampaignManager.saveAudioLogsLocalOnly(updated);
+            }
+          } else if (payload.new) {
+            const row = payload.new;
+            if (row.campaign_code && row.campaign_code.trim().toUpperCase() !== cleanActiveCode) return;
+            const cleanLog = audioLogRowToModel(row);
+            if (cleanLog.id && isRecentlyWrittenLocally(cleanLog.id)) return;
+            const idx = logs.findIndex((l) => l.id === cleanLog.id);
+            const updated = idx !== -1 ? logs.map((l) => l.id === cleanLog.id ? cleanLog : l) : [cleanLog, ...logs];
+            CampaignManager.saveAudioLogsLocalOnly(updated);
+          }
+        } catch (e) {
+          console.warn('[Realtime] AudioLog update error:', e);
         }
       },
       onCampaignChange: (payload) => {

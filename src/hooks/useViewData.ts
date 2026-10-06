@@ -1,20 +1,20 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { CampaignManager } from '../store/campaignStore';
 import { SupabaseSyncService } from '../lib/supabaseSyncService';
 import { isSupabaseConfigured } from '../lib/supabase';
+import { CloudSyncService } from '../lib/cloudSync';
 import {
   CampaignCalendar,
   Session,
   CampaignChapter,
   Note,
-  Entity,
   Category,
   ScrapbookItem,
 } from '../types';
 
 const lastSyncTimestamps = new Map<string, number>();
 
-function shouldSync(key: string, minIntervalMs = 60000): boolean {
+function shouldSync(key: string, minIntervalMs = 180000): boolean {
   const now = Date.now();
   const last = lastSyncTimestamps.get(key) || 0;
   if (now - last < minIntervalMs) {
@@ -26,16 +26,12 @@ function shouldSync(key: string, minIntervalMs = 60000): boolean {
 
 /**
  * On-Demand Stale-While-Revalidate Hook for Calendar Page
- * 1. Returns cached/local data immediately (zero blank screen)
- * 2. Fetches fresh calendar & sessions from Supabase in background
- * 3. Updates local cache and UI gracefully
  */
 export function useCalendarData() {
   const [calendar, setCalendar] = useState<CampaignCalendar>(() => CampaignManager.getCalendar());
   const [sessions, setSessions] = useState<Session[]>(() => CampaignManager.getSessions());
   const [scrapbook, setScrapbook] = useState<ScrapbookItem[]>(() => CampaignManager.getScrapbookItems());
   const [isLoading, setIsLoading] = useState<boolean>(() => {
-    // Only true if local store is completely uninitialized
     const currentCal = CampaignManager.getCalendar();
     return !currentCal || !currentCal.months || currentCal.months.length === 0;
   });
@@ -48,7 +44,14 @@ export function useCalendarData() {
       return;
     }
 
-    if (!force && !shouldSync(`cal_${activeCode}`, 60000)) {
+    // If already hydrated and data exists, skip network background polling unless forced
+    const hasData = CampaignManager.getCalendar()?.months?.length > 0;
+    if (!force && (CloudSyncService.isHydrated() && hasData)) {
+      setIsLoading(false);
+      return;
+    }
+
+    if (!force && !shouldSync(`cal_${activeCode}`, 180000)) {
       setIsLoading(false);
       return;
     }
@@ -125,7 +128,13 @@ export function useSessionsData() {
       return;
     }
 
-    if (!force && !shouldSync(`sess_${activeCode}`, 60000)) {
+    const hasData = CampaignManager.getSessions().length > 0 || CampaignManager.getChapters().length > 0;
+    if (!force && (CloudSyncService.isHydrated() && hasData)) {
+      setIsLoading(false);
+      return;
+    }
+
+    if (!force && !shouldSync(`sess_${activeCode}`, 180000)) {
       setIsLoading(false);
       return;
     }
@@ -200,7 +209,13 @@ export function useNotesData() {
       return;
     }
 
-    if (!force && !shouldSync(`notes_${activeCode}`, 60000)) {
+    const hasData = CampaignManager.getNotes().length > 0;
+    if (!force && (CloudSyncService.isHydrated() && hasData)) {
+      setIsLoading(false);
+      return;
+    }
+
+    if (!force && !shouldSync(`notes_${activeCode}`, 180000)) {
       setIsLoading(false);
       return;
     }

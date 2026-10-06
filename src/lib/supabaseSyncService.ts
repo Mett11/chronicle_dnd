@@ -355,7 +355,7 @@ export class SupabaseSyncService {
         let campaignRow: any = null;
         const initialCampRes = await supabase
           .from('campaigns')
-          .select('*')
+          .select('code, title, subtitle, description, system, dm_id, calendar_system, ai_config, active_players, created_at, updated_at, dossier')
           .or(orFilterCodes)
           .maybeSingle();
 
@@ -367,7 +367,10 @@ export class SupabaseSyncService {
         } else {
           // Fallback: search campaigns table by slug / alphanumeric code
           try {
-            const allCampsRes = await supabase.from('campaigns').select('*').limit(50);
+            const allCampsRes = await supabase
+              .from('campaigns')
+              .select('code, title, subtitle, description, system, dm_id, calendar_system, ai_config, active_players, created_at, updated_at, dossier')
+              .limit(50);
             if (allCampsRes.data && allCampsRes.data.length > 0) {
               const targetSlug = slugifyCampaignTitle(campaignTitleOrSlug || campaignCode);
               const targetAlpha = campaignCode.toUpperCase().replace(/[^A-Z0-9]/g, '');
@@ -402,29 +405,29 @@ export class SupabaseSyncService {
         ] = await Promise.all([
           supabase
             .from('chapters')
-            .select('*')
+            .select('id, campaign_code, number, title, synopsis, status, order_index, cover_image_url, color, created_at, updated_at')
             .or(activeOrCampFilter),
           supabase
             .from('sessions')
-            .select('*')
+            .select('id, campaign_code, number, title, date_str, chapter_id, calendar_date, plot_events, recap, summary, images, cover_image_url, audio_url, session_type, quotes, audio_logs, excluded_player_ids, attendees, tags, entities_extracted, entities_extracted_at, memory_synced, memory_synced_at, created_at, updated_at')
             .or(activeOrCampFilter)
             .order('number', { ascending: true }),
           supabase
             .from('entities')
-            .select('*')
+            .select('id, campaign_code, name, type, description, image_url, status, attributes, created_at, updated_at')
             .or(activeOrCampFilter),
           supabase
             .from('notes')
-            .select('*')
+            .select('id, campaign_code, title, content, category, session_id, lore_date, visibility, is_dm_only, is_pinned, canon_state, author_id, author_name, author_is_dm, ask_dm, dm_reply, tags, images, created_at, updated_at')
             .or(activeOrCampFilter),
           supabase
             .from('character_bios')
-            .select('*')
+            .select('campaign_code, player_id, name, avatar_url, color, class_level, alignment, background, personality, ideals, bonds, flaws, timeline_memories, evolving_beliefs, inter_party_relations, character_race, character_title, deity_or_patron, hometown, birth_date_formatted, birth_start_day, birth_month, birth_year, secrets, appearance_description, current_status, known_lore_bites, privacy_settings, extra_data, created_at, updated_at')
             .or(activeOrCampFilter)
             .then(res => res, () => ({ data: [] })),
           supabase
             .from('family_relations')
-            .select('*')
+            .select('id, campaign_code, source_entity_id, target_entity_id, relationship_type, description, is_secret, name, avatar_url, custom_relationship_label, title_or_role, generation_category, genealogy_role, side_of_family, status, second_parent_id, other_parent_name, linked_player_id, tags, order_index, updated_at')
             .or(activeOrCampFilter)
             .then(res => res, () => ({ data: [] })),
         ]);
@@ -641,7 +644,7 @@ export class SupabaseSyncService {
     try {
       const [campRes, sessionsRes] = await Promise.all([
         supabase.from('campaigns').select('calendar_system,dossier').or(`code.eq.${cleanCode},code.eq.${campaignCode.trim()}`).maybeSingle(),
-        supabase.from('sessions').select('*').or(`campaign_code.eq.${cleanCode},campaign_code.eq.${campaignCode.trim()}`).order('number', { ascending: true }),
+        supabase.from('sessions').select('id, campaign_code, number, title, date_str, chapter_id, calendar_date, plot_events, recap, summary, images, cover_image_url, audio_url, session_type, quotes, audio_logs, excluded_player_ids, attendees, tags, entities_extracted, entities_extracted_at, memory_synced, memory_synced_at, created_at, updated_at').or(`campaign_code.eq.${cleanCode},campaign_code.eq.${campaignCode.trim()}`).order('number', { ascending: true }),
       ]);
 
       if (campRes.error && campRes.error.code !== 'PGRST116') {
@@ -694,8 +697,8 @@ export class SupabaseSyncService {
     const fetchPromise = (async () => {
       try {
         const [sessionsRes, chaptersRes] = await Promise.all([
-          supabase.from('sessions').select('*').eq('campaign_code', cleanCode).order('number', { ascending: true }),
-          supabase.from('chapters').select('*').eq('campaign_code', cleanCode).order('order_index', { ascending: true }),
+          supabase.from('sessions').select('id, campaign_code, number, title, date_str, chapter_id, calendar_date, plot_events, recap, summary, images, cover_image_url, audio_url, session_type, quotes, audio_logs, excluded_player_ids, attendees, tags, entities_extracted, entities_extracted_at, memory_synced, memory_synced_at, created_at, updated_at').eq('campaign_code', cleanCode).order('number', { ascending: true }),
+          supabase.from('chapters').select('id, campaign_code, number, title, synopsis, status, order_index, cover_image_url, color, created_at, updated_at').eq('campaign_code', cleanCode).order('order_index', { ascending: true }),
         ]);
 
         if (sessionsRes.error || chaptersRes.error) {
@@ -741,7 +744,7 @@ export class SupabaseSyncService {
     try {
       const { data, error } = await supabase
         .from('notes')
-        .select('*')
+        .select('id, campaign_code, title, content, category, session_id, lore_date, visibility, is_dm_only, is_pinned, canon_state, author_id, author_name, author_is_dm, ask_dm, dm_reply, tags, images, created_at, updated_at')
         .eq('campaign_code', cleanCode)
         .order('created_at', { ascending: false });
 
@@ -771,7 +774,10 @@ export class SupabaseSyncService {
     }
 
     try {
-      const res = await supabase.from('entities').select('*').or(`campaign_code.eq.${cleanCode},campaign_code.eq.${campaignCode.trim()}`);
+      const res = await supabase
+        .from('entities')
+        .select('id, campaign_code, name, type, description, image_url, status, attributes, created_at, updated_at')
+        .or(`campaign_code.eq.${cleanCode},campaign_code.eq.${campaignCode.trim()}`);
       if (res.error) {
         console.warn('[Supabase] Warning reading entities in fetchEntitiesOnly:', res.error.message);
         return null;
@@ -792,7 +798,7 @@ export class SupabaseSyncService {
       const cleanCode = campaignCode.trim().toUpperCase();
       const { data, error } = await supabase
         .from('maps')
-        .select('*')
+        .select('id, campaign_code, title, description, image_url, scale_label, entity_id, folder_id, pins, fog_of_war, is_default, is_secret, shared_with_dm, created_at, updated_at')
         .eq('campaign_code', cleanCode)
         .order('created_at', { ascending: true });
 
@@ -817,7 +823,7 @@ export class SupabaseSyncService {
       const cleanCode = campaignCode.trim().toUpperCase();
       const { data, error } = await supabase
         .from('scrapbook')
-        .select('*')
+        .select('id, campaign_code, title, caption, image_url, created_by, category, aspect_ratio, tags, session_id, entity_id, lore_date, is_secret, shared_with_dm, created_at, updated_at')
         .eq('campaign_code', cleanCode)
         .order('created_at', { ascending: false });
 
@@ -842,7 +848,7 @@ export class SupabaseSyncService {
       const cleanCode = campaignCode.trim().toUpperCase();
       const { data, error } = await supabase
         .from('audio_logs')
-        .select('*')
+        .select('id, campaign_code, title, audio_url, duration, recorded_by, lore_date, associated_type, associated_id, created_at, updated_at')
         .eq('campaign_code', cleanCode)
         .order('created_at', { ascending: false });
 
@@ -867,7 +873,7 @@ export class SupabaseSyncService {
       const cleanCode = campaignCode.trim().toUpperCase();
       const { data, error } = await supabase
         .from('world_lore_articles')
-        .select('*')
+        .select('id, campaign_code, title, subtitle, summary, content, category_id, images, is_draft, bites, author_player_id, author_name, tags, related_entity_ids, order_index, updated_at')
         .eq('campaign_code', cleanCode)
         .order('order_index', { ascending: true });
 
@@ -1572,7 +1578,7 @@ export class SupabaseSyncService {
     const fetchPromise = (async () => {
       try {
         const cleanEmail = (email || '').trim().toLowerCase();
-        let query = supabase.from('user_accounts').select('*');
+        let query = supabase.from('user_accounts').select('id, email, character_name, is_dm, dm_campaigns, joined_campaigns, color, avatar_url, campaign_profiles, preferences, created_at, updated_at');
         if (userId && cleanEmail) {
           query = query.or(`id.eq.${userId},email.eq.${cleanEmail}`);
         } else if (userId) {
@@ -1628,8 +1634,8 @@ export class SupabaseSyncService {
         const result = {
           ...data,
           id: data.id || userId,
-          characterName: data.character_name || data.characterName,
-          avatarUrl: data.avatar_url || data.avatarUrl,
+          characterName: data.character_name || 'Avventuriero',
+          avatarUrl: data.avatar_url || '',
           isDm: Boolean(data.is_dm || dmCampaigns.length > 0),
           dmCampaigns,
           joinedCampaigns,
@@ -1840,7 +1846,7 @@ export class SupabaseSyncService {
 
     this.inFlightUserAccountsFetch = (async () => {
       try {
-        const { data, error } = await supabase.from('user_accounts').select('*');
+        const { data, error } = await supabase.from('user_accounts').select('id, email, character_name, is_dm, dm_campaigns, joined_campaigns, color, avatar_url, campaign_profiles, preferences, created_at, updated_at');
         if (error || !Array.isArray(data)) {
           return [];
         }
@@ -2296,7 +2302,7 @@ export class SupabaseSyncService {
     try {
       const { data, error } = await supabase
         .from('user_preferences')
-        .select('*')
+        .select('user_id, theme, ai, reading, notifications, updated_at')
         .eq('user_id', userId.trim())
         .maybeSingle();
 
@@ -2615,16 +2621,8 @@ export class SupabaseSyncService {
     if (!isSupabaseConfigured() || !campaignCode || !log) return false;
 
     try {
-      const code = campaignCode.trim();
-      const payload = {
-        id: log.id || `aud_${Date.now()}`,
-        campaign_code: code,
-        title: log.title || 'Diario Audio',
-        audio_url: log.audioUrl,
-        duration: log.durationSeconds || 0,
-        recorded_by: log.recordedBy || '',
-        created_at: log.createdAt || new Date().toISOString(),
-      };
+      const code = campaignCode.trim().toUpperCase();
+      const payload = audioLogModelToRow(log, code);
 
       const { error } = await safeUpsert('audio_logs', payload, { onConflict: 'id' });
       if (error) console.error('[Supabase] Error saving audio log:', error);
@@ -2914,6 +2912,9 @@ export class SupabaseSyncService {
       onBiosChange?: (payload: any) => void;
       onRelationsChange?: (payload: any) => void;
       onLoreChange?: (payload: any) => void;
+      onMapsChange?: (payload: any) => void;
+      onScrapbookChange?: (payload: any) => void;
+      onAudioLogsChange?: (payload: any) => void;
       onCampaignChange?: (payload: any) => void;
     }
   ): () => void {
@@ -2950,42 +2951,63 @@ export class SupabaseSyncService {
         )
         .on(
           'postgres_changes',
-          { event: '*', schema: 'public', table: 'notes', filter: `campaign_code=eq.${code}` },
+          { event: '*', schema: 'public', table: 'notes', filter: `campaign_code=eq.${cleanCode}` },
           (payload) => {
             if (callbacks.onNotesChange) callbacks.onNotesChange(payload);
           }
         )
         .on(
           'postgres_changes',
-          { event: '*', schema: 'public', table: 'entities', filter: `campaign_code=eq.${code}` },
+          { event: '*', schema: 'public', table: 'entities', filter: `campaign_code=eq.${cleanCode}` },
           (payload) => {
             if (callbacks.onEntitiesChange) callbacks.onEntitiesChange(payload);
           }
         )
         .on(
           'postgres_changes',
-          { event: '*', schema: 'public', table: 'character_bios', filter: `campaign_code=eq.${code}` },
+          { event: '*', schema: 'public', table: 'character_bios', filter: `campaign_code=eq.${cleanCode}` },
           (payload) => {
             if (callbacks.onBiosChange) callbacks.onBiosChange(payload);
           }
         )
         .on(
           'postgres_changes',
-          { event: '*', schema: 'public', table: 'family_relations', filter: `campaign_code=eq.${code}` },
+          { event: '*', schema: 'public', table: 'family_relations', filter: `campaign_code=eq.${cleanCode}` },
           (payload) => {
             if (callbacks.onRelationsChange) callbacks.onRelationsChange(payload);
           }
         )
         .on(
           'postgres_changes',
-          { event: '*', schema: 'public', table: 'world_lore_articles', filter: `campaign_code=eq.${code}` },
+          { event: '*', schema: 'public', table: 'world_lore_articles', filter: `campaign_code=eq.${cleanCode}` },
           (payload) => {
             if (callbacks.onLoreChange) callbacks.onLoreChange(payload);
           }
         )
         .on(
           'postgres_changes',
-          { event: 'UPDATE', schema: 'public', table: 'campaigns', filter: `code=eq.${code}` },
+          { event: '*', schema: 'public', table: 'maps', filter: `campaign_code=eq.${cleanCode}` },
+          (payload) => {
+            if (callbacks.onMapsChange) callbacks.onMapsChange(payload);
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'scrapbook', filter: `campaign_code=eq.${cleanCode}` },
+          (payload) => {
+            if (callbacks.onScrapbookChange) callbacks.onScrapbookChange(payload);
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'audio_logs', filter: `campaign_code=eq.${cleanCode}` },
+          (payload) => {
+            if (callbacks.onAudioLogsChange) callbacks.onAudioLogsChange(payload);
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: 'UPDATE', schema: 'public', table: 'campaigns', filter: `code=eq.${cleanCode}` },
           (payload) => {
             if (callbacks.onCampaignChange) callbacks.onCampaignChange(payload);
           }

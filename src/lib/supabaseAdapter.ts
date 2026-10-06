@@ -184,12 +184,14 @@ export function sessionRowToModel(
   }
 
   let parsedLoreDate: string | undefined = undefined;
-  if (typeof row.lore_date === 'string') {
-    parsedLoreDate = row.lore_date;
+  if (typeof row.calendar_date === 'string' && row.calendar_date.trim()) {
+    parsedLoreDate = row.calendar_date.trim();
+  } else if (typeof row.lore_date === 'string' && row.lore_date.trim()) {
+    parsedLoreDate = row.lore_date.trim();
   } else if (row.lore_date && typeof row.lore_date === 'object') {
     parsedLoreDate = row.lore_date.formatted || JSON.stringify(row.lore_date);
-  } else if (row.lore_formatted) {
-    parsedLoreDate = row.lore_formatted;
+  } else if (row.lore_formatted && String(row.lore_formatted).trim()) {
+    parsedLoreDate = String(row.lore_formatted).trim();
   } else if (meta.loreDate) {
     parsedLoreDate = meta.loreDate;
   }
@@ -206,10 +208,12 @@ export function sessionRowToModel(
     ? row.attendees
     : (meta.attendees || []);
 
+  const realDate = row.date_str || row.date || meta.date || new Date().toISOString().split('T')[0];
+
   return {
     _id: rowId,
     number: Number(row.number || meta.number || 1),
-    date: row.date || row.calendar_date || row.date_str || meta.date || new Date().toISOString().split('T')[0],
+    date: realDate,
     title: String(row.title || meta.title || `Sessione ${row.number || 1}`).trim(),
     sessionType: row.session_type || meta.sessionType || 'mixed',
     chapterId: row.chapter_id || meta.chapterId || undefined,
@@ -256,24 +260,15 @@ export function sessionModelToRow(
         : []);
 
   let loreDateFormatted: string | null = null;
-  let loreDateJson: any = null;
   if (session.loreDate) {
     if (typeof session.loreDate === 'object') {
-      loreDateJson = session.loreDate;
       loreDateFormatted = (session.loreDate as any).formatted || null;
     } else {
-      loreDateFormatted = String(session.loreDate);
-      loreDateJson = {
-        formatted: session.loreDate,
-        day: session.loreStartDay || null,
-        month: session.loreMonth || null,
-        year: session.loreYear || null,
-      };
+      loreDateFormatted = String(session.loreDate).trim();
     }
   }
 
   const excludedPlayerIds = Array.isArray(session.excludedPlayerIds) ? session.excludedPlayerIds : [];
-  const attendeePlayerIds = Array.isArray(session.attendeePlayerIds) ? session.attendeePlayerIds : [];
   const attendees = Array.isArray(session.attendees) ? session.attendees : [];
   const coverImage = (session as any).coverImageUrl || (session as any).coverImage || (Array.isArray(session.images) && session.images[0]) || null;
   const audioUrl = (session as any).audioUrl || null;
@@ -284,14 +279,11 @@ export function sessionModelToRow(
     chapter_id: session.chapterId || null,
     number: session.number || 1,
     title: session.title || `Sessione ${session.number || 1}`,
-    date: sessionDate,
     date_str: sessionDate,
-    calendar_date: sessionDate,
-    lore_date: loreDateFormatted || loreDateJson?.formatted || null,
+    calendar_date: loreDateFormatted || (typeof session.loreDate === 'string' ? session.loreDate : null),
+    plot_events: Array.isArray(session.events) ? session.events : [],
     recap: recapArray,
     summary: summaryStr,
-    plot_events: Array.isArray(session.events) ? session.events : [],
-    events: Array.isArray(session.events) ? session.events : [],
     images: Array.isArray(session.images) ? session.images : [],
     cover_image_url: coverImage,
     audio_url: audioUrl,
@@ -299,22 +291,14 @@ export function sessionModelToRow(
     quotes: Array.isArray((session as any).quotes) ? (session as any).quotes : [],
     audio_logs: Array.isArray(session.audioLogs) ? session.audioLogs : [],
     excluded_player_ids: excludedPlayerIds,
-    attendee_player_ids: attendeePlayerIds,
     attendees: attendees,
     tags: Array.isArray((session as any).tags) ? (session as any).tags : [],
     entities_extracted: Boolean(session.entitiesExtracted),
-    memory_synced: Boolean(session.memorySynced),
     entities_extracted_at: (session as any).entitiesExtractedAt || null,
+    memory_synced: Boolean(session.memorySynced),
     memory_synced_at: (session as any).memorySyncedAt || null,
     created_at: (session as any).createdAt || (session as any)._createdAt || new Date().toISOString(),
     updated_at: new Date().toISOString(),
-    lore_day: session.loreStartDay || null,
-    lore_month: session.loreMonth ? parseInt(String(session.loreMonth)) || null : null,
-    lore_year: session.loreYear || null,
-    lore_formatted: loreDateFormatted,
-    gazette_config: (session as any).gazetteConfig || {},
-    chapter_name: (session as any).chapterName || null,
-    linked_entity_ids: Array.isArray(session.linkedEntityIds) ? session.linkedEntityIds : [],
   };
 }
 
@@ -395,6 +379,8 @@ export function entityModelToRow(
     name: name || 'Senza Nome',
     type: type || 'npc',
     description: description || '',
+    image_url: mainImage || null,
+    status: resolvedStatus,
     attributes: {
       ...restAttributes,
       status: resolvedStatus,
@@ -403,16 +389,11 @@ export function entityModelToRow(
       images: rawImages,
       aliases: resolvedAliases,
       mapId: resolvedMapId,
+      isSecret: Boolean((entity as any).isSecret),
+      isHidden: Boolean((entity as any).isHidden),
+      relatedEntityIds: Array.isArray((entity as any).relatedEntityIds) ? (entity as any).relatedEntityIds : [],
+      loreBites: Array.isArray((entity as any).loreBites) ? (entity as any).loreBites : [],
     },
-    is_secret: Boolean((entity as any).isSecret),
-    is_hidden: Boolean((entity as any).isHidden),
-    related_entity_ids: Array.isArray((entity as any).relatedEntityIds) ? (entity as any).relatedEntityIds : [],
-    lore_bites: Array.isArray((entity as any).loreBites) ? (entity as any).loreBites : [],
-    image_url: mainImage || null,
-    status: resolvedStatus,
-    color: resolvedColor,
-    aliases: resolvedAliases,
-    map_id: resolvedMapId,
     created_at: (entity as any).createdAt || (entity as any)._createdAt || new Date().toISOString(),
     updated_at: new Date().toISOString(),
   };
@@ -442,8 +423,9 @@ export function noteRowToModel(
     pinned: meta.pinned !== undefined ? Boolean(meta.pinned) : Boolean(row.is_pinned),
     tags: Array.isArray(meta.tags) ? meta.tags : Array.isArray(row.tags) ? row.tags : [],
     images: resolvedImages,
+    loreDate: row.lore_date || meta.loreDate || undefined,
     askDm: Boolean(row.ask_dm),
-    categoryId: row.category_id || (row as any).category || undefined,
+    categoryId: row.category || row.category_id || undefined,
     sessionId: row.session_id || undefined,
     author: {
       _id: row.author_id || 'unknown',
@@ -485,22 +467,19 @@ export function noteModelToRow(
     title: note.title || 'Nota',
     content: note.content || '',
     category: categoryVal,
-    category_id: categoryVal,
     session_id: (note as any).sessionId || null,
+    lore_date: loreDateFormatted,
     visibility: note.visibility || 'group',
     is_dm_only: Boolean(note.dmOnly),
     is_pinned: Boolean(note.pinned),
     canon_state: note.canonState || 'canon',
     tags: Array.isArray(note.tags) ? note.tags : [],
     images: Array.isArray(note.images) ? note.images : [],
-    lore_date: loreDateFormatted,
-    created_at: (note as any)._createdAt || (note as any).createdAt || new Date().toISOString(),
-    updated_at: new Date().toISOString(),
     author_is_dm: Boolean(note.author?.isDm),
     ask_dm: Boolean(note.askDm),
     dm_reply: note.dmResponse?.text || null,
-    hidden_for_dm: Boolean((note as any).hiddenForDm),
-    hidden_for_player_ids: Array.isArray((note as any).hiddenForPlayerIds) ? (note as any).hiddenForPlayerIds : [],
+    created_at: (note as any)._createdAt || (note as any).createdAt || new Date().toISOString(),
+    updated_at: new Date().toISOString(),
   };
 }
 
@@ -538,24 +517,26 @@ export function mapModelToRow(
     image_url: map.imageUrl || '',
     scale_label: map.scaleLabel || '',
     folder_id: map.folderId || null,
+    entity_id: (map as any).entityId || null,
     pins: map.pins || [],
-    fog_of_war: (map as any).fogOfWar || null,
+    fog_of_war: (map as any).fogOfWar || {},
     is_default: Boolean(map.isDefault),
     is_secret: Boolean((map as any).isSecret || (map as any).sharedWithDm === false),
     shared_with_dm: Boolean((map as any).sharedWithDm !== false),
+    created_at: (map as any).createdAt || new Date().toISOString(),
     updated_at: new Date().toISOString(),
   };
 }
 
 // =========================================================================
-// 6. SCRAPBOOK ADAPTER (scrapbook_items)
+// 6. SCRAPBOOK ADAPTER (scrapbook)
 // =========================================================================
 export function scrapbookRowToModel(row: any): ScrapbookItem {
   return {
     id: String(row.id || ''),
     title: row.title || '',
     imageUrl: resolveStorageUrl(row.image_url || '', 'campaign-assets'),
-    caption: row.description || row.caption || '',
+    caption: row.caption || row.description || '',
     authorName: row.created_by || row.author_name || '',
     category: row.category || 'moment',
     loreDate: row.lore_date || undefined,
@@ -576,10 +557,11 @@ export function scrapbookModelToRow(
     id: item.id,
     campaign_code: cleanCode,
     title: item.title || '',
-    description: desc,
+    caption: desc,
     image_url: item.imageUrl || '',
     created_by: item.authorName || '',
     category: item.category || 'moment',
+    aspect_ratio: (item as any).aspectRatio || 'square',
     tags: Array.isArray(item.tags) ? item.tags : [],
     session_id: item.sessionId || null,
     entity_id: item.entityId || null,
@@ -599,12 +581,12 @@ export function audioLogRowToModel(row: any): AudioLog {
     id: String(row.id || ''),
     title: row.title || 'Audio Log',
     audioUrl: resolveStorageUrl(row.audio_url || '', 'audio-logs'),
-    durationSeconds: row.duration_seconds || undefined,
+    durationSeconds: Number(row.duration ?? row.duration_seconds ?? 0),
     recordedBy: row.recorded_by || undefined,
     createdAt: row.created_at || new Date().toISOString(),
     loreDate: row.lore_date || undefined,
     associatedType: row.associated_type || (row.session_id ? 'session' : row.entity_id ? 'entity' : 'general'),
-    associatedId: row.session_id || row.entity_id || row.associated_id || undefined,
+    associatedId: row.associated_id || row.session_id || row.entity_id || undefined,
   };
 }
 
@@ -616,12 +598,15 @@ export function audioLogModelToRow(
   return {
     id: log.id,
     campaign_code: cleanCode,
-    session_id: log.associatedType === 'session' ? log.associatedId || null : null,
-    entity_id: log.associatedType === 'entity' ? log.associatedId || null : null,
     title: log.title || 'Audio Log',
     audio_url: log.audioUrl || '',
-    transcript: (log as any).transcript || null,
+    duration: log.durationSeconds || (log as any).duration || 0,
+    recorded_by: log.recordedBy || '',
+    lore_date: log.loreDate || null,
+    associated_type: log.associatedType || 'general',
+    associated_id: log.associatedId || null,
     created_at: log.createdAt || new Date().toISOString(),
+    updated_at: new Date().toISOString(),
   };
 }
 
