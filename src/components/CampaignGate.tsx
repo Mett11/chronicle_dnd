@@ -297,11 +297,9 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
     };
     window.addEventListener('chronicle_campaigns_updated', handleUpdate);
     window.addEventListener('chronicle_accounts_updated', handleUpdate);
-    window.addEventListener('chronicle_data_updated', handleUpdate);
     return () => {
       window.removeEventListener('chronicle_campaigns_updated', handleUpdate);
       window.removeEventListener('chronicle_accounts_updated', handleUpdate);
-      window.removeEventListener('chronicle_data_updated', handleUpdate);
     };
   }, [account?.id]);
 
@@ -371,12 +369,10 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
 
       if (!existing && isSupabaseConfigured()) {
         try {
-          const supaData = await SupabaseSyncService.fetchCampaignData(cleanCode);
+          const supaData = await SupabaseSyncService.fetchCampaignMeta(cleanCode);
           if (supaData) {
-            existing = CampaignManager.createCampaign(cleanCode, supaData.title || `Campagna ${cleanCode}`);
-            const dmIsPlayer = supaData.dmIsPlayer !== undefined
-              ? Boolean(supaData.dmIsPlayer)
-              : (supaData.dossier?.dmIsPlayer !== undefined ? Boolean(supaData.dossier.dmIsPlayer) : undefined);
+            existing = CampaignManager.createCampaign(cleanCode, supaData.name || `Campagna ${cleanCode}`);
+            const dmIsPlayer = supaData.dmIsPlayer !== undefined ? Boolean(supaData.dmIsPlayer) : undefined;
             if (dmIsPlayer !== undefined) {
               existing.dmIsPlayer = dmIsPlayer;
               CampaignManager.updateCampaignMeta(cleanCode, { dmIsPlayer });

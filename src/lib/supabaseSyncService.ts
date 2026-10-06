@@ -223,6 +223,15 @@ export class SupabaseSyncService {
   }
 
   private static campaignDataCache = new Map<string, { data: Record<string, any>; timestamp: number }>();
+  private static inFlightCampaignFetches = new Map<string, Promise<Record<string, any> | null>>();
+  private static userAccountsCache: { data: any[]; timestamp: number } | null = null;
+  private static inFlightUserAccountsFetch: Promise<any[]> | null = null;
+  private static allCampaignsCache: { data: any[]; timestamp: number } | null = null;
+  private static inFlightAllCampaignsFetch: Promise<any[]> | null = null;
+  private static userAccountCache = new Map<string, { data: any; timestamp: number }>();
+  private static inFlightUserAccount = new Map<string, Promise<any>>();
+  private static sessionsOnlyCache = new Map<string, { data: any; timestamp: number }>();
+  private static inFlightSessionsOnly = new Map<string, Promise<any>>();
 
   static invalidateCampaignDataCache(campaignCode?: string) {
     if (campaignCode) {
@@ -230,8 +239,45 @@ export class SupabaseSyncService {
       for (const key of this.campaignDataCache.keys()) {
         if (key.includes(clean)) this.campaignDataCache.delete(key);
       }
+      for (const key of this.sessionsOnlyCache.keys()) {
+        if (key.includes(clean)) this.sessionsOnlyCache.delete(key);
+      }
     } else {
       this.campaignDataCache.clear();
+      this.sessionsOnlyCache.clear();
+    }
+  }
+
+  /**
+   * Lightweight metadata check for a campaign (used for invitation codes and portal validation)
+   * Avoids querying 11 related tables when only basic metadata is needed.
+   */
+  static async fetchCampaignMeta(campaignCode: string): Promise<any | null> {
+    if (!isSupabaseConfigured() || !campaignCode) return null;
+    try {
+      const cleanCode = campaignCode.trim().toUpperCase();
+      const rawCode = campaignCode.trim();
+      const { data, error } = await supabase
+        .from('campaigns')
+        .select('code, title, created_at, dm_id, dossier, expelled_account_ids')
+        .or(`code.eq.${cleanCode},code.eq.${rawCode}`)
+        .maybeSingle();
+
+      if (error || !data) return null;
+      return {
+        code: data.code,
+        name: data.title || data.code,
+        createdAt: data.created_at || new Date().toISOString(),
+        dmId: data.dm_id || data.dossier?.dmId || undefined,
+        dmEmail: data.dossier?.dmEmail || data.dossier?.creatorEmail || undefined,
+        dmName: data.dossier?.dmName || data.dossier?.creatorName || undefined,
+        dmIsPlayer: data.dossier?.dmIsPlayer !== undefined ? Boolean(data.dossier.dmIsPlayer) : undefined,
+        expelledAccountIds: Array.isArray(data.expelled_account_ids)
+          ? data.expelled_account_ids
+          : (Array.isArray(data.dossier?.expelledAccountIds) ? data.dossier.expelledAccountIds : []),
+      };
+    } catch {
+      return null;
     }
   }
 
@@ -241,158 +287,143 @@ export class SupabaseSyncService {
   static async fetchCampaignData(campaignCode: string, campaignTitleOrSlug?: string, force = false): Promise<Record<string, any> | null> {
     if (!isSupabaseConfigured() || !campaignCode) return null;
 
-    const cacheKey = `${campaignCode}_${campaignTitleOrSlug || ''}`.toUpperCase();
+    const cacheKey = campaignCode.trim().toUpperCase();
     if (!force) {
       const cached = this.campaignDataCache.get(cacheKey);
-      if (cached && Date.now() - cached.timestamp < 30000) {
+      if (cached && Date.now() - cached.timestamp < 180000) { // 3 minutes TTL
         return cached.data;
       }
     }
 
-    try {
-      const candidates = new Set<string>();
-      [campaignCode, campaignTitleOrSlug || ''].forEach((c) => {
-        if (!c) return;
-        const str = c.trim();
-        candidates.add(str);
-        candidates.add(str.toUpperCase());
-        const alphanumeric = str.toUpperCase().replace(/[^A-Z0-9]/g, '');
-        if (alphanumeric) {
-          candidates.add(alphanumeric);
-          if (alphanumeric.startsWith('CHR') && alphanumeric.length === 11) {
-            candidates.add(`${alphanumeric.slice(0, 3)}-${alphanumeric.slice(3, 7)}-${alphanumeric.slice(7)}`);
-          } else if (alphanumeric.length === 10 && alphanumeric.startsWith('CHR')) {
-            candidates.add(`${alphanumeric.slice(0, 3)}-${alphanumeric.slice(3, 6)}-${alphanumeric.slice(6)}`);
+    // In-flight deduplication: return existing promise if identical fetch is in progress
+    const inFlight = this.inFlightCampaignFetches.get(cacheKey);
+    if (inFlight) {
+      return inFlight;
+    }
+
+    const fetchPromise = (async () => {
+      try {
+        const candidates = new Set<string>();
+        [campaignCode, campaignTitleOrSlug || ''].forEach((c) => {
+          if (!c) return;
+          const str = c.trim();
+          candidates.add(str);
+          candidates.add(str.toUpperCase());
+          const alphanumeric = str.toUpperCase().replace(/[^A-Z0-9]/g, '');
+          if (alphanumeric) {
+            candidates.add(alphanumeric);
+            if (alphanumeric.startsWith('CHR') && alphanumeric.length === 11) {
+              candidates.add(`${alphanumeric.slice(0, 3)}-${alphanumeric.slice(3, 7)}-${alphanumeric.slice(7)}`);
+            } else if (alphanumeric.length === 10 && alphanumeric.startsWith('CHR')) {
+              candidates.add(`${alphanumeric.slice(0, 3)}-${alphanumeric.slice(3, 6)}-${alphanumeric.slice(6)}`);
+            }
           }
-        }
-      });
+        });
 
-      const candidateList = Array.from(candidates);
-      const orFilterCodes = candidateList.map((cd) => `code.eq.${cd}`).join(',');
-      const orFilterCampCodes = candidateList.map((cd) => `campaign_code.eq.${cd}`).join(',');
+        const candidateList = Array.from(candidates);
+        const orFilterCodes = candidateList.map((cd) => `code.eq.${cd}`).join(',');
 
-      // Step 1: Query campaign info
-      let campaignRow: any = null;
-      const initialCampRes = await supabase
-        .from('campaigns')
-        .select('*')
-        .or(orFilterCodes)
-        .maybeSingle();
+        // Step 1: Query campaign info
+        let campaignRow: any = null;
+        const initialCampRes = await supabase
+          .from('campaigns')
+          .select('*')
+          .or(orFilterCodes)
+          .maybeSingle();
 
-      if (initialCampRes.data) {
-        campaignRow = initialCampRes.data;
-        if (campaignRow.code && !candidateList.includes(campaignRow.code)) {
-          candidateList.push(campaignRow.code);
-        }
-      } else {
-        // Fallback: search campaigns table by slug / alphanumeric code
-        try {
-          const allCampsRes = await supabase.from('campaigns').select('*').limit(50);
-          if (allCampsRes.data && allCampsRes.data.length > 0) {
-            const targetSlug = slugifyCampaignTitle(campaignTitleOrSlug || campaignCode);
-            const targetAlpha = campaignCode.toUpperCase().replace(/[^A-Z0-9]/g, '');
+        if (initialCampRes.data) {
+          campaignRow = initialCampRes.data;
+          if (campaignRow.code && !candidateList.includes(campaignRow.code)) {
+            candidateList.push(campaignRow.code);
+          }
+        } else {
+          // Fallback: search campaigns table by slug / alphanumeric code
+          try {
+            const allCampsRes = await supabase.from('campaigns').select('*').limit(50);
+            if (allCampsRes.data && allCampsRes.data.length > 0) {
+              const targetSlug = slugifyCampaignTitle(campaignTitleOrSlug || campaignCode);
+              const targetAlpha = campaignCode.toUpperCase().replace(/[^A-Z0-9]/g, '');
 
-            const found = allCampsRes.data.find((c: any) => {
-              const cAlpha = (c.code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
-              if (cAlpha && targetAlpha && (cAlpha === targetAlpha || cAlpha.includes(targetAlpha) || targetAlpha.includes(cAlpha))) return true;
-              const cSlug = slugifyCampaignTitle(c.title || c.name || c.code || '');
-              if (targetSlug && (cSlug === targetSlug || cSlug.includes(targetSlug) || targetSlug.includes(cSlug))) return true;
-              return false;
-            });
+              const found = allCampsRes.data.find((c: any) => {
+                const cAlpha = (c.code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+                if (cAlpha && targetAlpha && (cAlpha === targetAlpha || cAlpha.includes(targetAlpha) || targetAlpha.includes(cAlpha))) return true;
+                const cSlug = slugifyCampaignTitle(c.title || c.name || c.code || '');
+                if (targetSlug && (cSlug === targetSlug || cSlug.includes(targetSlug) || targetSlug.includes(cSlug))) return true;
+                return false;
+              });
 
-            if (found) {
-              campaignRow = found;
-              if (found.code && !candidateList.includes(found.code)) {
-                candidateList.push(found.code);
+              if (found) {
+                campaignRow = found;
+                if (found.code && !candidateList.includes(found.code)) {
+                  candidateList.push(found.code);
+                }
               }
             }
-          }
-        } catch {}
-      }
+          } catch {}
+        }
 
-      const activeOrCampFilter = candidateList.map((cd) => `campaign_code.eq.${cd}`).join(',');
+        const activeOrCampFilter = candidateList.map((cd) => `campaign_code.eq.${cd}`).join(',');
 
-      const [
-        chaptersRes,
-        sessionsRes,
-        entitiesRes,
-        notesRes,
-        mapsRes,
-        scrapbookRes,
-        audioRes,
-        characterBiosRes,
-        familyRelationsRes,
-        worldLoreArticlesRes,
-      ] = await Promise.all([
-        supabase
-          .from('chapters')
-          .select('*')
-          .or(activeOrCampFilter)
-          .then(async (res) => {
-            if (res.error || !res.data || res.data.length === 0) {
-              const fallbackRes = await supabase
-                .from('campaign_chapters')
-                .select('*')
-                .or(activeOrCampFilter);
-              if (fallbackRes.data && fallbackRes.data.length > 0) return fallbackRes;
-            }
-            return res;
-          }),
-        supabase
-          .from('sessions')
-          .select('*')
-          .or(activeOrCampFilter)
-          .order('number', { ascending: true }),
-        supabase
-          .from('entities')
-          .select('*')
-          .or(activeOrCampFilter),
-        supabase
-          .from('notes')
-          .select('*')
-          .or(activeOrCampFilter),
-        supabase
-          .from('maps')
-          .select('*')
-          .or(activeOrCampFilter),
-        supabase
-          .from('scrapbook')
-          .select('*')
-          .or(activeOrCampFilter)
-          .then(async (res) => {
-            if (res.error || !res.data || res.data.length === 0) {
-              const fallbackRes = await supabase
-                .from('scrapbook_items')
-                .select('*')
-                .or(activeOrCampFilter);
-              if (fallbackRes.data && fallbackRes.data.length > 0) return fallbackRes;
-            }
-            return res;
-          }),
-        supabase
-          .from('audio_logs')
-          .select('*')
-          .or(activeOrCampFilter)
-          .order('created_at', { ascending: false }),
-        // Standard safe reads for newly added standalone tables
-        supabase
-          .from('character_bios')
-          .select('*')
-          .or(activeOrCampFilter)
-          .then(res => res, () => ({ data: [] })),
-        supabase
-          .from('family_relations')
-          .select('*')
-          .or(activeOrCampFilter)
-          .then(res => res, () => ({ data: [] })),
-        supabase
-          .from('world_lore_articles')
-          .select('*')
-          .or(activeOrCampFilter)
-          .then(res => res, () => ({ data: [] })),
-      ]);
+        const [
+          chaptersRes,
+          sessionsRes,
+          entitiesRes,
+          notesRes,
+          mapsRes,
+          scrapbookRes,
+          audioRes,
+          characterBiosRes,
+          familyRelationsRes,
+          worldLoreArticlesRes,
+        ] = await Promise.all([
+          supabase
+            .from('chapters')
+            .select('*')
+            .or(activeOrCampFilter),
+          supabase
+            .from('sessions')
+            .select('*')
+            .or(activeOrCampFilter)
+            .order('number', { ascending: true }),
+          supabase
+            .from('entities')
+            .select('*')
+            .or(activeOrCampFilter),
+          supabase
+            .from('notes')
+            .select('*')
+            .or(activeOrCampFilter),
+          supabase
+            .from('maps')
+            .select('*')
+            .or(activeOrCampFilter),
+          supabase
+            .from('scrapbook')
+            .select('*')
+            .or(activeOrCampFilter),
+          supabase
+            .from('audio_logs')
+            .select('*')
+            .or(activeOrCampFilter)
+            .order('created_at', { ascending: false }),
+          supabase
+            .from('character_bios')
+            .select('*')
+            .or(activeOrCampFilter)
+            .then(res => res, () => ({ data: [] })),
+          supabase
+            .from('family_relations')
+            .select('*')
+            .or(activeOrCampFilter)
+            .then(res => res, () => ({ data: [] })),
+          supabase
+            .from('world_lore_articles')
+            .select('*')
+            .or(activeOrCampFilter)
+            .then(res => res, () => ({ data: [] })),
+        ]);
 
-      const campaignRes = { data: campaignRow, error: null };
+        const campaignRes = { data: campaignRow, error: null };
 
       if (campaignRes.error && campaignRes.error.code !== 'PGRST116') {
         console.warn('[Supabase] Warning reading campaigns table:', campaignRes.error.message);
@@ -597,16 +628,29 @@ export class SupabaseSyncService {
     } catch (err) {
       handleSupabaseError('Failed to fetch campaign data', err);
       return null;
+    } finally {
+      this.inFlightCampaignFetches.delete(cacheKey);
     }
-  }
+  })();
+
+  this.inFlightCampaignFetches.set(cacheKey, fetchPromise);
+  return fetchPromise;
+}
 
   /**
    * Granular On-Demand Fetch: Calendar & current storyline dates
    */
   static async fetchCalendarOnly(campaignCode: string): Promise<{ calendar?: any; sessions?: Session[] } | null> {
     if (!isSupabaseConfigured() || !campaignCode) return null;
+    const cleanCode = campaignCode.trim().toUpperCase();
+
+    // Check if we already have the campaign hydrated with calendar and sessions
+    const fullCached = this.campaignDataCache.get(cleanCode);
+    if (fullCached && Date.now() - fullCached.timestamp < 180000 && fullCached.data.calendarSystem) {
+      return { calendar: fullCached.data.calendarSystem, sessions: fullCached.data.sessions || [] };
+    }
+
     try {
-      const cleanCode = campaignCode.trim().toUpperCase();
       const [campRes, sessionsRes] = await Promise.all([
         supabase.from('campaigns').select('calendar_system,dossier').or(`code.eq.${cleanCode},code.eq.${campaignCode.trim()}`).maybeSingle(),
         supabase.from('sessions').select('*').or(`campaign_code.eq.${cleanCode},campaign_code.eq.${campaignCode.trim()}`).order('number', { ascending: true }),
@@ -639,30 +683,58 @@ export class SupabaseSyncService {
    */
   static async fetchSessionsOnly(campaignCode: string): Promise<{ sessions: Session[]; chapters: CampaignChapter[] } | null> {
     if (!isSupabaseConfigured() || !campaignCode) return null;
-    try {
-      const cleanCode = campaignCode.trim().toUpperCase();
-      const [sessionsRes, chaptersRes] = await Promise.all([
-        supabase.from('sessions').select('*').eq('campaign_code', cleanCode).order('number', { ascending: true }),
-        supabase.from('campaign_chapters').select('*').eq('campaign_code', cleanCode).order('order_index', { ascending: true }),
-      ]);
+    const cleanCode = campaignCode.trim().toUpperCase();
 
-      if (sessionsRes.error || chaptersRes.error) {
-        console.warn('[Supabase] Warning in fetchSessionsOnly:', sessionsRes.error?.message, chaptersRes.error?.message);
-        return null;
-      }
-
-      const chapters: CampaignChapter[] = (chaptersRes.data || []).map((row: any) =>
-        chapterRowToModel(row)
-      );
-      const sessions: Session[] = (sessionsRes.data || []).map((row: any) =>
-        sessionRowToModel(row)
-      );
-
-      return { sessions, chapters };
-    } catch (e) {
-      console.warn('[Supabase] fetchSessionsOnly error:', e);
-      return null;
+    // 1. Check full campaign cache first
+    const fullCached = this.campaignDataCache.get(cleanCode);
+    if (fullCached && Date.now() - fullCached.timestamp < 180000 && Array.isArray(fullCached.data.sessions)) {
+      return { sessions: fullCached.data.sessions, chapters: fullCached.data.chapters || [] };
     }
+
+    // 2. Check sessionsOnly cache (60s TTL)
+    const cached = this.sessionsOnlyCache.get(cleanCode);
+    if (cached && Date.now() - cached.timestamp < 60000) {
+      return cached.data;
+    }
+
+    // 3. Deduplicate in-flight fetch
+    const existingFlight = this.inFlightSessionsOnly.get(cleanCode);
+    if (existingFlight) {
+      return existingFlight;
+    }
+
+    const fetchPromise = (async () => {
+      try {
+        const [sessionsRes, chaptersRes] = await Promise.all([
+          supabase.from('sessions').select('*').eq('campaign_code', cleanCode).order('number', { ascending: true }),
+          supabase.from('chapters').select('*').eq('campaign_code', cleanCode).order('order_index', { ascending: true }),
+        ]);
+
+        if (sessionsRes.error || chaptersRes.error) {
+          console.warn('[Supabase] Warning in fetchSessionsOnly:', sessionsRes.error?.message, chaptersRes.error?.message);
+          return null;
+        }
+
+        const chapters: CampaignChapter[] = (chaptersRes.data || []).map((row: any) =>
+          chapterRowToModel(row)
+        );
+        const sessions: Session[] = (sessionsRes.data || []).map((row: any) =>
+          sessionRowToModel(row)
+        );
+
+        const result = { sessions, chapters };
+        this.sessionsOnlyCache.set(cleanCode, { data: result, timestamp: Date.now() });
+        return result;
+      } catch (e) {
+        console.warn('[Supabase] fetchSessionsOnly error:', e);
+        return null;
+      } finally {
+        this.inFlightSessionsOnly.delete(cleanCode);
+      }
+    })();
+
+    this.inFlightSessionsOnly.set(cleanCode, fetchPromise);
+    return fetchPromise;
   }
 
   /**
@@ -670,8 +742,15 @@ export class SupabaseSyncService {
    */
   static async fetchNotesOnly(campaignCode: string): Promise<Note[] | null> {
     if (!isSupabaseConfigured() || !campaignCode) return null;
+    const cleanCode = campaignCode.trim().toUpperCase();
+
+    // Check full campaign cache first
+    const fullCached = this.campaignDataCache.get(cleanCode);
+    if (fullCached && Date.now() - fullCached.timestamp < 180000 && Array.isArray(fullCached.data.notes)) {
+      return fullCached.data.notes;
+    }
+
     try {
-      const cleanCode = campaignCode.trim().toUpperCase();
       const { data, error } = await supabase
         .from('notes')
         .select('*')
@@ -695,8 +774,15 @@ export class SupabaseSyncService {
    */
   static async fetchEntitiesOnly(campaignCode: string): Promise<Entity[] | null> {
     if (!isSupabaseConfigured() || !campaignCode) return null;
+    const cleanCode = campaignCode.trim().toUpperCase();
+
+    // Check full campaign cache first
+    const fullCached = this.campaignDataCache.get(cleanCode);
+    if (fullCached && Date.now() - fullCached.timestamp < 180000 && Array.isArray(fullCached.data.entities)) {
+      return fullCached.data.entities;
+    }
+
     try {
-      const cleanCode = campaignCode.trim().toUpperCase();
       const res = await supabase.from('entities').select('*').or(`campaign_code.eq.${cleanCode},campaign_code.eq.${campaignCode.trim()}`);
       if (res.error) {
         console.warn('[Supabase] Warning reading entities in fetchEntitiesOnly:', res.error.message);
@@ -878,19 +964,17 @@ export class SupabaseSyncService {
 
       // List of child tables that reference campaign_code
       const childTables = [
-        'campaign_data',
         'campaign_members',
         'sessions',
-        'campaign_chapters',
+        'chapters',
         'notes',
         'entities',
         'maps',
         'character_bios',
         'family_relations',
         'world_lore_articles',
-        'scrapbook_items',
+        'scrapbook',
         'audio_logs',
-        'calendars',
       ];
 
       // 3. Update all child tables to point to new code
@@ -924,19 +1008,17 @@ export class SupabaseSyncService {
 
     try {
       const childTables = [
-        'campaign_data',
         'campaign_members',
         'sessions',
-        'campaign_chapters',
+        'chapters',
         'notes',
         'entities',
         'maps',
         'character_bios',
         'family_relations',
         'world_lore_articles',
-        'scrapbook_items',
+        'scrapbook',
         'audio_logs',
-        'calendars',
       ];
 
       for (const table of childTables) {
@@ -1179,7 +1261,6 @@ export class SupabaseSyncService {
 
       const { error } = await safeUpsert('chapters', payload, {
         onConflict: 'id',
-        fallbackTable: 'campaign_chapters',
       });
       if (error) {
         return handleSupabaseError('Error saving chapter', error);
@@ -1200,18 +1281,12 @@ export class SupabaseSyncService {
       const code = campaignCode.trim();
       const cleanCode = code.toUpperCase();
 
-      // 1. Update campaign_chapters / chapters table
+      // 1. Update chapters table
       supabase
-        .from('campaign_chapters')
+        .from('chapters')
         .update({ cover_image_url: coverImageUrl, updated_at: new Date().toISOString() })
         .eq('id', chapterId)
-        .then(() => {}, () => {
-          supabase
-            .from('chapters')
-            .update({ cover_image_url: coverImageUrl, updated_at: new Date().toISOString() })
-            .eq('id', chapterId)
-            .then(() => {}, () => {});
-        });
+        .then(() => {}, () => {});
 
       // 2. Update campaign dossier
       const { data: camp } = await supabase
@@ -1390,72 +1465,85 @@ export class SupabaseSyncService {
   /**
    * Fetches a specific user account from public.user_accounts
    */
-  static async getUserAccount(userId: string): Promise<any | null> {
+  static async getUserAccount(userId: string, force = false): Promise<any | null> {
     if (!isSupabaseConfigured() || !userId) return null;
-    try {
-      const { data, error } = await supabase
-        .from('user_accounts')
-        .select('*')
-        .eq('id', userId)
-        .maybeSingle();
 
-      if (error) {
-        console.warn('[Supabase] getUserAccount error:', error.message);
-        return null;
+    if (!force) {
+      const cached = this.userAccountCache.get(userId);
+      if (cached && Date.now() - cached.timestamp < 60000) { // 60s TTL
+        return cached.data;
       }
-      if (!data) return null;
-
-      // Also get memberships from campaign_members (verified against real campaigns)
-      const memberRes = await this.getUserCampaigns(userId);
-      const dmCampaigns = Array.from(new Set([...(Array.isArray(data.dm_campaigns) ? data.dm_campaigns : []), ...memberRes.dmCampaigns]));
-      const joinedCampaigns = Array.from(new Set([...(Array.isArray(data.joined_campaigns) ? data.joined_campaigns : []), ...memberRes.joinedCampaigns]));
-
-      // Verify campaign_profiles against active campaigns
-      const { data: realCampaigns } = await supabase.from('campaigns').select('code');
-      const realCodes = new Set((realCampaigns || []).map((rc: any) => (rc.code || '').trim().toUpperCase()));
-
-      const rawProfiles = data.campaign_profiles || {};
-      const cleanProfiles: Record<string, any> = {};
-      let profilesNeedClean = false;
-      for (const [key, val] of Object.entries(rawProfiles)) {
-        if (realCodes.has(key.toUpperCase())) {
-          cleanProfiles[key] = val;
-        } else {
-          profilesNeedClean = true;
-        }
-      }
-
-      if (profilesNeedClean) {
-        (async () => {
-          try {
-            await supabase
-              .from('user_accounts')
-              .update({
-                campaign_profiles: cleanProfiles,
-                updated_at: new Date().toISOString(),
-              })
-              .eq('id', userId);
-          } catch {}
-        })();
-      }
-
-      return {
-        id: data.id,
-        email: data.email,
-        characterName: data.character_name,
-        isDm: Boolean(data.is_dm || dmCampaigns.length > 0),
-        dmCampaigns,
-        joinedCampaigns,
-        color: data.color || '#6366f1',
-        avatarUrl: data.avatar_url || '',
-        campaignProfiles: cleanProfiles,
-        preferences: data.preferences || {},
-        createdAt: data.created_at || new Date().toISOString(),
-      };
-    } catch (err) {
-      console.warn('[Supabase] getUserAccount exception:', err);
-      return null;
     }
+
+    const inFlight = this.inFlightUserAccount.get(userId);
+    if (inFlight) return inFlight;
+
+    const fetchPromise = (async () => {
+      try {
+        const { data, error } = await supabase
+          .from('user_accounts')
+          .select('*')
+          .eq('id', userId)
+          .maybeSingle();
+
+        if (error) {
+          console.warn('[Supabase] getUserAccount error:', error.message);
+          return null;
+        }
+        if (!data) return null;
+
+        // Also get memberships from campaign_members (verified against real campaigns)
+        const memberRes = await this.getUserCampaigns(userId);
+        const dmCampaigns = Array.from(new Set([...(Array.isArray(data.dm_campaigns) ? data.dm_campaigns : []), ...memberRes.dmCampaigns]));
+        const joinedCampaigns = Array.from(new Set([...(Array.isArray(data.joined_campaigns) ? data.joined_campaigns : []), ...memberRes.joinedCampaigns]));
+
+        // Verify campaign_profiles against active campaigns
+        const { data: realCampaigns } = await supabase.from('campaigns').select('code');
+        const realCodes = new Set((realCampaigns || []).map((rc: any) => (rc.code || '').trim().toUpperCase()));
+
+        const rawProfiles = data.campaign_profiles || {};
+        const cleanProfiles: Record<string, any> = {};
+        let profilesNeedClean = false;
+        for (const [key, val] of Object.entries(rawProfiles)) {
+          if (realCodes.has(key.toUpperCase())) {
+            cleanProfiles[key] = val;
+          } else {
+            profilesNeedClean = true;
+          }
+        }
+
+        if (profilesNeedClean) {
+          (async () => {
+            try {
+              await supabase
+                .from('user_accounts')
+                .update({
+                  campaign_profiles: cleanProfiles,
+                  updated_at: new Date().toISOString(),
+                })
+                .eq('id', userId);
+            } catch {}
+          })();
+        }
+
+        const result = {
+          ...data,
+          dmCampaigns,
+          joinedCampaigns,
+          campaignProfiles: cleanProfiles,
+        };
+
+        this.userAccountCache.set(userId, { data: result, timestamp: Date.now() });
+        return result;
+      } catch {
+        return null;
+      } finally {
+        this.inFlightUserAccount.delete(userId);
+      }
+    })();
+
+    this.inFlightUserAccount.set(userId, fetchPromise);
+    return fetchPromise;
   }
 
   /**
@@ -1585,55 +1673,89 @@ export class SupabaseSyncService {
   /**
    * Fetches all user accounts from the central public.user_accounts table
    */
-  static async fetchAllUserAccounts(): Promise<any[]> {
+  static async fetchAllUserAccounts(force = false): Promise<any[]> {
     if (!isSupabaseConfigured()) return [];
-    try {
-      const { data, error } = await supabase.from('user_accounts').select('*');
-      if (error || !Array.isArray(data)) {
-        return [];
-      }
-      return data.map((row) => ({
-        id: row.id,
-        email: row.email,
-        characterName: row.character_name,
-        isDm: Boolean(row.is_dm),
-        dmCampaigns: Array.isArray(row.dm_campaigns) ? row.dm_campaigns : [],
-        joinedCampaigns: Array.isArray(row.joined_campaigns) ? row.joined_campaigns : [],
-        color: row.color || '#6366f1',
-        avatarUrl: row.avatar_url || '',
-        campaignProfiles: row.campaign_profiles || {},
-        preferences: row.preferences || {},
-        createdAt: row.created_at || new Date().toISOString(),
-      }));
-    } catch (err) {
-      console.warn('[Supabase] fetchAllUserAccounts exception:', err);
-      return [];
+
+    if (!force && this.userAccountsCache && Date.now() - this.userAccountsCache.timestamp < 60000) {
+      return this.userAccountsCache.data;
     }
+
+    if (this.inFlightUserAccountsFetch) {
+      return this.inFlightUserAccountsFetch;
+    }
+
+    this.inFlightUserAccountsFetch = (async () => {
+      try {
+        const { data, error } = await supabase.from('user_accounts').select('*');
+        if (error || !Array.isArray(data)) {
+          return [];
+        }
+        const result = data.map((row) => ({
+          id: row.id,
+          email: row.email,
+          characterName: row.character_name,
+          isDm: Boolean(row.is_dm),
+          dmCampaigns: Array.isArray(row.dm_campaigns) ? row.dm_campaigns : [],
+          joinedCampaigns: Array.isArray(row.joined_campaigns) ? row.joined_campaigns : [],
+          color: row.color || '#6366f1',
+          avatarUrl: row.avatar_url || '',
+          campaignProfiles: row.campaign_profiles || {},
+          preferences: row.preferences || {},
+          createdAt: row.created_at || new Date().toISOString(),
+        }));
+        this.userAccountsCache = { data: result, timestamp: Date.now() };
+        return result;
+      } catch (err) {
+        console.warn('[Supabase] fetchAllUserAccounts exception:', err);
+        return [];
+      } finally {
+        this.inFlightUserAccountsFetch = null;
+      }
+    })();
+
+    return this.inFlightUserAccountsFetch;
   }
 
   /**
    * Fetches all campaigns from Supabase for the global campaign list
    */
-  static async fetchAllCampaigns(): Promise<any[]> {
+  static async fetchAllCampaigns(force = false): Promise<any[]> {
     if (!isSupabaseConfigured()) return [];
-    try {
-      const { data, error } = await supabase.from('campaigns').select('code, title, created_at, dm_id, dossier, expelled_account_ids');
-      if (error || !Array.isArray(data)) return [];
-      return data.map((c) => ({
-        code: c.code,
-        name: c.title || c.code,
-        createdAt: c.created_at || new Date().toISOString(),
-        dmId: c.dm_id || c.dossier?.dmId || undefined,
-        dmEmail: c.dossier?.dmEmail || c.dossier?.creatorEmail || undefined,
-        dmName: c.dossier?.dmName || c.dossier?.creatorName || undefined,
-        dmIsPlayer: c.dossier?.dmIsPlayer !== undefined ? Boolean(c.dossier.dmIsPlayer) : undefined,
-        expelledAccountIds: Array.isArray(c.expelled_account_ids)
-          ? c.expelled_account_ids
-          : (Array.isArray(c.dossier?.expelledAccountIds) ? c.dossier.expelledAccountIds : []),
-      }));
-    } catch {
-      return [];
+
+    if (!force && this.allCampaignsCache && Date.now() - this.allCampaignsCache.timestamp < 60000) {
+      return this.allCampaignsCache.data;
     }
+
+    if (this.inFlightAllCampaignsFetch) {
+      return this.inFlightAllCampaignsFetch;
+    }
+
+    this.inFlightAllCampaignsFetch = (async () => {
+      try {
+        const { data, error } = await supabase.from('campaigns').select('code, title, created_at, dm_id, dossier, expelled_account_ids');
+        if (error || !Array.isArray(data)) return [];
+        const result = data.map((c) => ({
+          code: c.code,
+          name: c.title || c.code,
+          createdAt: c.created_at || new Date().toISOString(),
+          dmId: c.dm_id || c.dossier?.dmId || undefined,
+          dmEmail: c.dossier?.dmEmail || c.dossier?.creatorEmail || undefined,
+          dmName: c.dossier?.dmName || c.dossier?.creatorName || undefined,
+          dmIsPlayer: c.dossier?.dmIsPlayer !== undefined ? Boolean(c.dossier.dmIsPlayer) : undefined,
+          expelledAccountIds: Array.isArray(c.expelled_account_ids)
+            ? c.expelled_account_ids
+            : (Array.isArray(c.dossier?.expelledAccountIds) ? c.dossier.expelledAccountIds : []),
+        }));
+        this.allCampaignsCache = { data: result, timestamp: Date.now() };
+        return result;
+      } catch {
+        return [];
+      } finally {
+        this.inFlightAllCampaignsFetch = null;
+      }
+    })();
+
+    return this.inFlightAllCampaignsFetch;
   }
 
   /**
@@ -2072,12 +2194,7 @@ export class SupabaseSyncService {
   static async deleteChapter(chapterId: string, campaignCode?: string): Promise<boolean> {
     if (!isSupabaseConfigured()) return false;
     try {
-      try {
-        await supabase.from('campaign_chapters').delete().eq('id', chapterId);
-      } catch {}
-      try {
-        await supabase.from('chapters').delete().eq('id', chapterId);
-      } catch {}
+      await supabase.from('chapters').delete().eq('id', chapterId);
       if (campaignCode) {
         this.removeChapterMeta(campaignCode, chapterId).catch(() => {});
       }
@@ -2268,7 +2385,6 @@ export class SupabaseSyncService {
 
       const { error } = await safeUpsert('scrapbook', payload, {
         onConflict: 'id',
-        fallbackTable: 'scrapbook_items',
       });
       if (error) console.error('[Supabase] Error saving scrapbook item:', error);
       return !error;
@@ -2408,7 +2524,6 @@ export class SupabaseSyncService {
           const chunk = payloads.slice(i, i + chunkSize);
           const { error } = await safeUpsert('chapters', chunk, {
             onConflict: 'id',
-            fallbackTable: 'campaign_chapters',
           });
           if (error) throw error;
         }
@@ -2491,7 +2606,6 @@ export class SupabaseSyncService {
           const chunk = payloads.slice(i, i + chunkSize);
           const { error } = await safeUpsert('scrapbook', chunk, {
             onConflict: 'id',
-            fallbackTable: 'scrapbook_items',
           });
           if (error) throw error;
         }

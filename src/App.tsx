@@ -2,7 +2,7 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './components/AuthProvider';
 import { Layout } from './components/Layout';
@@ -92,7 +92,8 @@ function AppContent() {
     const handleCampaignsListUpdate = () => {
       setCampaignCode((current) => {
         if (!current) return null;
-        return CampaignManager.getActiveCampaignCode();
+        const active = CampaignManager.getActiveCampaignCode();
+        return current === active ? current : active;
       });
     };
 
@@ -108,11 +109,18 @@ function AppContent() {
   }, []);
 
   const [isCampaignHydrating, setIsCampaignHydrating] = useState(false);
+  const lastHydratedCampaignRef = useRef<string | null>(null);
 
   // Initialize Real-Time Cloud Sync when a campaign is active
   useEffect(() => {
     let safetyTimer: any = null;
     if (campaignCode) {
+      if (lastHydratedCampaignRef.current === campaignCode && CloudSyncService.isHydrated()) {
+        setIsCampaignHydrating(false);
+        return;
+      }
+      lastHydratedCampaignRef.current = campaignCode;
+
       const hasLocalSessions = CampaignManager.getSessions().length > 0;
       const hasLocalEntities = CampaignManager.getEntities().length > 0;
       if (!hasLocalSessions && !hasLocalEntities) {
@@ -123,7 +131,6 @@ function AppContent() {
         }, 4000);
       }
 
-      CloudSyncService.stop();
       CloudSyncService.init(() => {
         if (safetyTimer) clearTimeout(safetyTimer);
         setIsCampaignHydrating(false);
@@ -131,12 +138,12 @@ function AppContent() {
         setForceTick((prev) => prev + 1);
       });
     } else {
+      lastHydratedCampaignRef.current = null;
       setIsCampaignHydrating(false);
       CloudSyncService.stop();
     }
     return () => {
       if (safetyTimer) clearTimeout(safetyTimer);
-      CloudSyncService.stop();
     };
   }, [campaignCode]);
 

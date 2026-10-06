@@ -937,11 +937,32 @@ export class CloudSyncService {
    * Initializes real-time two-way synchronization with Firebase Firestore
    */
   private static currentSyncRequestId = 0;
+  private static currentActiveCode: string | null = null;
+
+  static isHydrated(): boolean {
+    return this.isCampaignHydrated;
+  }
 
   /**
    * Initializes real-time synchronization for the active campaign.
    */
   static async init(onCloudUpdated?: () => void) {
+    const activeCode = CampaignManager.getActiveCampaignCode();
+    const cleanActiveCode = (activeCode || '').trim().toUpperCase();
+
+    if (!cleanActiveCode || cleanActiveCode === '__NONE__') {
+      this.isCampaignHydrated = true;
+      if (onCloudUpdated) onCloudUpdated();
+      return;
+    }
+
+    // If already initialized and hydrated for this exact campaign, do not re-fetch all tables
+    if (this.currentActiveCode === cleanActiveCode && this.isCampaignHydrated && this.isInitialized) {
+      if (onCloudUpdated) onCloudUpdated();
+      return;
+    }
+
+    this.currentActiveCode = cleanActiveCode;
     const syncId = ++this.currentSyncRequestId;
     resetQuotaExhaustedFlag();
     this.isCampaignHydrated = false;
@@ -1842,6 +1863,7 @@ export class CloudSyncService {
     }
     this.isInitialized = false;
     this.isCampaignHydrated = false;
+    this.currentActiveCode = null;
   }
 
   /**

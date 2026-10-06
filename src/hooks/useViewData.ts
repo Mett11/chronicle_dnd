@@ -12,6 +12,18 @@ import {
   ScrapbookItem,
 } from '../types';
 
+const lastSyncTimestamps = new Map<string, number>();
+
+function shouldSync(key: string, minIntervalMs = 60000): boolean {
+  const now = Date.now();
+  const last = lastSyncTimestamps.get(key) || 0;
+  if (now - last < minIntervalMs) {
+    return false;
+  }
+  lastSyncTimestamps.set(key, now);
+  return true;
+}
+
 /**
  * On-Demand Stale-While-Revalidate Hook for Calendar Page
  * 1. Returns cached/local data immediately (zero blank screen)
@@ -30,8 +42,13 @@ export function useCalendarData() {
 
   const activeCode = CampaignManager.getActiveCampaignCode();
 
-  const syncFreshData = useCallback(async () => {
+  const syncFreshData = useCallback(async (force = false) => {
     if (!activeCode || !isSupabaseConfigured()) {
+      setIsLoading(false);
+      return;
+    }
+
+    if (!force && !shouldSync(`cal_${activeCode}`, 60000)) {
       setIsLoading(false);
       return;
     }
@@ -86,7 +103,7 @@ export function useCalendarData() {
     sessions,
     scrapbook,
     isLoading,
-    refresh: syncFreshData,
+    refresh: () => syncFreshData(true),
   };
 }
 
@@ -102,8 +119,13 @@ export function useSessionsData() {
 
   const activeCode = CampaignManager.getActiveCampaignCode();
 
-  const syncFreshData = useCallback(async () => {
+  const syncFreshData = useCallback(async (force = false) => {
     if (!activeCode || !isSupabaseConfigured()) {
+      setIsLoading(false);
+      return;
+    }
+
+    if (!force && !shouldSync(`sess_${activeCode}`, 60000)) {
       setIsLoading(false);
       return;
     }
@@ -154,7 +176,7 @@ export function useSessionsData() {
     sessions,
     chapters,
     isLoading,
-    refresh: syncFreshData,
+    refresh: () => syncFreshData(true),
   };
 }
 
@@ -172,8 +194,13 @@ export function useNotesData() {
 
   const activeCode = CampaignManager.getActiveCampaignCode();
 
-  const syncFreshData = useCallback(async () => {
+  const syncFreshData = useCallback(async (force = false) => {
     if (!activeCode || !isSupabaseConfigured()) {
+      setIsLoading(false);
+      return;
+    }
+
+    if (!force && !shouldSync(`notes_${activeCode}`, 60000)) {
       setIsLoading(false);
       return;
     }
@@ -226,6 +253,6 @@ export function useNotesData() {
     sessions,
     calendar,
     isLoading,
-    refresh: syncFreshData,
+    refresh: () => syncFreshData(true),
   };
 }

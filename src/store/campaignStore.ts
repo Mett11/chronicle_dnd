@@ -2957,7 +2957,6 @@ export class CampaignManager {
       .slice(-300); // keep last 300 notifications
     setCached(key, filtered);
     safeLocalStorageSetItem(key, JSON.stringify(filtered));
-    CloudSyncService.triggerCloudSave();
     if (typeof window !== "undefined") {
       try {
         window.dispatchEvent(new CustomEvent("chronicle_notifications_updated", { detail: { notifications: filtered } }));
@@ -2972,7 +2971,6 @@ export class CampaignManager {
     const key = this.getStorageKey("campaign_notifications");
     setCached(key, notifications);
     safeLocalStorageSetItem(key, JSON.stringify(notifications));
-    CloudSyncService.triggerCloudSave();
     if (typeof window !== "undefined") {
       try {
         window.dispatchEvent(new CustomEvent("chronicle_notifications_updated", { detail: { notifications } }));
@@ -2997,7 +2995,6 @@ export class CampaignManager {
     setCached(key, []);
     safeLocalStorageSetItem(key, JSON.stringify([]));
 
-    CloudSyncService.triggerCloudSave();
     if (typeof window !== "undefined") {
       try {
         window.dispatchEvent(new CustomEvent("chronicle_notifications_updated", { detail: { notifications: [] } }));
