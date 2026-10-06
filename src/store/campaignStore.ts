@@ -1391,7 +1391,6 @@ export class CampaignManager {
                 "chronicle_global_user_accounts",
                 JSON.stringify(deduped),
               );
-              CloudSyncService.syncAccountsToCloud(deduped);
             }
             return deduped;
           }
@@ -1425,6 +1424,20 @@ export class CampaignManager {
       updated = [...accounts, account];
     }
     this.saveAccounts(updated);
+  }
+
+  static saveAccountLocalOnly(account: UserAccount) {
+    if (!account || !account.id) return;
+    const accounts = this.getAccounts();
+    const existingIndex = accounts.findIndex((a) => a.id === account.id);
+    let updated: UserAccount[];
+    if (existingIndex >= 0) {
+      updated = [...accounts];
+      updated[existingIndex] = { ...updated[existingIndex], ...account };
+    } else {
+      updated = [...accounts, account];
+    }
+    this.saveAccountsLocalOnly(updated);
   }
 
   static saveAccountsLocalOnly(accounts: UserAccount[]) {

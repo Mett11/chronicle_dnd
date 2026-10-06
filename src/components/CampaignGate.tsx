@@ -217,7 +217,7 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
               }
             }
             if (userUpdated) {
-              CampaignManager.saveAccount(account);
+              CampaignManager.saveAccountLocalOnly(account);
             }
           }
         } catch (e) {
@@ -265,8 +265,7 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
       }
 
       if (accountModified) {
-        CampaignManager.saveAccount(account);
-        refreshAccount();
+        CampaignManager.saveAccountLocalOnly(account);
       }
 
       const userEmail = (account.email || '').toLowerCase().trim();

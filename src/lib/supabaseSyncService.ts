@@ -1368,11 +1368,10 @@ export class SupabaseSyncService {
       const sanitized = Array.isArray(accounts) ? accounts.filter((a) => a && a.id) : [];
 
       // Fetch existing active_players from campaigns to avoid wiping out fellow party members
-      const { data: camp } = await supabase.from('campaigns').select('active_players, dossier, expelled_account_ids').eq('code', code).maybeSingle();
+      const { data: camp } = await supabase.from('campaigns').select('active_players, dossier').eq('code', code).maybeSingle();
       const existingPlayers: any[] = Array.isArray(camp?.active_players) ? camp.active_players : [];
 
       const expelledSet = new Set<string>([
-        ...(Array.isArray(camp?.expelled_account_ids) ? camp.expelled_account_ids : []),
         ...(Array.isArray(camp?.dossier?.expelledAccountIds) ? camp.dossier.expelledAccountIds : []),
       ].map((id: string) => String(id).toLowerCase()));
 
@@ -1390,8 +1389,13 @@ export class SupabaseSyncService {
         }
       });
       const mergedPlayers = Array.from(playerMap.values());
-      const dossier = camp?.dossier || {};
 
+      // If active players have not changed at all, skip database mutation entirely
+      if (JSON.stringify(mergedPlayers) === JSON.stringify(existingPlayers)) {
+        return true;
+      }
+
+      const dossier = camp?.dossier || {};
       const cleanCode = code.trim().toUpperCase();
       const { error } = await supabase.from('campaigns').update({
         active_players: mergedPlayers,
@@ -1403,11 +1407,7 @@ export class SupabaseSyncService {
       }).or(`code.eq.${code},code.eq.${cleanCode}`);
 
       if (error) {
-        // Fallback if dossier column doesn't exist in Supabase schema
-        await supabase.from('campaigns').update({
-          updated_at: new Date().toISOString(),
-        }).or(`code.eq.${code},code.eq.${cleanCode}`);
-        return true;
+        return false;
       }
       return true;
     } catch {
