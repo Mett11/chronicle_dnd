@@ -233,6 +233,29 @@ export function CalendarPage() {
     }
   };
 
+  const handlePrevBrowsingMonth = () => {
+    if (browsingMonthIndex > 0) {
+      setBrowsingMonthIndex((prev) => prev - 1);
+    } else {
+      const newYear = (calendar?.currentYear || 1492) - 1;
+      const lastMonthIdx = Math.max(0, (calendar?.months?.length || 1) - 1);
+      const updated = { ...calendar, currentYear: newYear };
+      handleSave(updated);
+      setBrowsingMonthIndex(lastMonthIdx);
+    }
+  };
+
+  const handleNextBrowsingMonth = () => {
+    if (browsingMonthIndex < (calendar?.months?.length || 1) - 1) {
+      setBrowsingMonthIndex((prev) => prev + 1);
+    } else {
+      const newYear = (calendar?.currentYear || 1492) + 1;
+      const updated = { ...calendar, currentYear: newYear };
+      handleSave(updated);
+      setBrowsingMonthIndex(0);
+    }
+  };
+
   const currentMonth = (calendar?.months && calendar.months[calendar.currentMonthIndex]) || (calendar?.months && calendar.months[0]) || HARPTOS_CALENDAR.months[0];
   const activeBrowsingMonth = (calendar?.months && calendar.months[browsingMonthIndex]) || currentMonth || HARPTOS_CALENDAR.months[0];
 
@@ -289,7 +312,8 @@ export function CalendarPage() {
           day,
           activeBrowsingMonth,
           browsingMonthIndex,
-          calendar.months
+          calendar.months,
+          calendar.currentYear
         );
       });
 
@@ -307,7 +331,8 @@ export function CalendarPage() {
           day,
           activeBrowsingMonth,
           browsingMonthIndex,
-          calendar.months
+          calendar.months,
+          calendar.currentYear
         );
 
         if (matchesDirect) return true;
@@ -327,7 +352,8 @@ export function CalendarPage() {
               day,
               activeBrowsingMonth,
               browsingMonthIndex,
-              calendar.months
+              calendar.months,
+              calendar.currentYear
             )
           );
         }
@@ -353,7 +379,8 @@ export function CalendarPage() {
           day,
           activeBrowsingMonth,
           browsingMonthIndex,
-          calendar.months
+          calendar.months,
+          calendar.currentYear
         );
       });
 
@@ -365,7 +392,7 @@ export function CalendarPage() {
     }
 
     return map;
-  }, [activeBrowsingMonth, browsingMonthIndex, calendar.months, allStorylineEvents, sessions, scrapbook]);
+  }, [activeBrowsingMonth, browsingMonthIndex, calendar.months, calendar.currentYear, allStorylineEvents, sessions, scrapbook, player]);
 
   const selectedDayData = useMemo(() => {
     if (!selectedDayNumber) return null;
@@ -592,11 +619,7 @@ export function CalendarPage() {
               <div className="flex items-center gap-2 sm:gap-3 min-w-0">
                 <button
                   type="button"
-                  onClick={() =>
-                    setBrowsingMonthIndex((prev) =>
-                      prev > 0 ? prev - 1 : calendar.months.length - 1
-                    )
-                  }
+                  onClick={handlePrevBrowsingMonth}
                   className="p-1.5 rounded-[2px] border border-surface-2/80 bg-surface-2/50 hover:bg-surface-2 text-content-2 hover:text-content-1 transition-colors cursor-pointer shrink-0"
                   title="Mese Precedente"
                 >
@@ -615,11 +638,7 @@ export function CalendarPage() {
                 </div>
                 <button
                   type="button"
-                  onClick={() =>
-                    setBrowsingMonthIndex((prev) =>
-                      prev < calendar.months.length - 1 ? prev + 1 : 0
-                    )
-                  }
+                  onClick={handleNextBrowsingMonth}
                   className="p-1.5 rounded-[2px] border border-surface-2/80 bg-surface-2/50 hover:bg-surface-2 text-content-2 hover:text-content-1 transition-colors cursor-pointer shrink-0"
                   title="Mese Successivo"
                 >

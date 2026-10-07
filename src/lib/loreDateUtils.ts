@@ -25,6 +25,7 @@ export interface ParsedLoreDate {
   endMonthIndex?: number;
   year: number;
   endYear?: number;
+  hasExplicitYear?: boolean;
   formatted: string;
   isCrossMonth?: boolean;
 }
@@ -43,27 +44,34 @@ export function parseLoreDateString(
 
   const norm = normalizeText(dateStr);
 
-  // 1. Identify all 3-4 digit years in text (e.g. 1492, 1493)
-  const yearMatches = Array.from(norm.matchAll(/\b(1\d{3}|[1-9]\d{2})\b/g));
-  let parsedStartYear = fallbackYear;
-  let parsedEndYear: number | undefined = undefined;
-
-  if (yearMatches.length >= 2) {
-    const y1 = parseInt(yearMatches[0][1], 10);
-    const y2 = parseInt(yearMatches[1][1], 10);
-    if (!isNaN(y1) && y1 > 31) parsedStartYear = y1;
-    if (!isNaN(y2) && y2 > 31) parsedEndYear = y2;
-  } else if (yearMatches.length === 1) {
-    const y = parseInt(yearMatches[0][1], 10);
-    if (!isNaN(y) && y > 31) {
-      parsedStartYear = y;
+  // 1. Identify all explicit years in text (numbers > 31 or numbers followed by era/suffix)
+  const yearMatches: { year: number; rawText: string }[] = [];
+  const suffixMatch = norm.match(/\b(\d{1,4})\b\s*(?:[i|v|x]+\s*era|era|cv|dr|dc|ac|bce|ce)\b/i);
+  if (suffixMatch) {
+    const y = parseInt(suffixMatch[1], 10);
+    if (!isNaN(y)) {
+      yearMatches.push({ year: y, rawText: suffixMatch[1] });
     }
   }
+
+  const allNumbers = Array.from(norm.matchAll(/\b(\d{1,4})\b/g));
+  for (const nm of allNumbers) {
+    const y = parseInt(nm[1], 10);
+    if (!isNaN(y) && y > 31) {
+      if (!yearMatches.some((ym) => ym.year === y)) {
+        yearMatches.push({ year: y, rawText: nm[1] });
+      }
+    }
+  }
+
+  const hasExplicitYear = yearMatches.length > 0;
+  let parsedStartYear = hasExplicitYear ? yearMatches[0].year : fallbackYear;
+  let parsedEndYear: number | undefined = yearMatches.length >= 2 ? yearMatches[1].year : undefined;
 
   // Remove the years from the text so they don't collide with day numbers
   let textWithoutYear = norm;
   for (const ym of yearMatches) {
-    textWithoutYear = textWithoutYear.replace(new RegExp(`\\b${ym[1]}\\b`, 'g'), ' ');
+    textWithoutYear = textWithoutYear.replace(new RegExp(`\\b${ym.rawText}\\b`, 'g'), ' ');
   }
 
   // 2. Identify month occurrences and their positions
@@ -310,9 +318,31 @@ export function matchesLoreDayAndMonth(
   targetDay: number,
   targetMonth: CalendarMonth,
   targetMonthIndex: number,
-  allMonths: CalendarMonth[]
+  allMonths: CalendarMonth[],
+  targetYear?: number
 ): boolean {
   if (!targetMonth) return false;
+
+  // Year verification: if targetYear is specified, verify that the item's explicit year matches targetYear
+  if (targetYear !== undefined) {
+    let itemStartYear: number | undefined = item.loreYear;
+    let itemEndYear: number | undefined = item.loreEndYear;
+
+    if (item.loreDate && item.loreDate.trim()) {
+      const parsed = parseLoreDateString(item.loreDate, allMonths);
+      if (parsed && parsed.hasExplicitYear) {
+        itemStartYear = parsed.year;
+        itemEndYear = parsed.endYear || parsed.year;
+      }
+    }
+
+    if (itemStartYear !== undefined) {
+      const maxYear = itemEndYear !== undefined ? itemEndYear : itemStartYear;
+      if (targetYear < itemStartYear || targetYear > maxYear) {
+        return false;
+      }
+    }
+  }
 
   const targetMonthFullName = normalizeText(targetMonth.name);
   const targetMonthMainName = normalizeText(targetMonth.name.split('(')[0]);
