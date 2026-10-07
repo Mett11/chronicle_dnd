@@ -165,6 +165,7 @@ export function parseLoreDateString(
       endMonthIndex: m2.monthIndex,
       year: parsedStartYear,
       endYear: parsedEndYear,
+      hasExplicitYear,
       formatted,
       isCrossMonth: true,
     };
@@ -199,6 +200,7 @@ export function parseLoreDateString(
           endMonthIndex: eMNum - 1,
           year: parsedStartYear,
           endYear: parsedEndYear,
+          hasExplicitYear,
           formatted,
           isCrossMonth: true,
         };
@@ -264,6 +266,7 @@ export function parseLoreDateString(
     monthName: foundMonth.name,
     monthIndex: foundMonthIndex,
     year: parsedStartYear,
+    hasExplicitYear,
     formatted,
     isCrossMonth: false,
   };
