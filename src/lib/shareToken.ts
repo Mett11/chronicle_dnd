@@ -66,15 +66,19 @@ export function reconstructCampaignCodes(reversedOrRaw: string): string[] {
 
 /**
  * Builds a deterministic public presentation URL synchronously on client-side
- * with structure: base_url/presentation/nomecampagna/uuid_campagna_al_contrario
+ * with structure: base_url/presentation/nomecampagna/uuid_campagna_al_contrario(?chapter=...)
  */
-export function buildClientPresentationUrl(campaignTitle?: string, campaignCode?: string): string {
+export function buildClientPresentationUrl(campaignTitle?: string, campaignCode?: string, chapterIdOrName?: string): string {
   const origin = typeof window !== 'undefined' ? window.location.origin : '';
   const title = (campaignTitle || '').trim();
   const code = (campaignCode || '').trim().toUpperCase();
   const nameSlug = slugifyCampaignTitle(title || code || 'campagna');
   const reversed = reverseCode(code || nameSlug);
-  return `${origin}/presentation/${nameSlug}/${reversed}`;
+  const base = `${origin}/presentation/${nameSlug}/${reversed}`;
+  if (chapterIdOrName && chapterIdOrName !== 'all') {
+    return `${base}?chapter=${encodeURIComponent(chapterIdOrName.trim())}`;
+  }
+  return base;
 }
 
 /**

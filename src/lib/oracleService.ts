@@ -434,21 +434,19 @@ ${graphRelationalLines.join('\n')}
     }
 
     // =========================================================================
-    // 1. SESSIONS WITH RELATIONAL RELEVANCE BOOST (FILTERED BY SOTTO-CODEX)
+    // 1. SESSIONS WITH RELATIONAL RELEVANCE BOOST & KNOWLEDGE GRAPH SELECTION
     // =========================================================================
     const isMultiMode = Boolean(((multiEntities?.length || 0) + (multiPlayers?.length || 0)) >= 2);
 
     const filteredSessions = sessions.filter((s) => {
       if (isMultiMode && multiEntities && multiEntities.length > 0) {
         const multiEntIds = new Set(multiEntities.map((e) => e._id));
-        // 1. Explicit knownSessionIds
+        // 1. Explicit knownSessionIds or direct session links
         if (multiEntities.some((e) => (e.aiConfig?.knownSessionIds || []).includes(s._id))) return true;
-
-        // 2. Direct session links
         if (s.linkedEntityIds && s.linkedEntityIds.some((id) => multiEntIds.has(id))) return true;
         if ((s.events || []).some((e) => e.linkedEntityIds && e.linkedEntityIds.some((id) => multiEntIds.has(id)))) return true;
 
-        // 3. Mention of name or aliases of any entity or character
+        // 2. Mention of name or aliases of any entity or character
         const sText = (s.title + ' ' + extractPlainText(s.recap) + ' ' + (s.events || []).map((e) => e.title + ' ' + e.description).join(' ')).toLowerCase();
         for (const ent of multiEntities) {
           if (sText.includes(ent.name.toLowerCase())) return true;
@@ -458,7 +456,7 @@ ${graphRelationalLines.join('\n')}
           if (ply.characterName && sText.includes(ply.characterName.toLowerCase())) return true;
         }
 
-        // 4. Query keywords relevance
+        // 3. Query keywords relevance
         if (keywords.length > 0 && keywords.some((k) => sText.includes(k))) return true;
 
         return false;
@@ -466,25 +464,26 @@ ${graphRelationalLines.join('\n')}
 
       if (!codexEntity) return true;
 
-      // 1. Explicit knownSessionIds configured in entity
+      // 1. Direct session links (Session.linkedEntityIds or SessionEvent.linkedEntityIds or knownSessionIds)
       const knownIds = codexEntity.aiConfig?.knownSessionIds || [];
       if (knownIds.includes(s._id)) return true;
-
-      // 2. Direct session links (Session.linkedEntityIds or SessionEvent.linkedEntityIds)
       if (s.linkedEntityIds && s.linkedEntityIds.includes(codexEntity._id)) return true;
       if ((s.events || []).some((e) => e.linkedEntityIds && e.linkedEntityIds.includes(codexEntity._id))) return true;
 
-      // 3. Linked location (if entity is located at e.g. Norvellia and session occurred in Norvellia)
+      // 2. Linked location
       if (codexEntity.location) {
         const locLower = codexEntity.location.toLowerCase();
         if ((s.events || []).some((e) => e.location && e.location.toLowerCase().includes(locLower))) return true;
       }
 
-      // 4. Mention of name or aliases in session recap, title or event descriptions
+      // 3. Mention of name or aliases in session recap, title or event descriptions
       const sText = (s.title + ' ' + extractPlainText(s.recap) + ' ' + (s.events || []).map((e) => e.title + ' ' + e.description).join(' ')).toLowerCase();
       const entName = codexEntity.name.toLowerCase();
       if (sText.includes(entName)) return true;
       if (codexEntity.aliases && codexEntity.aliases.some((a) => a.trim().length >= 3 && sText.includes(a.toLowerCase()))) return true;
+
+      // 4. Mentions in Timeline Memories or Evolving Beliefs
+      if (codexEntity.aiConfig?.timelineMemories?.some((m) => m.sessionId === s._id || (m.loreDate && s.loreDate && m.loreDate === s.loreDate))) return true;
 
       // 5. Linked Quests involving this entity
       const linkedQuests = entities.filter(
@@ -554,7 +553,7 @@ ${graphRelationalLines.join('\n')}
       .sort((a, b) => b.relevance - a.relevance || b.number - a.number);
 
     // =========================================================================
-    // 2. CODEX / ENTITIES (FILTERED STRICTLY BY SOTTO-CODEX)
+    // 2. CODEX / ENTITIES (SELECTION BY RELATIONS, KNOWLEDGE GRAPH & QUERY)
     // =========================================================================
     const filteredEntities = entities.filter((ent) => {
       if (!isDm && ent.type === 'quest') {
@@ -569,24 +568,32 @@ ${graphRelationalLines.join('\n')}
         if (multiEntities.some((me) => me.aiConfig?.knownEntityIds?.includes(ent._id))) return true;
         // Keep entities with cross-relations to any participating entity
         if (multiEntities.some((me) => Object.values(me.aiConfig?.entityRelations || {}).some((er) => er.targetEntityId === ent._id))) return true;
-        // Keep if query or knowledge scopes mention it
-        const allScopes = multiEntities.map((me) => me.aiConfig?.knowledgeScope || '').join(' ') + ' ' + query;
-        if (allScopes.toLowerCase().includes(ent.name.toLowerCase())) return true;
+        // Keep if query mentions it
+        if (query.toLowerCase().includes(ent.name.toLowerCase())) return true;
         return false;
       }
 
       if (!codexEntity) return true;
       if (ent._id === codexEntity._id) return true;
 
+      // 1. Explicit knownEntityIds or cross entity relations
       const knownIds = codexEntity.aiConfig?.knownEntityIds;
-      if (knownIds && knownIds.length > 0) {
-        return knownIds.includes(ent._id);
+      if (knownIds && knownIds.length > 0 && knownIds.includes(ent._id)) return true;
+
+      if (codexEntity.aiConfig?.entityRelations && Object.values(codexEntity.aiConfig.entityRelations).some((er) => er.targetEntityId === ent._id)) {
+        return true;
       }
 
-      // If no explicit knownEntityIds set, only include entities explicitly mentioned in knowledgeScope or current query
-      const scopeText = ((codexEntity.aiConfig?.knowledgeScope || '') + ' ' + query).toLowerCase();
-      if (scopeText.includes(ent.name.toLowerCase())) return true;
-      if (ent.aliases && ent.aliases.some((a) => scopeText.includes(a.toLowerCase()))) return true;
+      // 2. Mentions in timeline memories or evolving beliefs of codexEntity
+      const memoriesText = (codexEntity.aiConfig?.timelineMemories || []).map((m) => m.title + ' ' + m.summary).join(' ').toLowerCase();
+      if (memoriesText.includes(ent.name.toLowerCase())) return true;
+
+      const beliefsText = (codexEntity.aiConfig?.evolvingBeliefs || []).map((b) => b.subject + ' ' + b.currentTruth).join(' ').toLowerCase();
+      if (beliefsText.includes(ent.name.toLowerCase())) return true;
+
+      // 3. Mentions in current query
+      if (query && query.toLowerCase().includes(ent.name.toLowerCase())) return true;
+      if (ent.aliases && ent.aliases.some((a) => query.toLowerCase().includes(a.toLowerCase()))) return true;
 
       return false;
     });

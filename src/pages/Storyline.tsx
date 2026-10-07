@@ -41,7 +41,7 @@ import {
   Image as ImageIcon,
   Film,
 } from 'lucide-react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ImageGalleryUploader } from '../components/ImageGalleryUploader';
 import { StorylineFullscreenViewer, StorylineSlide } from '../components/StorylineFullscreenViewer';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -1518,15 +1518,67 @@ const StorylineMobileNodeCard = React.memo(function StorylineMobileNodeCard({
   );
 });
 
+export function slugifyChapterTitle(name: string): string {
+  if (!name) return '';
+  return name
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
 export function Storyline() {
   const { player } = useAuth();
   const navigate = useNavigate();
+  const { chapterSlug } = useParams<{ chapterSlug?: string }>();
+  const [searchParams] = useSearchParams();
   const { allPlayers } = useAuth();
   const [sessions, setSessions] = useState<Session[]>(() => CampaignManager.getSessions());
   const [chapters, setChapters] = useState<CampaignChapter[]>(() => CampaignManager.getChapters());
   const [selectedChapterId, setSelectedChapterId] = useState<string>('all');
   const [calendar, setCalendar] = useState(() => CampaignManager.getCalendar());
   const [entities, setEntities] = useState<Entity[]>(() => CampaignManager.getEntities());
+
+  // URL Slug synchronization with selectedChapterId
+  useEffect(() => {
+    const rawTarget = (chapterSlug || searchParams.get('chapter') || searchParams.get('chap') || '').trim();
+    if (!rawTarget || rawTarget === 'all' || rawTarget === 'tutti') {
+      setSelectedChapterId('all');
+      return;
+    }
+    if (rawTarget === 'unassigned' || rawTarget === 'non-assegnate') {
+      setSelectedChapterId('unassigned');
+      return;
+    }
+    const currentChapters = CampaignManager.getChapters();
+    const matched = currentChapters.find(
+      (c) =>
+        c.id === rawTarget ||
+        slugifyChapterTitle(c.name) === rawTarget.toLowerCase() ||
+        c.name.toLowerCase() === decodeURIComponent(rawTarget).toLowerCase()
+    );
+    if (matched) {
+      setSelectedChapterId(matched.id);
+    }
+  }, [chapterSlug, searchParams]);
+
+  const handleSelectChapter = useCallback(
+    (chapterId: string) => {
+      setSelectedChapterId(chapterId);
+      if (chapterId === 'all') {
+        navigate('/storyline', { replace: true });
+      } else if (chapterId === 'unassigned') {
+        navigate('/storyline/unassigned', { replace: true });
+      } else {
+        const currentChapters = CampaignManager.getChapters();
+        const targetChap = currentChapters.find((c) => c.id === chapterId || c.name === chapterId);
+        const slug = targetChap ? slugifyChapterTitle(targetChap.name) || targetChap.id : chapterId;
+        navigate(`/storyline/${slug}`, { replace: true });
+      }
+    },
+    [navigate]
+  );
 
   useEffect(() => {
     const handleDataUpdate = () => {
@@ -2283,7 +2335,7 @@ export function Storyline() {
             <Bookmark size={14} className="text-primary shrink-0" />
             <select
               value={selectedChapterId}
-              onChange={(e) => setSelectedChapterId(e.target.value)}
+              onChange={(e) => handleSelectChapter(e.target.value)}
               className="bg-transparent text-xs font-medium text-content-1 outline-none cursor-pointer"
             >
               <option value="all" className="bg-surface-1">Tutta la Campagna ({sessions.length} sessioni)</option>
@@ -2304,7 +2356,7 @@ export function Storyline() {
           <div className="flex items-center gap-1.5 overflow-x-auto">
             <button
               type="button"
-              onClick={() => setSelectedChapterId('all')}
+              onClick={() => handleSelectChapter('all')}
               className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
                 selectedChapterId === 'all'
                   ? 'bg-surface-2 text-content-1 border border-surface-3'
@@ -2319,7 +2371,7 @@ export function Storyline() {
                 <button
                   key={chap.id}
                   type="button"
-                  onClick={() => setSelectedChapterId(chap.id)}
+                  onClick={() => handleSelectChapter(chap.id)}
                   className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5 whitespace-nowrap ${
                     isSelected
                       ? 'bg-surface-2 text-content-1 border border-surface-3'
@@ -2382,7 +2434,7 @@ export function Storyline() {
                 <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
                   <button
                     type="button"
-                    onClick={() => setSelectedChapterId('all')}
+                    onClick={() => handleSelectChapter('all')}
                     className="px-2.5 py-1 text-xs text-content-3 hover:text-content-1 font-mono hover:bg-surface-2 rounded-lg transition-colors cursor-pointer"
                   >
                     Mostra Tutta la Campagna

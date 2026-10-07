@@ -74,6 +74,7 @@ interface StorylineFullscreenViewerProps {
   onSelectNode?: (nodeId: string) => void;
   isPublicShare?: boolean;
   campaignCode?: string;
+  selectedChapter?: string;
 }
 
 // Dedicated Mobile Cronaca Viewer (Direct Fullscreen Card & Artwork with Reading Mode)
@@ -84,7 +85,8 @@ const MobileCronacaViewer: React.FC<{
   onSelectNode?: (nodeId: string) => void;
   isPublicShare?: boolean;
   campaignCode?: string;
-}> = ({ slides, initialSlideIndex, onClose, onSelectNode, isPublicShare, campaignCode }) => {
+  selectedChapter?: string;
+}> = ({ slides, initialSlideIndex, onClose, onSelectNode, isPublicShare, campaignCode, selectedChapter }) => {
   const [currentIndex, setCurrentIndex] = useState(initialSlideIndex);
   const [isReadingMode, setIsReadingMode] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
@@ -104,7 +106,10 @@ const MobileCronacaViewer: React.FC<{
     const meta = CampaignManager.getCampaignMeta();
     const code = (campaignCode || CampaignManager.getActiveCampaignCode() || meta?.code || '').trim().toUpperCase();
     const campaignTitle = (meta?.name || 'Campagna').trim();
-    const immediateUrl = buildClientPresentationUrl(campaignTitle, code);
+    const effectiveChapterParam = (
+      (selectedChapter && selectedChapter !== 'all' ? selectedChapter : currentSlide?.chapterName || slides[0]?.chapterName) || ''
+    ).trim();
+    const immediateUrl = buildClientPresentationUrl(campaignTitle, code, effectiveChapterParam);
 
     setShowShareModalUrl(immediateUrl);
     setIsPublishingShare(true);
@@ -122,7 +127,10 @@ const MobileCronacaViewer: React.FC<{
     CloudSyncService.publishPublicPresentation(code).then((result) => {
       setIsPublishingShare(false);
       setShareSuccess(result.success);
-      const finalUrl = result.url || immediateUrl;
+      const baseFinalUrl = result.url || immediateUrl;
+      const finalUrl = effectiveChapterParam
+        ? `${baseFinalUrl.split('?')[0]}?chapter=${encodeURIComponent(effectiveChapterParam)}`
+        : baseFinalUrl;
       setShowShareModalUrl(finalUrl);
 
       copyTextToClipboard(finalUrl).then((copied) => {
@@ -595,6 +603,7 @@ export const StorylineFullscreenViewer: React.FC<StorylineFullscreenViewerProps>
   onSelectNode,
   isPublicShare = false,
   campaignCode,
+  selectedChapter,
 }) => {
   const [currentIndex, setCurrentIndex] = useState(initialSlideIndex);
   const [scale, setScale] = useState(1);
@@ -615,7 +624,10 @@ export const StorylineFullscreenViewer: React.FC<StorylineFullscreenViewerProps>
     const meta = CampaignManager.getCampaignMeta();
     const code = (campaignCode || CampaignManager.getActiveCampaignCode() || meta?.code || '').trim().toUpperCase();
     const campaignTitle = (meta?.name || 'Campagna').trim();
-    const immediateUrl = buildClientPresentationUrl(campaignTitle, code);
+    const effectiveChapterParam = (
+      (selectedChapter && selectedChapter !== 'all' ? selectedChapter : currentSlide?.chapterName || slides[0]?.chapterName) || ''
+    ).trim();
+    const immediateUrl = buildClientPresentationUrl(campaignTitle, code, effectiveChapterParam);
 
     setShowShareModalUrl(immediateUrl);
     setIsPublishingShare(true);
@@ -633,7 +645,10 @@ export const StorylineFullscreenViewer: React.FC<StorylineFullscreenViewerProps>
     CloudSyncService.publishPublicPresentation(code).then((result) => {
       setIsPublishingShare(false);
       setShareSuccess(result.success);
-      const finalUrl = result.url || immediateUrl;
+      const baseFinalUrl = result.url || immediateUrl;
+      const finalUrl = effectiveChapterParam
+        ? `${baseFinalUrl.split('?')[0]}?chapter=${encodeURIComponent(effectiveChapterParam)}`
+        : baseFinalUrl;
       setShowShareModalUrl(finalUrl);
 
       copyTextToClipboard(finalUrl).then((copied) => {
@@ -802,6 +817,7 @@ export const StorylineFullscreenViewer: React.FC<StorylineFullscreenViewerProps>
         onSelectNode={onSelectNode}
         isPublicShare={isPublicShare}
         campaignCode={campaignCode}
+        selectedChapter={selectedChapter}
       />
     );
   }

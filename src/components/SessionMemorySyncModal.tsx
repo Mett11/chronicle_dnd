@@ -1123,7 +1123,7 @@ export function SessionMemorySyncModal({
                                 <span>Collega Sessione {session?.number} alle memorie vissute di {prop.entityName}</span>
                               </span>
                               <p className="text-[11px] text-content-3 font-mono">
-                                Aggiunge la sessione al suo Sotto-Codex per l&apos;Oracolo / Sendipietra.
+                                Aggiunge la sessione alle memorie vissute per l&apos;Oracolo / Sendipietra.
                               </p>
                             </div>
                           </label>
@@ -1440,43 +1440,6 @@ export function SessionMemorySyncModal({
                                   </div>
                                 ))}
                               </div>
-                            </div>
-                          )}
-
-                          {/* New Knowledge */}
-                          {prop.suggestedNewKnowledge && (
-                            <div className="p-2.5 rounded-lg bg-surface-2/40 border border-surface-3/60 space-y-1.5">
-                              <label className="flex items-center gap-2.5 cursor-pointer">
-                                <input
-                                  type="checkbox"
-                                  checked={!!prop.applyNewKnowledge}
-                                  onChange={(e) => {
-                                    const checked = e.target.checked;
-                                    setProposals((prev) =>
-                                      prev.map((p) => (p.entityId === prop.entityId ? { ...p, applyNewKnowledge: checked } : p))
-                                    );
-                                  }}
-                                  className="rounded border-surface-3 text-primary focus:ring-primary"
-                                />
-                                <span className="text-xs font-semibold text-content-1 flex items-center gap-1.5">
-                                  <Sparkles size={12} className="text-primary" />
-                                  <span>Aggiungi nuova informazione appresa al Sotto-Codex:</span>
-                                </span>
-                              </label>
-                              <textarea
-                                rows={2}
-                                value={prop.suggestedNewKnowledge}
-                                disabled={!prop.applyNewKnowledge}
-                                onChange={(e) => {
-                                  const val = e.target.value;
-                                  setProposals((prev) =>
-                                    prev.map((p) => (p.entityId === prop.entityId ? { ...p, suggestedNewKnowledge: val } : p))
-                                  );
-                                }}
-                                className={`w-full bg-surface-1 border border-surface-3 focus:border-primary rounded-lg px-2.5 py-1.5 text-xs text-content-1 outline-none resize-none font-mono ${
-                                  !prop.applyNewKnowledge ? 'opacity-40' : ''
-                                }`}
-                              />
                             </div>
                           )}
                         </div>

@@ -224,6 +224,7 @@ function AppContent() {
           <Route path="/manuale" element={<Tutorial />} />
           <Route path="/notes" element={<Home />} />
           <Route path="/storyline" element={<Storyline />} />
+          <Route path="/storyline/:chapterSlug" element={<Storyline />} />
           <Route path="/calendar" element={<CalendarPage />} />
           <Route path="/sessions" element={<Sessions />} />
           <Route path="/sessions/:id" element={<Sessions />} />

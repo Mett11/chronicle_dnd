@@ -259,14 +259,29 @@ const TomeGrainCanvas: React.FC = () => {
   );
 };
 
+const ALL_CATEGORY_CONFIG = {
+  id: 'all',
+  title: 'Tutti i Registri',
+  singular: 'Voce',
+  plural: 'Tutte le Voci',
+  icon: BookOpen,
+  heraldicIcon: Sparkles,
+  heraldicSigil: 'OMNIA',
+  color: 'text-primary',
+  accentBg: 'bg-primary/10',
+  description: 'Visualizzazione panoramica di tutte le entità custodite nel Codex di Campagna.',
+  defaultStatus: 'active' as Entity['status'],
+};
+
 export function Entities() {
   const { type, id: routeId } = useParams<{ type?: string; id?: string }>();
   const navigate = useNavigate();
 
-  // If type is valid category, we are in category view; otherwise in overview
-  const isOverview = !type || !CATEGORY_DEFINITIONS[type as Entity['type']];
-  const activeType: Entity['type'] = (!isOverview ? (type as Entity['type']) : 'npc');
-  const activeCategory = CATEGORY_DEFINITIONS[activeType];
+  // If type is valid category or 'all', we are in category view; otherwise in overview
+  const isAll = type === 'all';
+  const isOverview = !type;
+  const activeType: Entity['type'] | 'all' = isAll ? 'all' : (type && CATEGORY_DEFINITIONS[type as Entity['type']] ? (type as Entity['type']) : 'npc');
+  const activeCategory = isAll ? ALL_CATEGORY_CONFIG : CATEGORY_DEFINITIONS[activeType as Entity['type']];
   const ActiveIcon = activeCategory.icon;
   const ActiveHeraldicIcon = activeCategory.heraldicIcon;
 
@@ -301,7 +316,7 @@ export function Entities() {
   const [filterSendipietra, setFilterSendipietra] = useState(false);
 
   // Form State
-  const [formType, setFormType] = useState<Entity['type']>(activeType);
+  const [formType, setFormType] = useState<Entity['type']>(isAll ? 'npc' : (activeType as Entity['type']));
   const [newName, setNewName] = useState('');
   const [newAlias, setNewAlias] = useState('');
   const [newStatus, setNewStatus] = useState<Entity['status']>(activeCategory.defaultStatus);
@@ -414,8 +429,8 @@ export function Entities() {
     setCurrentPage(1);
   }, [searchQuery, questScopeFilter, filterSendipietra]);
 
-  const handleOpenCreateModal = (targetType?: Entity['type']) => {
-    const chosenType = targetType || (isOverview ? 'npc' : activeType);
+  const handleOpenCreateModal = (targetType?: Entity['type'] | 'all') => {
+    const chosenType = (!targetType || targetType === 'all' || isOverview) ? 'npc' : targetType;
     const chosenConfig = CATEGORY_DEFINITIONS[chosenType];
 
     setIsEditing(false);
@@ -552,6 +567,25 @@ export function Entities() {
             (e.progressNote && e.progressNote.toLowerCase().includes(q))
         );
       }
+    } else if (activeType === 'all') {
+      result = allowedEntities
+        .filter((e) => {
+          if (e.type !== 'quest') return true;
+          if (questScopeFilter === 'party') return e.questScope === 'party';
+          if (questScopeFilter === 'personal') {
+            if (personalAssigneeFilter === 'all') return e.questScope === 'personal';
+            return e.questScope === 'personal' && e.assigneePlayerId === personalAssigneeFilter;
+          }
+          return true;
+        })
+        .filter(
+          (e) =>
+            !searchQuery ||
+            e.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            (e.aliases && e.aliases.some((a) => a.toLowerCase().includes(searchQuery.toLowerCase()))) ||
+            (e.progressNote && e.progressNote.toLowerCase().includes(searchQuery.toLowerCase())) ||
+            (e.assigneePlayerName && e.assigneePlayerName.toLowerCase().includes(searchQuery.toLowerCase()))
+        );
     } else {
       result = allowedEntities
         .filter((e) => e.type === activeType)
@@ -813,6 +847,17 @@ export function Entities() {
                     </button>
                   )}
                 </div>
+
+                <button
+                  type="button"
+                  onClick={() => navigate('/codex/all')}
+                  className="px-3 py-1.5 rounded-[2px] font-medium text-xs bg-surface-1 hover:bg-surface-2 text-content-1 border border-surface-2 transition-colors flex items-center justify-center gap-1.5 shrink-0 cursor-pointer shadow-xs font-mono"
+                  title="Mostra tutte le entità in un unico registro"
+                >
+                  <Sparkles size={13} className="text-primary" />
+                  <span className="hidden sm:inline">Tutti i Registri</span>
+                  <span className="sm:hidden">Tutto</span>
+                </button>
 
                 <button
                   type="button"
@@ -1132,8 +1177,27 @@ export function Entities() {
             </button>
           </div>
 
-          {/* Mobile Horizontal Tome Selector (Tomi I — VI) */}
+          {/* Mobile Horizontal Tome Selector (Tutto + Tomi I — VI) */}
           <div className="lg:hidden overflow-x-auto pb-1 -mx-4 px-4 sm:mx-0 sm:px-0 flex items-center gap-1.5 custom-scrollbar">
+            <button
+              type="button"
+              onClick={() => {
+                navigate('/codex/all');
+                setHighlightedEntityId(null);
+                setCurrentPage(1);
+              }}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-[2px] text-xs whitespace-nowrap border transition-all cursor-pointer shrink-0 font-mono ${
+                activeType === 'all'
+                  ? 'bg-primary/10 text-primary border-primary font-semibold'
+                  : 'bg-surface-1 text-content-2 hover:text-content-1 hover:bg-surface-2 border-surface-2'
+              }`}
+            >
+              <Sparkles size={13} className={activeType === 'all' ? 'text-primary' : 'text-content-3'} />
+              <span className="text-xs font-semibold">Tutto</span>
+              <span className="text-[10px] px-1 rounded-[2px] bg-surface-2 text-content-3 font-semibold">
+                {entities.length}
+              </span>
+            </button>
             {CATEGORIES_LIST.map((cat, idx) => {
               const CatHeraldicIcon = cat.heraldicIcon;
               const isActive = activeType === cat.id;
@@ -1145,7 +1209,7 @@ export function Entities() {
                   key={cat.id}
                   type="button"
                   onClick={() => {
-                    navigate(`/entities/${cat.id}`);
+                    navigate(`/codex/${cat.id}`);
                     setHighlightedEntityId(null);
                     setCurrentPage(1);
                   }}
@@ -1175,6 +1239,29 @@ export function Entities() {
                   <span>REGISTRI CODEX</span>
                   <span>TOMI I–VI</span>
                 </div>
+                {/* TUTTO / TUTTI I REGISTRI Button */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigate('/codex/all');
+                    setHighlightedEntityId(null);
+                    setCurrentPage(1);
+                  }}
+                  className={`w-full flex items-center justify-between px-3 py-2 text-xs transition-colors cursor-pointer text-left ${
+                    activeType === 'all'
+                      ? 'bg-surface-2/40 text-primary font-medium border-l-2 border-primary'
+                      : 'text-content-2 hover:text-content-1 hover:bg-surface-2/20 border-l-2 border-transparent'
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5 truncate">
+                    <span className="text-[10px] font-mono text-content-3/60 w-3 font-semibold">★</span>
+                    <Sparkles size={13} className={activeType === 'all' ? 'text-primary' : 'text-content-3/60'} />
+                    <span className="truncate font-medium">Tutti i Registri</span>
+                  </div>
+                  <span className="text-[10px] font-mono text-content-3/60 shrink-0">
+                    {entities.length}
+                  </span>
+                </button>
                 {CATEGORIES_LIST.map((cat, idx) => {
                   const CatHeraldicIcon = cat.heraldicIcon;
                   const isActive = activeType === cat.id;
@@ -1186,7 +1273,7 @@ export function Entities() {
                       key={cat.id}
                       type="button"
                       onClick={() => {
-                        navigate(`/entities/${cat.id}`);
+                        navigate(`/codex/${cat.id}`);
                         setHighlightedEntityId(null);
                         setCurrentPage(1);
                       }}
@@ -1491,9 +1578,16 @@ export function Entities() {
                         {/* Dossier Header Tag & Status */}
                         <div className="space-y-2 min-w-0">
                           <div className="flex items-center justify-between gap-2 border-b border-surface-2/40 pb-1.5">
-                            <span className="text-[9px] font-mono tracking-widest text-content-3/70 uppercase">
-                              {archiveRef} &bull; {activeCategory.singular.toUpperCase()}
-                            </span>
+                            {(() => {
+                              const entCat = CATEGORY_DEFINITIONS[ent.type] || activeCategory;
+                              return (
+                                <span className="text-[9px] font-mono tracking-widest text-content-3/70 uppercase flex items-center gap-1">
+                                  <span>{archiveRef}</span>
+                                  <span>&bull;</span>
+                                  <span className={activeType === 'all' ? `${entCat.color} font-semibold` : ''}>{entCat.singular.toUpperCase()}</span>
+                                </span>
+                              );
+                            })()}
 
                             <div className="flex items-center gap-1.5 shrink-0">
                               {renderStatusBadge(ent.status)}
@@ -1869,11 +1963,6 @@ export function Entities() {
                       {detailEntity.aiConfig.speechStyle && (
                         <p className="text-xs text-content-2">
                           <strong className="text-content-1">Stile:</strong> {detailEntity.aiConfig.speechStyle}
-                        </p>
-                      )}
-                      {detailEntity.aiConfig.knowledgeScope && (
-                        <p className="text-xs text-content-2">
-                          <strong className="text-content-1">Sotto-Codex:</strong> {detailEntity.aiConfig.knowledgeScope}
                         </p>
                       )}
 
@@ -2866,21 +2955,6 @@ export function Entities() {
                           placeholder="Es. Presso l'Accademia T.A.V., ha appena promosso Kaelen e la classe dopo la Sessione 25 e attende le prossime direttive del Consiglio Arcano..."
                           value={newAiCurrentStatus}
                           onChange={(e) => setNewAiCurrentStatus(e.target.value)}
-                          className="w-full bg-surface-1 border border-surface-3 focus:border-primary rounded-lg px-3 py-2 text-xs text-content-1 outline-none resize-none font-mono"
-                        />
-                      </div>
-
-                      {/* Knowledge Scope / Sub-Codex */}
-                      <div>
-                        <label className="block text-xs font-medium text-content-2 mb-1 flex items-center gap-1.5">
-                          <Brain size={12} className="text-primary" />
-                          <span>Sotto-Codex &amp; Ambito di Conoscenza (Cosa sa finora):</span>
-                        </label>
-                        <textarea
-                          rows={2}
-                          placeholder="Es. Conosce le formule magiche dell'Accademia, la storia del laboratorio esploso e i segreti di Porta Lumìnia. NON sa chi è il traditore della gilda..."
-                          value={newAiKnowledgeScope}
-                          onChange={(e) => setNewAiKnowledgeScope(e.target.value)}
                           className="w-full bg-surface-1 border border-surface-3 focus:border-primary rounded-lg px-3 py-2 text-xs text-content-1 outline-none resize-none font-mono"
                         />
                       </div>

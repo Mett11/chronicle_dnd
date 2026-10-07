@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, useSearchParams, Link } from 'react-router-dom';
 import { CampaignManager } from '../store/campaignStore';
 import { StorylineFullscreenViewer, StorylineSlide } from '../components/StorylineFullscreenViewer';
 import { Film, Sparkles, Compass, AlertCircle, RefreshCw } from 'lucide-react';
@@ -18,6 +18,9 @@ export function PublicPresentationView() {
     campaignName?: string;
     reversedCode?: string;
   }>();
+
+  const [searchParams] = useSearchParams();
+  const requestedChapter = searchParams.get('chapter')?.trim();
 
   const originalFromReversed = reversedCode ? reversedCode.trim().split('').reverse().join('').toUpperCase() : '';
   const candidateCodes = reversedCode ? reconstructCampaignCodes(reversedCode) : [];
@@ -133,12 +136,50 @@ export function PublicPresentationView() {
     };
   }, [rawTarget, campaignName, reversedCode]);
 
-  // Construct sequential StorylineSlides for the presentation view
+  // Determine effective chapter to view exclusively (never intertwining all chapters)
+  const effectiveChapter = useMemo(() => {
+    if (requestedChapter && requestedChapter !== 'all') {
+      return requestedChapter.trim();
+    }
+    if (chapters.length > 0) {
+      return chapters[0].id || chapters[0].name || '';
+    }
+    const firstWithChap = sessions.find((s) => s.chapterId || s.chapterName);
+    return firstWithChap?.chapterId || firstWithChap?.chapterName || 'unassigned';
+  }, [requestedChapter, chapters, sessions]);
+
+  // Construct sequential StorylineSlides strictly for the selected chapter
   const slides = useMemo<StorylineSlide[]>(() => {
     if (!sessions || sessions.length === 0) return [];
 
+    let targetSessions = sessions;
+    if (effectiveChapter) {
+      const targetReq = effectiveChapter.toLowerCase().trim();
+      const matchedChapterObj = chapters.find(
+        (c) => c.id?.toLowerCase() === targetReq || c.name?.toLowerCase().trim() === targetReq
+      );
+      const matchedChapterId = matchedChapterObj?.id?.toLowerCase();
+      const matchedChapterName = matchedChapterObj?.name?.toLowerCase().trim();
+
+      targetSessions = sessions.filter((s) => {
+        if (targetReq === 'unassigned') {
+          return !s.chapterId && !s.chapterName;
+        }
+        const sChapId = s.chapterId?.toLowerCase().trim();
+        const sChapName = s.chapterName?.toLowerCase().trim();
+        return (
+          sChapId === targetReq ||
+          sChapName === targetReq ||
+          (matchedChapterId && sChapId === matchedChapterId) ||
+          (matchedChapterName && sChapName === matchedChapterName)
+        );
+      });
+    }
+
+    if (targetSessions.length === 0) return [];
+
     const result: StorylineSlide[] = [];
-    const sorted = [...sessions].sort((a, b) => (Number(a.number) || 0) - (Number(b.number) || 0));
+    const sorted = [...targetSessions].sort((a, b) => (Number(a.number) || 0) - (Number(b.number) || 0));
 
     // Chapter lookup map
     const chapterMap = new Map<string, CampaignChapter>();
@@ -265,7 +306,7 @@ export function PublicPresentationView() {
     });
 
     return result.map((s) => ({ ...s, totalGlobalImages: result.length }));
-  }, [sessions, chapters]);
+  }, [sessions, chapters, effectiveChapter]);
 
   if (loading) {
     return (
@@ -319,6 +360,7 @@ export function PublicPresentationView() {
         }}
         isPublicShare={true}
         campaignCode={rawTarget}
+        selectedChapter={effectiveChapter}
       />
     </div>
   );

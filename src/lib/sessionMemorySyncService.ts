@@ -178,7 +178,6 @@ REGOLE FONDAMENTALI DI ANALISI:
        - Se invece c'è stato un riavvicinamento, riconoscenza o patto d'alleanza, aumenta l'atteggiamento (es. a helpful, friendly o devoted) con relativo 'milestoneEvent'.
      * entityRelationUpdates: relazioni con altre fazioni o PNG (con eventuale 'milestoneEvent').
      * shouldAddSessionToMemory: true se il PNG era coinvolto.
-     * suggestedNewKnowledge: nuovi fatti appresi.
 
 Rispondi ESCLUSIVAMENTE in formato JSON valido con questa struttura:
 {
@@ -270,8 +269,7 @@ Rispondi ESCLUSIVAMENTE in formato JSON valido con questa struttura:
           "reason": "string"
         }
       ],
-      "shouldAddSessionToMemory": true,
-      "suggestedNewKnowledge": "string"
+      "shouldAddSessionToMemory": true
     }
   ]
 }`;
