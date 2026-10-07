@@ -1058,25 +1058,24 @@ PG party: ${playerNames.join(', ')}.`;
 
   const handleApply = () => {
     const toCreate = items.filter((i) => i.selected && i.name.trim());
-    const createdList: Entity[] = [];
-
-    toCreate.forEach((item) => {
+    const payloadList = toCreate.map((item) => {
       const defaultStatus: Entity['status'] = item.type === 'quest' ? 'open' : 'alive';
       const safeStatus: Entity['status'] =
         item.status && ['alive', 'dead', 'open', 'completed'].includes(item.status)
           ? item.status
           : defaultStatus;
 
-      const newEnt = CampaignManager.addEntity({
+      return {
         name: item.name.trim(),
         type: item.type,
         progressNote: item.description.trim(),
         status: safeStatus,
         location: item.location?.trim() || undefined,
         aliases: item.aliases && item.aliases.length > 0 ? item.aliases : undefined,
-      });
-      createdList.push(newEnt);
+      };
     });
+
+    const createdList = CampaignManager.addEntitiesBatch(payloadList);
 
     let updatedText = rawText;
     if (autoTagInText) {

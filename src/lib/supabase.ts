@@ -97,6 +97,12 @@ export const supabase: SupabaseClient = isSupabaseConfigured()
                   if (k && v) cleanHeaders.set(k, v);
                 });
               }
+
+              // Egress Optimization: Ensure mutations use return=minimal to avoid echoing heavy JSON payloads back
+              const reqMethod = (options?.method || 'GET').toUpperCase();
+              if (['POST', 'PATCH', 'PUT'].includes(reqMethod) && !cleanHeaders.has('prefer')) {
+                cleanHeaders.set('Prefer', 'return=minimal');
+              }
             } catch (e) {
               console.warn('[Supabase] Header sanitization notice:', e);
             }

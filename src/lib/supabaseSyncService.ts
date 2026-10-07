@@ -276,6 +276,71 @@ export class SupabaseSyncService {
   }
 
   /**
+   * Egress Optimization: In-memory cache surgical updater.
+   * Modifies existing cache without invalidating it, preventing cascade re-fetches of all 6 tables.
+   */
+  static updateCachedItem(campaignCode: string, collection: 'sessions' | 'entities' | 'notes' | 'chapters', item: any, isDelete = false) {
+    if (!campaignCode || !item) return;
+    const clean = campaignCode.trim().toUpperCase();
+    for (const [key, cacheEntry] of this.campaignDataCache.entries()) {
+      if (key.includes(clean) && cacheEntry?.data) {
+        const list = cacheEntry.data[collection];
+        if (Array.isArray(list)) {
+          const id = item._id || item.id;
+          const idx = list.findIndex((x: any) => (x._id || x.id) === id);
+          if (isDelete) {
+            if (idx !== -1) list.splice(idx, 1);
+          } else {
+            if (idx !== -1) {
+              list[idx] = { ...list[idx], ...item };
+            } else {
+              list.push(item);
+            }
+          }
+        }
+      }
+    }
+    // Also update sessionsOnlyCache if modifying a session
+    if (collection === 'sessions') {
+      for (const [key, cacheEntry] of this.sessionsOnlyCache.entries()) {
+        if (key.includes(clean) && cacheEntry?.data && Array.isArray(cacheEntry.data)) {
+          const id = item._id || item.id;
+          const idx = cacheEntry.data.findIndex((x: any) => (x._id || x.id) === id);
+          if (isDelete) {
+            if (idx !== -1) cacheEntry.data.splice(idx, 1);
+          } else {
+            if (idx !== -1) {
+              cacheEntry.data[idx] = { ...cacheEntry.data[idx], ...item };
+            } else {
+              cacheEntry.data.push(item);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Egress Optimization: In-memory bulk entities cache updater.
+   */
+  static updateCachedEntities(campaignCode: string, newEntities: Entity[]) {
+    if (!campaignCode || !Array.isArray(newEntities) || newEntities.length === 0) return;
+    const clean = campaignCode.trim().toUpperCase();
+    for (const [key, cacheEntry] of this.campaignDataCache.entries()) {
+      if (key.includes(clean) && cacheEntry?.data && Array.isArray(cacheEntry.data.entities)) {
+        newEntities.forEach((ent) => {
+          const idx = cacheEntry.data.entities.findIndex((x: any) => (x._id || x.id) === ent._id);
+          if (idx !== -1) {
+            cacheEntry.data.entities[idx] = { ...cacheEntry.data.entities[idx], ...ent };
+          } else {
+            cacheEntry.data.entities.push(ent);
+          }
+        });
+      }
+    }
+  }
+
+  /**
    * Lightweight metadata check for a campaign (used for invitation codes and portal validation)
    * Avoids querying 11 related tables when only basic metadata is needed.
    */
@@ -355,7 +420,7 @@ export class SupabaseSyncService {
         let campaignRow: any = null;
         const initialCampRes = await supabase
           .from('campaigns')
-          .select('code, title, subtitle, description, system, dm_id, calendar_system, ai_config, active_players, created_at, updated_at, dossier')
+          .select('code, title, subtitle, description, system, dm_id, calendar_system, ai_config, active_players, created_at, updated_at')
           .or(orFilterCodes)
           .maybeSingle();
 
@@ -369,7 +434,7 @@ export class SupabaseSyncService {
           try {
             const allCampsRes = await supabase
               .from('campaigns')
-              .select('code, title, subtitle, description, system, dm_id, calendar_system, ai_config, active_players, created_at, updated_at, dossier')
+              .select('code, title, subtitle, description, system, dm_id, calendar_system, ai_config, active_players, created_at, updated_at')
               .limit(50);
             if (allCampsRes.data && allCampsRes.data.length > 0) {
               const targetSlug = slugifyCampaignTitle(campaignTitleOrSlug || campaignCode);
@@ -1229,7 +1294,7 @@ export class SupabaseSyncService {
       };
       const { error } = await supabase.from('sessions').update(payload).eq('id', sessionId);
       if (error) return handleSupabaseError('Error patching session fields', error);
-      if (code) this.invalidateCampaignDataCache(code);
+      if (code) this.updateCachedItem(code, 'sessions', { id: sessionId, ...patch });
       return true;
     } catch (err) {
       return handleSupabaseError('Failed to patch session fields', err);
@@ -1249,7 +1314,7 @@ export class SupabaseSyncService {
       };
       const { error } = await supabase.from('notes').update(payload).eq('id', noteId);
       if (error) return handleSupabaseError('Error patching note fields', error);
-      if (code) this.invalidateCampaignDataCache(code);
+      if (code) this.updateCachedItem(code, 'notes', { id: noteId, ...patch });
       return true;
     } catch (err) {
       return handleSupabaseError('Failed to patch note fields', err);
@@ -1269,7 +1334,7 @@ export class SupabaseSyncService {
       };
       const { error } = await supabase.from('entities').update(payload).eq('id', entityId);
       if (error) return handleSupabaseError('Error patching entity fields', error);
-      if (code) this.invalidateCampaignDataCache(code);
+      if (code) this.updateCachedItem(code, 'entities', { id: entityId, ...patch });
       return true;
     } catch (err) {
       return handleSupabaseError('Failed to patch entity fields', err);
@@ -1291,7 +1356,6 @@ export class SupabaseSyncService {
       if (code) query = query.eq('campaign_code', code);
       const { error } = await query;
       if (error) return handleSupabaseError('Error patching character bio fields', error);
-      if (code) this.invalidateCampaignDataCache(code);
       return true;
     } catch (err) {
       return handleSupabaseError('Failed to patch character bio fields', err);
@@ -1311,7 +1375,6 @@ export class SupabaseSyncService {
       };
       const { error } = await supabase.from('maps').update(payload).eq('id', mapId);
       if (error) return handleSupabaseError('Error patching map fields', error);
-      if (code) this.invalidateCampaignDataCache(code);
       return true;
     } catch (err) {
       return handleSupabaseError('Failed to patch map fields', err);
@@ -1332,7 +1395,7 @@ export class SupabaseSyncService {
       const { error } = await safeUpsert('sessions', payload, { onConflict: 'id' });
       if (error) return handleSupabaseError('Error saving session', error);
 
-      this.invalidateCampaignDataCache(code);
+      this.updateCachedItem(code, 'sessions', session);
       return true;
     } catch (err) {
       return handleSupabaseError('Failed to save session', err);
@@ -1346,7 +1409,7 @@ export class SupabaseSyncService {
     if (!isSupabaseConfigured() || !sessionId) return false;
     try {
       const { error } = await supabase.from('sessions').delete().eq('id', sessionId);
-      if (campaignCode) this.invalidateCampaignDataCache(campaignCode);
+      if (campaignCode) this.updateCachedItem(campaignCode, 'sessions', { id: sessionId }, true);
       return !error;
     } catch {
       return false;
@@ -1366,7 +1429,7 @@ export class SupabaseSyncService {
       const { error } = await safeUpsert('notes', payload, { onConflict: 'id' });
       if (error) return handleSupabaseError('Error saving note', error);
 
-      this.invalidateCampaignDataCache(code);
+      this.updateCachedItem(code, 'notes', note);
       return true;
     } catch (err) {
       return handleSupabaseError('Failed to save note', err);
@@ -1380,7 +1443,7 @@ export class SupabaseSyncService {
     if (!isSupabaseConfigured() || !noteId) return false;
     try {
       const { error } = await supabase.from('notes').delete().eq('id', noteId);
-      if (campaignCode) this.invalidateCampaignDataCache(campaignCode);
+      if (campaignCode) this.updateCachedItem(campaignCode, 'notes', { id: noteId }, true);
       return !error;
     } catch {
       return false;
@@ -1399,7 +1462,7 @@ export class SupabaseSyncService {
 
       const { error } = await safeUpsert('entities', payload, { onConflict: 'id' });
       if (error) return handleSupabaseError('Error saving entity', error);
-      this.invalidateCampaignDataCache(code);
+      this.updateCachedItem(code, 'entities', entity);
       return true;
     } catch (err) {
       return handleSupabaseError('Failed to save entity', err);
@@ -1416,7 +1479,7 @@ export class SupabaseSyncService {
       const payloads = entities.map((e) => entityModelToRow(e, code));
       const { error } = await safeUpsert('entities', payloads, { onConflict: 'id' });
       if (error) return handleSupabaseError('Error saving entities in bulk', error);
-      this.invalidateCampaignDataCache(code);
+      this.updateCachedEntities(code, entities);
       return true;
     } catch (err) {
       return handleSupabaseError('Failed to save entities in bulk', err);
@@ -1426,10 +1489,11 @@ export class SupabaseSyncService {
   /**
    * Delete a single entity
    */
-  static async deleteEntity(entityId: string): Promise<boolean> {
+  static async deleteEntity(entityId: string, campaignCode?: string): Promise<boolean> {
     if (!isSupabaseConfigured()) return false;
     try {
       const { error } = await supabase.from('entities').delete().eq('id', entityId);
+      if (campaignCode) this.updateCachedItem(campaignCode, 'entities', { id: entityId }, true);
       return !error;
     } catch {
       return false;
@@ -1469,6 +1533,7 @@ export class SupabaseSyncService {
         return handleSupabaseError('Error saving chapter', error);
       }
 
+      this.updateCachedItem(cleanCode, 'chapters', chapter);
       return true;
     } catch (err) {
       return handleSupabaseError('Failed to save chapter', err);
@@ -1476,46 +1541,23 @@ export class SupabaseSyncService {
   }
 
   /**
-   * Persists chapter cover image URL to campaign dossier and chapters table
+   * Persists chapter cover image URL to chapters table
    */
   static async saveChapterCover(campaignCode: string, chapterId: string, coverImageUrl: string): Promise<boolean> {
     if (!isSupabaseConfigured() || !campaignCode || !chapterId) return false;
     try {
-      const code = campaignCode.trim();
-      const cleanCode = code.toUpperCase();
+      const cleanCode = campaignCode.trim().toUpperCase();
 
-      // 1. Update chapters table
-      supabase
+      const { error } = await supabase
         .from('chapters')
         .update({ cover_image_url: coverImageUrl, updated_at: new Date().toISOString() })
-        .eq('id', chapterId)
-        .then(() => {}, () => {});
+        .eq('id', chapterId);
 
-      // 2. Update campaign dossier
-      const { data: camp } = await supabase
-        .from('campaigns')
-        .select('dossier')
-        .or(`code.eq.${cleanCode},code.eq.${code}`)
-        .maybeSingle();
-
-      const dossier = camp?.dossier || {};
-      const chaptersMeta = dossier.chaptersMeta || {};
-      chaptersMeta[chapterId] = { ...(chaptersMeta[chapterId] || {}), coverImageUrl };
-
-      if (Array.isArray(dossier.chapters)) {
-        dossier.chapters = dossier.chapters.map((c: any) =>
-          c && c.id === chapterId ? { ...c, coverImageUrl } : c
-        );
+      if (error) {
+        return handleSupabaseError('Error updating chapter cover', error);
       }
 
-      await supabase
-        .from('campaigns')
-        .update({
-          dossier: { ...dossier, chaptersMeta },
-          updated_at: new Date().toISOString(),
-        })
-        .or(`code.eq.${cleanCode},code.eq.${code}`);
-
+      this.updateCachedItem(cleanCode, 'chapters', { id: chapterId, coverImageUrl });
       return true;
     } catch (err) {
       return handleSupabaseError('Failed to save chapter cover', err);
@@ -2093,36 +2135,16 @@ export class SupabaseSyncService {
       const payload = characterBioModelToRow(bio, code);
       const { error } = await safeUpsert('character_bios', payload, { onConflict: 'campaign_code,player_id' });
       if (error) {
-        console.warn('[Supabase] Warning saving to character_bios table, falling back to dossier:', error.message);
+        console.warn('[Supabase] Warning saving to character_bios table:', error.message);
       }
-
-      // Dossier backup persistence
-      try {
-        const { data: camp } = await supabase.from('campaigns').select('dossier').eq('code', code).maybeSingle();
-        const dossier = camp?.dossier || {};
-        const currentBios: any[] = Array.isArray(dossier.characterBios) ? [...dossier.characterBios] : [];
-        const idx = currentBios.findIndex((b: any) => b && (b.playerId === bio.playerId || b.id === bio.playerId));
-        if (idx !== -1) {
-          currentBios[idx] = { ...currentBios[idx], ...bio };
-        } else {
-          currentBios.push(bio);
-        }
-        await supabase.from('campaigns').update({
-          dossier: { ...dossier, characterBios: currentBios },
-          updated_at: new Date().toISOString(),
-        }).eq('code', code);
-      } catch (dErr) {
-        console.warn('[Supabase] Dossier bio backup warning:', dErr);
-      }
-
-      return true;
+      return !error;
     } catch (err) {
       return handleSupabaseError('Failed to save single character bio', err);
     }
   }
 
   /**
-   * Persists character bios into separate character_bios table atomically with dossier backup
+   * Persists character bios into separate character_bios table atomically
    */
   static async saveCharacterBios(campaignCode: string, bios: any[]): Promise<boolean> {
     if (!isSupabaseConfigured() || !campaignCode) return false;
@@ -2136,19 +2158,8 @@ export class SupabaseSyncService {
         const { error } = await safeUpsert('character_bios', payloads, { onConflict: 'campaign_code,player_id' });
         if (error) {
           console.warn('[Supabase] Warning bulk saving character_bios:', error.message);
+          return false;
         }
-      }
-
-      // Dossier backup persistence
-      try {
-        const { data: camp } = await supabase.from('campaigns').select('dossier').eq('code', code).maybeSingle();
-        const dossier = camp?.dossier || {};
-        await supabase.from('campaigns').update({
-          dossier: { ...dossier, characterBios: bios || [] },
-          updated_at: new Date().toISOString(),
-        }).eq('code', code);
-      } catch (dErr) {
-        console.warn('[Supabase] Dossier bulk bios backup warning:', dErr);
       }
 
       return true;
@@ -2251,13 +2262,6 @@ export class SupabaseSyncService {
       });
 
       await Promise.all(upsertPromises);
-
-      const { data: camp } = await supabase.from('campaigns').select('dossier').eq('code', code).maybeSingle();
-      const dossier = camp?.dossier || {};
-      await supabase.from('campaigns').update({
-        dossier: { ...dossier, familyRelations: relations || [] },
-        updated_at: new Date().toISOString(),
-      }).eq('code', code);
       return true;
     } catch (err) {
       console.error('[Supabase] Failed to save family relations:', err);
@@ -2272,18 +2276,6 @@ export class SupabaseSyncService {
     if (!isSupabaseConfigured() || !relationId) return false;
     try {
       const { error } = await supabase.from('family_relations').delete().eq('id', relationId);
-      if (campaignCode) {
-        const code = campaignCode.trim();
-        const { data: camp } = await supabase.from('campaigns').select('dossier').eq('code', code).maybeSingle();
-        const dossier = camp?.dossier || {};
-        if (Array.isArray(dossier.familyRelations)) {
-          const updated = dossier.familyRelations.filter((r: any) => r.id !== relationId);
-          await supabase.from('campaigns').update({
-            dossier: { ...dossier, familyRelations: updated },
-            updated_at: new Date().toISOString(),
-          }).eq('code', code);
-        }
-      }
       return !error;
     } catch {
       return false;
@@ -2307,7 +2299,7 @@ export class SupabaseSyncService {
   }
 
   /**
-   * Persists world lore articles into campaign dossier and world_lore_articles table
+   * Persists world lore articles into world_lore_articles table
    */
   static async saveWorldLoreArticles(campaignCode: string, articles: any[]): Promise<boolean> {
     if (!isSupabaseConfigured() || !campaignCode) return false;
@@ -2322,13 +2314,6 @@ export class SupabaseSyncService {
       });
 
       await Promise.all(upsertPromises);
-
-      const { data: camp } = await supabase.from('campaigns').select('dossier').eq('code', code).maybeSingle();
-      const dossier = camp?.dossier || {};
-      await supabase.from('campaigns').update({
-        dossier: { ...dossier, worldLoreArticles: articles || [] },
-        updated_at: new Date().toISOString(),
-      }).eq('code', code);
       return true;
     } catch (err) {
       console.error('[Supabase] Failed to save world lore articles:', err);
@@ -2343,18 +2328,6 @@ export class SupabaseSyncService {
     if (!isSupabaseConfigured() || !articleId) return false;
     try {
       const { error } = await supabase.from('world_lore_articles').delete().eq('id', articleId);
-      if (campaignCode) {
-        const code = campaignCode.trim();
-        const { data: camp } = await supabase.from('campaigns').select('dossier').eq('code', code).maybeSingle();
-        const dossier = camp?.dossier || {};
-        if (Array.isArray(dossier.worldLoreArticles)) {
-          const updated = dossier.worldLoreArticles.filter((a: any) => a._id !== articleId);
-          await supabase.from('campaigns').update({
-            dossier: { ...dossier, worldLoreArticles: updated },
-            updated_at: new Date().toISOString(),
-          }).eq('code', code);
-        }
-      }
       return !error;
     } catch {
       return false;
@@ -2504,8 +2477,7 @@ export class SupabaseSyncService {
         console.warn('[Supabase] Error deleting chapter:', error.message);
       }
       if (campaignCode) {
-        this.invalidateCampaignDataCache(campaignCode);
-        this.removeChapterMeta(campaignCode, chapterId).catch(() => {});
+        this.updateCachedItem(campaignCode, 'chapters', { id: chapterId }, true);
       }
       return !error;
     } catch {
@@ -2573,113 +2545,38 @@ export class SupabaseSyncService {
   }
 
   /**
-   * Removes session metadata from dossier
+   * Removes session metadata (no-op as session columns live in sessions table)
    */
-  static async removeSessionMeta(campaignCode: string, sessionId: string): Promise<boolean> {
-    if (!isSupabaseConfigured() || !campaignCode || !sessionId) return false;
-    try {
-      const code = campaignCode.trim();
-      const { data: camp } = await supabase.from('campaigns').select('dossier').eq('code', code).maybeSingle();
-      const dossier = camp?.dossier || {};
-      if (dossier.sessionsMeta && dossier.sessionsMeta[sessionId]) {
-        delete dossier.sessionsMeta[sessionId];
-        await supabase.from('campaigns').update({
-          dossier,
-          updated_at: new Date().toISOString(),
-        }).eq('code', code);
-      }
-      return true;
-    } catch {
-      return false;
-    }
+  static async removeSessionMeta(_campaignCode: string, _sessionId: string): Promise<boolean> {
+    return true;
   }
 
   /**
-   * Persists note metadata (tags, images, pinned, canonState, dmOnly) into campaign dossier
+   * Persists note metadata (no-op as note tags/images/pinned live directly in notes table)
    */
-  static async saveNoteMeta(campaignCode: string, noteId: string, meta: any): Promise<boolean> {
-    if (!isSupabaseConfigured() || !campaignCode || !noteId) return false;
-    try {
-      const code = campaignCode.trim();
-      const { data: camp } = await supabase.from('campaigns').select('dossier').eq('code', code).maybeSingle();
-      const dossier = camp?.dossier || {};
-      const notesMeta = dossier.notesMeta || {};
-      notesMeta[noteId] = { ...(notesMeta[noteId] || {}), ...meta };
-      await supabase.from('campaigns').update({
-        dossier: { ...dossier, notesMeta },
-        updated_at: new Date().toISOString(),
-      }).eq('code', code);
-      return true;
-    } catch (err) {
-      console.error('[Supabase] Failed to save note meta:', err);
-      return false;
-    }
+  static async saveNoteMeta(_campaignCode: string, _noteId: string, _meta: any): Promise<boolean> {
+    return true;
   }
 
   /**
-   * Removes note metadata from dossier
+   * Removes note metadata (no-op)
    */
-  static async removeNoteMeta(campaignCode: string, noteId: string): Promise<boolean> {
-    if (!isSupabaseConfigured() || !campaignCode || !noteId) return false;
-    try {
-      const code = campaignCode.trim();
-      const { data: camp } = await supabase.from('campaigns').select('dossier').eq('code', code).maybeSingle();
-      const dossier = camp?.dossier || {};
-      if (dossier.notesMeta && dossier.notesMeta[noteId]) {
-        delete dossier.notesMeta[noteId];
-        await supabase.from('campaigns').update({
-          dossier,
-          updated_at: new Date().toISOString(),
-        }).eq('code', code);
-      }
-      return true;
-    } catch {
-      return false;
-    }
+  static async removeNoteMeta(_campaignCode: string, _noteId: string): Promise<boolean> {
+    return true;
   }
 
   /**
-   * Removes chapter metadata from dossier
+   * Removes chapter metadata (no-op as chapters live in chapters table)
    */
-  static async removeChapterMeta(campaignCode: string, chapterId: string): Promise<boolean> {
-    if (!isSupabaseConfigured() || !campaignCode || !chapterId) return false;
-    try {
-      const code = campaignCode.trim();
-      const { data: camp } = await supabase.from('campaigns').select('dossier').eq('code', code).maybeSingle();
-      const dossier = camp?.dossier || {};
-      if (dossier.chaptersMeta && dossier.chaptersMeta[chapterId]) {
-        delete dossier.chaptersMeta[chapterId];
-        await supabase.from('campaigns').update({
-          dossier,
-          updated_at: new Date().toISOString(),
-        }).eq('code', code);
-      }
-      return true;
-    } catch {
-      return false;
-    }
+  static async removeChapterMeta(_campaignCode: string, _chapterId: string): Promise<boolean> {
+    return true;
   }
 
   /**
-   * Removes map metadata from dossier
+   * Removes map metadata (no-op as maps live in maps table)
    */
-  static async removeMapMeta(campaignCode: string, mapId: string): Promise<boolean> {
-    if (!isSupabaseConfigured() || !campaignCode || !mapId) return false;
-    try {
-      const code = campaignCode.trim();
-      const { data: camp } = await supabase.from('campaigns').select('dossier').eq('code', code).maybeSingle();
-      const dossier = camp?.dossier || {};
-      if (dossier.mapsMeta && dossier.mapsMeta[mapId]) {
-        delete dossier.mapsMeta[mapId];
-        await supabase.from('campaigns').update({
-          dossier,
-          updated_at: new Date().toISOString(),
-        }).eq('code', code);
-      }
-      return true;
-    } catch {
-      return false;
-    }
+  static async removeMapMeta(_campaignCode: string, _mapId: string): Promise<boolean> {
+    return true;
   }
 
   /**

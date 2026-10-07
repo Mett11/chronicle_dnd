@@ -2354,17 +2354,6 @@ export function Storyline() {
           </div>
 
           <div className="flex items-center gap-1.5 overflow-x-auto">
-            <button
-              type="button"
-              onClick={() => handleSelectChapter('all')}
-              className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
-                selectedChapterId === 'all'
-                  ? 'bg-surface-2 text-content-1 border border-surface-3'
-                  : 'text-content-3 hover:text-content-1'
-              }`}
-            >
-              Tutti
-            </button>
             {chapters.map((chap) => {
               const isSelected = selectedChapterId === chap.id;
               return (
@@ -2388,62 +2377,6 @@ export function Storyline() {
             })}
           </div>
         </div>
-
-        {/* Selected Chapter Opening Hero Banner */}
-        {(() => {
-          if (selectedChapterId === 'all' || selectedChapterId === 'unassigned') return null;
-          const activeChap = chapters.find((c) => c.id === selectedChapterId || c.name === selectedChapterId);
-          if (!activeChap) return null;
-          const count = sessions.filter((s) => s.chapterId === activeChap.id || s.chapterName === activeChap.name).length;
-
-          return (
-            <div className="relative w-full rounded-2xl overflow-hidden border border-surface-2 bg-surface-1 shadow-md">
-              {activeChap.coverImageUrl && activeChap.coverImageUrl.trim() ? (
-                <div className="relative h-28 sm:h-36 w-full overflow-hidden">
-                  <img
-                    src={activeChap.coverImageUrl}
-                    alt={activeChap.name}
-                    className="w-full h-full object-cover"
-                    referrerPolicy="no-referrer"
-                  />
-                  <div className="absolute inset-0 bg-gradient-to-t from-surface-1 via-surface-1/60 to-transparent" />
-                </div>
-              ) : null}
-
-              <div className="p-3.5 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 relative">
-                <div className="space-y-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span
-                      className="w-2.5 h-2.5 rounded-full inline-block shrink-0"
-                      style={{ backgroundColor: activeChap.color || '#6366f1' }}
-                    />
-                    <h3 className="font-serif font-bold text-sm sm:text-base text-content-1 truncate">
-                      {activeChap.name}
-                    </h3>
-                    <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-surface-2 text-content-2 border border-surface-3">
-                      {count} {count === 1 ? 'Sessione' : 'Sessioni'}
-                    </span>
-                  </div>
-                  {activeChap.description && (
-                    <p className="text-xs text-content-3 line-clamp-2 font-sans">
-                      {activeChap.description}
-                    </p>
-                  )}
-                </div>
-
-                <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => handleSelectChapter('all')}
-                    className="px-2.5 py-1 text-xs text-content-3 hover:text-content-1 font-mono hover:bg-surface-2 rounded-lg transition-colors cursor-pointer"
-                  >
-                    Mostra Tutta la Campagna
-                  </button>
-                </div>
-              </div>
-            </div>
-          );
-        })()}
 
         {/* Controls */}
         <div className="flex flex-col sm:flex-row items-center justify-between gap-2">

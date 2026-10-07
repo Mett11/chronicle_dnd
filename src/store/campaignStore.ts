@@ -3862,6 +3862,52 @@ export class CampaignManager {
     return this.addEntity(entity);
   }
 
+  /**
+   * Egress Optimization: Batch creation of multiple entities in a single atomic local write and single bulk Supabase call.
+   */
+  static addEntitiesBatch(entityItems: Partial<Entity>[]): Entity[] {
+    if (!Array.isArray(entityItems) || entityItems.length === 0) return [];
+    const currentEntities = this.getEntities();
+    const createdEntities: Entity[] = [];
+
+    entityItems.forEach((entity) => {
+      const uniqueSuffix = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID().slice(0, 8) : Math.random().toString(36).substring(2, 9);
+      const newEntityId = `ent_${Date.now()}_${uniqueSuffix}_${Math.random().toString(36).substring(2, 5)}`;
+      const newEntity: Entity = {
+        _id: newEntityId,
+        type: entity.type || "npc",
+        name: entity.name?.trim() || "Nuova Entità",
+        aliases: entity.aliases || [],
+        status: entity.status || "alive",
+        progressNote: entity.progressNote || "",
+        color: entity.color || (entity.type === 'place' ? "#3B82F6" : "#D4AF37"),
+        images: entity.images || [],
+        questScope: entity.questScope || "party",
+        assigneePlayerId: entity.assigneePlayerId,
+        assigneePlayerName: entity.assigneePlayerName,
+        location: entity.location,
+        mapId: entity.mapId,
+        pinId: entity.pinId,
+        pinCategory: entity.pinCategory,
+        pinX: entity.pinX,
+        pinY: entity.pinY,
+        isMap: entity.isMap,
+      };
+      createdEntities.push(newEntity);
+    });
+
+    const updated = [...createdEntities, ...currentEntities];
+    this.saveEntitiesLocalOnly(updated);
+
+    if (isSupabaseConfigured() && createdEntities.length > 0) {
+      const code = this.getActiveCampaignCode() || 'default';
+      createdEntities.forEach((e) => markLocalWrite(e._id));
+      SupabaseSyncService.saveEntities(code, createdEntities);
+    }
+
+    return createdEntities;
+  }
+
   static addEntity(entity: Partial<Entity>): Entity {
     const entities = this.getEntities();
     const uniqueSuffix = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID().slice(0, 8) : Math.random().toString(36).substring(2, 9);
