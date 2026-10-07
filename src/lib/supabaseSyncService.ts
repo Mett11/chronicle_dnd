@@ -1737,18 +1737,41 @@ export class SupabaseSyncService {
 
         // Also get memberships from campaign_members (verified against real campaigns)
         const memberRes = await this.getUserCampaigns(effectiveUserId, cleanEmail || data.email);
-        const dmCampaigns = Array.from(new Set([...(Array.isArray(data.dm_campaigns) ? data.dm_campaigns : []), ...memberRes.dmCampaigns]));
-        const joinedCampaigns = Array.from(new Set([...(Array.isArray(data.joined_campaigns) ? data.joined_campaigns : []), ...memberRes.joinedCampaigns]));
 
-        // Verify campaign_profiles against active campaigns
-        const { data: realCampaigns } = await supabase.from('campaigns').select('code');
+        // Verify campaign_profiles and joined/dm campaigns against active campaigns & expulsion lists
+        const { data: realCampaigns } = await supabase.from('campaigns').select('code, dossier');
         const realCodes = new Set((realCampaigns || []).map((rc: any) => (rc.code || '').trim().toUpperCase()));
+        const expelledMap = new Map<string, Set<string>>();
+        (realCampaigns || []).forEach((rc: any) => {
+          const code = (rc.code || '').trim().toUpperCase();
+          const expelledList = Array.isArray(rc.dossier?.expelledAccountIds) ? rc.dossier.expelledAccountIds : [];
+          if (code && expelledList.length > 0) {
+            const s = new Set<string>();
+            expelledList.forEach((id: any) => s.add(String(id).toLowerCase().trim()));
+            expelledMap.set(code, s);
+          }
+        });
+
+        const userLowId = String(effectiveUserId || '').toLowerCase();
+        const userLowEmail = String(cleanEmail || data.email || '').toLowerCase();
+        const isExpelledFrom = (code: string) => {
+          const upper = code.toUpperCase();
+          const s = expelledMap.get(upper);
+          if (!s) return false;
+          return s.has(userLowId) || (Boolean(userLowEmail) && s.has(userLowEmail));
+        };
+
+        const rawDmCampaigns = Array.from(new Set([...(Array.isArray(data.dm_campaigns) ? data.dm_campaigns : []), ...memberRes.dmCampaigns]));
+        const rawJoinedCampaigns = Array.from(new Set([...(Array.isArray(data.joined_campaigns) ? data.joined_campaigns : []), ...memberRes.joinedCampaigns]));
+
+        const dmCampaigns = rawDmCampaigns.filter((c) => !isExpelledFrom(c));
+        const joinedCampaigns = rawJoinedCampaigns.filter((c) => !isExpelledFrom(c));
 
         const rawProfiles = data.campaign_profiles || {};
         const cleanProfiles: Record<string, any> = {};
         let profilesNeedClean = false;
         for (const [key, val] of Object.entries(rawProfiles)) {
-          if (realCodes.has(key.toUpperCase())) {
+          if (realCodes.has(key.toUpperCase()) && !isExpelledFrom(key)) {
             cleanProfiles[key] = val;
           } else {
             profilesNeedClean = true;
@@ -1850,11 +1873,24 @@ export class SupabaseSyncService {
           }
         }
 
-        // Check against real active campaigns so orphaned campaign_members are never loaded or presented
+        // Check against real active campaigns so orphaned or expelled campaign_members are never loaded or presented
         const { data: realCampaigns } = await supabase
           .from('campaigns')
-          .select('code, dm_id');
+          .select('code, dm_id, dossier');
         const realCodes = new Set((realCampaigns || []).map((rc: any) => (rc.code || '').trim().toUpperCase()));
+        const expelledCodes = new Set<string>();
+
+        (realCampaigns || []).forEach((rc: any) => {
+          const code = (rc.code || '').trim().toUpperCase();
+          const expelledList = Array.isArray(rc.dossier?.expelledAccountIds) ? rc.dossier.expelledAccountIds : [];
+          if (code && expelledList.length > 0) {
+            const expelledSet = new Set(expelledList.map((id: any) => String(id).toLowerCase().trim()));
+            const isExpelled = idList.some((id) => expelledSet.has(id.toLowerCase())) || (cleanEmail && expelledSet.has(cleanEmail));
+            if (isExpelled) {
+              expelledCodes.add(code);
+            }
+          }
+        });
 
         const dmCampaigns: string[] = [];
         const joinedCampaigns: string[] = [];
@@ -1863,7 +1899,7 @@ export class SupabaseSyncService {
         // Check if user is DM of any campaign directly via dm_id
         (realCampaigns || []).forEach((rc: any) => {
           const code = (rc.code || '').trim().toUpperCase();
-          if (code && rc.dm_id && idList.includes(rc.dm_id)) {
+          if (code && !expelledCodes.has(code) && rc.dm_id && idList.includes(rc.dm_id)) {
             if (!dmCampaigns.includes(code)) dmCampaigns.push(code);
             if (!joinedCampaigns.includes(code)) joinedCampaigns.push(code);
           }
@@ -1871,7 +1907,7 @@ export class SupabaseSyncService {
 
         memberRows.forEach((row: any) => {
           const code = (row.campaign_code || '').trim().toUpperCase();
-          if (!code) return;
+          if (!code || expelledCodes.has(code)) return;
           if (realCodes.has(code)) {
             if (row.role === 'dm' && !dmCampaigns.includes(code)) {
               dmCampaigns.push(code);
@@ -1988,19 +2024,56 @@ export class SupabaseSyncService {
         if (error || !Array.isArray(data)) {
           return [];
         }
-        const result = data.map((row) => ({
-          id: row.id,
-          email: row.email,
-          characterName: row.character_name,
-          isDm: Boolean(row.is_dm),
-          dmCampaigns: Array.isArray(row.dm_campaigns) ? row.dm_campaigns : [],
-          joinedCampaigns: Array.isArray(row.joined_campaigns) ? row.joined_campaigns : [],
-          color: row.color || '#6366f1',
-          avatarUrl: row.avatar_url || '',
-          campaignProfiles: row.campaign_profiles || {},
-          preferences: row.preferences || {},
-          createdAt: row.created_at || new Date().toISOString(),
-        }));
+
+        const { data: realCamps } = await supabase.from('campaigns').select('code, dossier');
+        const expelledMap = new Map<string, Set<string>>();
+        (realCamps || []).forEach((rc: any) => {
+          const code = (rc.code || '').trim().toUpperCase();
+          const expelledList = Array.isArray(rc.dossier?.expelledAccountIds) ? rc.dossier.expelledAccountIds : [];
+          if (code && expelledList.length > 0) {
+            const s = new Set<string>();
+            expelledList.forEach((id: any) => s.add(String(id).toLowerCase().trim()));
+            expelledMap.set(code, s);
+          }
+        });
+
+        const result = data.map((row) => {
+          const userLowId = String(row.id || '').toLowerCase();
+          const userLowEmail = String(row.email || '').toLowerCase();
+          const isExpelledFrom = (code: string) => {
+            const upper = code.toUpperCase();
+            const s = expelledMap.get(upper);
+            if (!s) return false;
+            return s.has(userLowId) || (Boolean(userLowEmail) && s.has(userLowEmail));
+          };
+
+          const rawDm = Array.isArray(row.dm_campaigns) ? row.dm_campaigns : [];
+          const rawJoined = Array.isArray(row.joined_campaigns) ? row.joined_campaigns : [];
+          const rawProfiles = row.campaign_profiles || {};
+
+          const dmCampaigns = rawDm.filter((c: string) => !isExpelledFrom(c));
+          const joinedCampaigns = rawJoined.filter((c: string) => !isExpelledFrom(c));
+          const campaignProfiles = { ...rawProfiles };
+          Object.keys(campaignProfiles).forEach((pCode) => {
+            if (isExpelledFrom(pCode)) {
+              delete campaignProfiles[pCode];
+            }
+          });
+
+          return {
+            id: row.id,
+            email: row.email,
+            characterName: row.character_name,
+            isDm: Boolean(row.is_dm || dmCampaigns.length > 0),
+            dmCampaigns,
+            joinedCampaigns,
+            color: row.color || '#6366f1',
+            avatarUrl: row.avatar_url || '',
+            campaignProfiles,
+            preferences: row.preferences || {},
+            createdAt: row.created_at || new Date().toISOString(),
+          };
+        });
         this.userAccountsCache = { data: result, timestamp: Date.now() };
         return result;
       } catch (err) {
@@ -2032,12 +2105,13 @@ export class SupabaseSyncService {
       try {
         const { data, error } = await supabase
           .from('campaigns')
-          .select('code, title, subtitle, description, system, dm_id, active_players, created_at, updated_at');
+          .select('code, title, subtitle, description, system, dm_id, active_players, dossier, created_at, updated_at');
         if (error || !Array.isArray(data)) return [];
         const result = data.map((c) => {
           const activePlayers = Array.isArray(c.active_players) ? c.active_players : [];
           const dmPlayer = activePlayers.find((p: any) => p && (p.isDm || (c.dm_id && (p.id === c.dm_id || p._id === c.dm_id))));
           const activePlayerEmails = activePlayers.map((p: any) => (p?.email || '').toLowerCase().trim()).filter(Boolean);
+          const expelledAccountIds = Array.isArray(c.dossier?.expelledAccountIds) ? c.dossier.expelledAccountIds : [];
 
           return {
             code: c.code,
@@ -2051,7 +2125,7 @@ export class SupabaseSyncService {
             dmName: dmPlayer?.characterName || undefined,
             dmIsPlayer: dmPlayer ? Boolean(dmPlayer.isDm) : undefined,
             activePlayerEmails,
-            expelledAccountIds: [],
+            expelledAccountIds,
           };
         });
         this.allCampaignsCache = { data: result, timestamp: Date.now() };
