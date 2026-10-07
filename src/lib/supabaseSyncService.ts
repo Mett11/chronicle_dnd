@@ -644,18 +644,13 @@ export class SupabaseSyncService {
         dmIsPlayer: dossier.dmIsPlayer !== undefined ? Boolean(dossier.dmIsPlayer) : undefined,
         calendarSystem: campRow.calendar_system || {},
         aiConfig: campRow.ai_config || {},
-        expelledAccountIds: Array.isArray(campRow.expelled_account_ids)
-          ? campRow.expelled_account_ids
-          : (Array.isArray(dossier.expelledAccountIds) ? dossier.expelledAccountIds : []),
+        expelledAccountIds: Array.isArray(dossier.expelledAccountIds) ? dossier.expelledAccountIds : [],
         activePlayers: (() => {
           const raw = Array.isArray(campRow.active_players) && campRow.active_players.length > 0
             ? campRow.active_players
             : (Array.isArray(dossier.activePlayers) ? dossier.activePlayers : []);
           const expelled = new Set(
-            [
-              ...(Array.isArray(campRow.expelled_account_ids) ? campRow.expelled_account_ids : []),
-              ...(Array.isArray(dossier.expelledAccountIds) ? dossier.expelledAccountIds : []),
-            ].map((id: string) => String(id).toLowerCase())
+            (Array.isArray(dossier.expelledAccountIds) ? dossier.expelledAccountIds : []).map((id: string) => String(id).toLowerCase())
           );
           return raw.filter((p: any) => {
             if (!p || !p.id) return false;
@@ -1055,10 +1050,10 @@ export class SupabaseSyncService {
         active_players: payloadData.activePlayers !== undefined ? payloadData.activePlayers : existing?.active_players || [],
         title_font: payloadData.titleFont || payloadData.title_font || existing?.title_font || 'cinzel',
         title_effect: payloadData.titleEffect || payloadData.title_effect || existing?.title_effect || 'default',
-        expelled_account_ids: payloadData.expelledAccountIds || payloadData.expelled_account_ids || existing?.expelled_account_ids || [],
         dossier: {
           ...existingDossier,
           ...(payloadData.dossier || {}),
+          expelledAccountIds: payloadData.expelledAccountIds || payloadData.expelled_account_ids || existingDossier.expelledAccountIds || [],
           dmIsPlayer: payloadData.dmIsPlayer !== undefined ? payloadData.dmIsPlayer : (existingDossier.dmIsPlayer ?? undefined),
           characterBios: payloadData.characterBios || existingDossier.characterBios || [],
           familyRelations: payloadData.familyRelations || existingDossier.familyRelations || [],
@@ -1216,26 +1211,25 @@ export class SupabaseSyncService {
 
       await supabase.from('campaign_members').delete().eq('campaign_code', code).or(`user_id.eq.${userId}${cleanEmail ? `,user_id.eq.${cleanEmail}` : ''}`);
 
-      const { data: camp } = await supabase.from('campaigns').select('dossier, active_players, expelled_account_ids').eq('code', code).maybeSingle();
+      const { data: camp } = await supabase.from('campaigns').select('dossier, active_players').eq('code', code).maybeSingle();
       if (camp) {
+        const dossier = camp.dossier || {};
         const currentExpelled: string[] = Array.from(new Set([
-          ...(Array.isArray(camp.expelled_account_ids) ? camp.expelled_account_ids : []),
-          ...(Array.isArray(camp.dossier?.expelledAccountIds) ? camp.dossier.expelledAccountIds : []),
+          ...(Array.isArray(dossier.expelledAccountIds) ? dossier.expelledAccountIds : []),
           userId,
           ...(cleanEmail ? [cleanEmail] : []),
         ]));
 
-        const activePlayers = (camp.dossier?.activePlayers || camp.active_players || []).filter(
+        const activePlayers = (dossier.activePlayers || camp.active_players || []).filter(
           (p: any) => p.id !== userId && p._id !== userId && (!cleanEmail || p.email !== cleanEmail)
         );
-        const familyRelations = (camp.dossier?.familyRelations || []).filter(
+        const familyRelations = (dossier.familyRelations || []).filter(
           (r: any) => r.playerId !== userId && r.source_entity_id !== userId && (!cleanEmail || r.email !== cleanEmail)
         );
 
         await supabase.from('campaigns').update({
-          expelled_account_ids: currentExpelled,
           dossier: {
-            ...camp.dossier,
+            ...dossier,
             activePlayers,
             familyRelations,
             expelledAccountIds: currentExpelled,
@@ -1616,11 +1610,10 @@ export class SupabaseSyncService {
       const sanitized = Array.isArray(accounts) ? accounts.filter((a) => a && a.id) : [];
 
       // Fetch existing active_players from campaigns to avoid wiping out fellow party members
-      const { data: camp } = await supabase.from('campaigns').select('active_players, dossier, expelled_account_ids').eq('code', code).maybeSingle();
+      const { data: camp } = await supabase.from('campaigns').select('active_players, dossier').eq('code', code).maybeSingle();
       const existingPlayers: any[] = Array.isArray(camp?.active_players) ? camp.active_players : [];
 
       const expelledSet = new Set<string>([
-        ...(Array.isArray(camp?.expelled_account_ids) ? camp.expelled_account_ids : []),
         ...(Array.isArray(camp?.dossier?.expelledAccountIds) ? camp.dossier.expelledAccountIds : []),
       ].map((id: string) => String(id).toLowerCase()));
 
