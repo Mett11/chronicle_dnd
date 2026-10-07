@@ -8,6 +8,7 @@ import { extractTextFromContent, safeString } from '../lib/sanitize';
 import { generateCampaignShareToken, slugifyCampaignTitle, reconstructCampaignCodes } from '../lib/shareToken';
 import { isSupabaseConfigured } from '../lib/supabase';
 import { SupabaseSyncService } from '../lib/supabaseSyncService';
+import { AtmosphericLoader } from '../components/AtmosphericLoader';
 
 export function PublicPresentationView() {
   const { shareId, token, campaignCode: routeCode, code: altCode, campaignName, reversedCode } = useParams<{
@@ -310,15 +311,10 @@ export function PublicPresentationView() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-surface-0 flex flex-col items-center justify-center p-6 text-center select-none">
-        <div className="w-12 h-12 border-4 border-primary/30 border-t-primary rounded-full animate-spin mb-4" />
-        <h2 className="text-xl font-cinzel font-bold text-content-1 mb-2 tracking-wide">
-          Caricamento Cronaca della Campagna...
-        </h2>
-        <p className="text-xs font-mono uppercase tracking-wider text-content-3">
-          Preparazione presentazione in corso
-        </p>
-      </div>
+      <AtmosphericLoader
+        title={campaignTitle || "Cronaca di Campagna"}
+        subtitle="Sincronizzazione della Storyline Condivisa..."
+      />
     );
   }
 

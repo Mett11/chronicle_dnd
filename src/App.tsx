@@ -26,6 +26,7 @@ import { CloudSyncService } from './lib/cloudSync';
 import { PublicPresentationView } from './pages/PublicPresentationView';
 
 import { Skeleton, SkeletonCard } from './components/Skeleton';
+import { AtmosphericLoader } from './components/AtmosphericLoader';
 
 function AppContent() {
   // Public standalone Presentation Routes (Zero Auth / Direct Guest Access)
@@ -121,15 +122,11 @@ function AppContent() {
       }
       lastHydratedCampaignRef.current = campaignCode;
 
-      const hasLocalSessions = CampaignManager.getSessions().length > 0;
-      const hasLocalEntities = CampaignManager.getEntities().length > 0;
-      if (!hasLocalSessions && !hasLocalEntities) {
-        setIsCampaignHydrating(true);
-        // Safety timeout: Never leave user stuck on loading spinner for more than 4 seconds
-        safetyTimer = setTimeout(() => {
-          setIsCampaignHydrating(false);
-        }, 4000);
-      }
+      setIsCampaignHydrating(true);
+      // Safety timeout: Never leave user stuck on loading spinner for more than 4 seconds
+      safetyTimer = setTimeout(() => {
+        setIsCampaignHydrating(false);
+      }, 4000);
 
       CloudSyncService.init(() => {
         if (safetyTimer) clearTimeout(safetyTimer);
@@ -147,31 +144,10 @@ function AppContent() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-surface-0 flex flex-col p-6 sm:p-10 gap-6 relative z-0 max-w-7xl mx-auto">
-        <div className="flex items-center justify-between border-b border-surface-2 pb-6">
-          <div className="flex items-center gap-3">
-            <Skeleton variant="circular" className="w-12 h-12 shrink-0" />
-            <div className="space-y-2">
-              <Skeleton variant="text" className="w-48 h-6" />
-              <Skeleton variant="text" className="w-32 h-4" />
-            </div>
-          </div>
-          <Skeleton variant="badge" className="w-24 h-8 rounded-xl" />
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-          <div className="md:col-span-1 space-y-3">
-            <Skeleton variant="rectangular" className="h-10 w-full rounded-xl" />
-            <Skeleton variant="rectangular" className="h-10 w-full rounded-xl" />
-            <Skeleton variant="rectangular" className="h-10 w-full rounded-xl" />
-          </div>
-          <div className="md:col-span-3 space-y-4">
-            <SkeletonCard count={4} />
-          </div>
-        </div>
-        <div className="text-center mt-auto pt-6 border-t border-surface-2">
-          <p className="text-xs font-mono uppercase tracking-widest text-content-3">Caricamento Cronache e Mappe...</p>
-        </div>
-      </div>
+      <AtmosphericLoader
+        title="Cronache di Campagna"
+        subtitle="Inizializzazione Grimorio Cloud..."
+      />
     );
   }
 
@@ -198,15 +174,10 @@ function AppContent() {
 
   if (isCampaignHydrating) {
     return (
-      <div className="min-h-screen bg-surface-0 flex flex-col items-center justify-center p-6 text-center">
-        <div className="w-12 h-12 border-4 border-crimson-800/40 border-t-crimson-500 rounded-full animate-spin mb-4" />
-        <h2 className="text-xl font-cinzel font-bold text-white mb-2 tracking-wide">
-          Sincronizzazione della Campagna...
-        </h2>
-        <p className="text-sm font-sans text-content-3 max-w-sm">
-          Recupero sessioni, codex e cronache da Cloud Firestore in corso.
-        </p>
-      </div>
+      <AtmosphericLoader
+        title="Sincronizzazione della Campagna"
+        subtitle="Risveglio Database Supabase in corso..."
+      />
     );
   }
 
