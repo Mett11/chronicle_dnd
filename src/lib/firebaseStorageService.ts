@@ -2,6 +2,25 @@ import { supabase, isSupabaseConfigured } from './supabase';
 
 export const CHRONICLE_MEDIA_BUCKET = 'chronicle-media';
 
+/**
+ * Utility to decide between two image URLs.
+ * Always prefers a valid HTTP/HTTPS CDN URL over a Base64 data string.
+ */
+export function pickBestImageUrl(urlA?: string | null, urlB?: string | null): string {
+  const a = typeof urlA === 'string' ? urlA.trim() : '';
+  const b = typeof urlB === 'string' ? urlB.trim() : '';
+  if (!a) return b;
+  if (!b) return a;
+
+  const aIsHttp = a.startsWith('http://') || a.startsWith('https://');
+  const bIsHttp = b.startsWith('http://') || b.startsWith('https://');
+
+  if (aIsHttp && !bIsHttp) return a;
+  if (bIsHttp && !aIsHttp) return b;
+
+  return a;
+}
+
 export class SupabaseStorageService {
   /**
    * Helper to parse a public URL or relative path and extract the storage path within the bucket
@@ -164,3 +183,38 @@ export class SupabaseStorageService {
 
 export const FirebaseStorageService = SupabaseStorageService;
 export const MediaStorageService = SupabaseStorageService;
+
+/**
+ * Ensures that if a media value is a Base64 string, it is automatically uploaded
+ * to Supabase Storage and converted into a permanent CDN HTTP URL.
+ */
+export async function ensureMediaUploaded(
+  campaignCode: string,
+  folder: 'entities' | 'maps' | 'scrapbook' | 'audio' | 'general' | 'images',
+  urlOrBase64: string | undefined | null,
+  filenamePrefix: string = 'media'
+): Promise<string> {
+  if (!urlOrBase64 || typeof urlOrBase64 !== 'string') return '';
+  const trimmed = urlOrBase64.trim();
+  if (!trimmed) return '';
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    return trimmed;
+  }
+  if (trimmed.startsWith('data:')) {
+    try {
+      const code = campaignCode || 'DEFAULT';
+      const cdnUrl = await SupabaseStorageService.uploadMedia(
+        code,
+        folder,
+        `${filenamePrefix}_${Date.now()}.png`,
+        trimmed
+      );
+      if (cdnUrl && (cdnUrl.startsWith('http://') || cdnUrl.startsWith('https://'))) {
+        return cdnUrl;
+      }
+    } catch (err) {
+      console.error('[ensureMediaUploaded] Failed uploading base64 media:', err);
+    }
+  }
+  return trimmed;
+}

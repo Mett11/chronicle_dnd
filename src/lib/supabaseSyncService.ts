@@ -1,5 +1,6 @@
 import { supabase, isSupabaseConfigured, markSupabaseOffline } from './supabase';
 import { slugifyCampaignTitle } from './shareToken';
+import { ensureMediaUploaded } from './firebaseStorageService';
 import {
   chapterRowToModel,
   chapterModelToRow,
@@ -1518,7 +1519,12 @@ export class SupabaseSyncService {
 
     try {
       const cleanCode = campaignCode.trim().toUpperCase();
-      const payload = chapterModelToRow(chapter, cleanCode);
+      let activeChapter = chapter;
+      if (activeChapter.coverImageUrl && activeChapter.coverImageUrl.startsWith('data:')) {
+        const cdnUrl = await ensureMediaUploaded(cleanCode, 'images', activeChapter.coverImageUrl, `chap_${activeChapter.id}`);
+        activeChapter = { ...activeChapter, coverImageUrl: cdnUrl };
+      }
+      const payload = chapterModelToRow(activeChapter, cleanCode);
 
       const { error } = await safeUpsert('chapters', payload, {
         onConflict: 'id',
@@ -1527,7 +1533,7 @@ export class SupabaseSyncService {
         return handleSupabaseError('Error saving chapter', error);
       }
 
-      this.updateCachedItem(cleanCode, 'chapters', chapter);
+      this.updateCachedItem(cleanCode, 'chapters', activeChapter);
       return true;
     } catch (err) {
       return handleSupabaseError('Failed to save chapter', err);
@@ -1541,17 +1547,21 @@ export class SupabaseSyncService {
     if (!isSupabaseConfigured() || !campaignCode || !chapterId) return false;
     try {
       const cleanCode = campaignCode.trim().toUpperCase();
+      let finalUrl = coverImageUrl;
+      if (finalUrl && finalUrl.startsWith('data:')) {
+        finalUrl = await ensureMediaUploaded(cleanCode, 'images', finalUrl, `chap_${chapterId}`);
+      }
 
       const { error } = await supabase
         .from('chapters')
-        .update({ cover_image_url: coverImageUrl, updated_at: new Date().toISOString() })
+        .update({ cover_image_url: finalUrl, updated_at: new Date().toISOString() })
         .eq('id', chapterId);
 
       if (error) {
         return handleSupabaseError('Error updating chapter cover', error);
       }
 
-      this.updateCachedItem(cleanCode, 'chapters', { id: chapterId, coverImageUrl });
+      this.updateCachedItem(cleanCode, 'chapters', { id: chapterId, coverImageUrl: finalUrl });
       return true;
     } catch (err) {
       return handleSupabaseError('Failed to save chapter cover', err);

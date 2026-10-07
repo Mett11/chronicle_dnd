@@ -80,10 +80,14 @@ export function SingleImageUploader({
             `img_${Date.now()}.png`,
             raw
           );
-          onChange(cdnUrl || raw);
+          if (cdnUrl && (cdnUrl.startsWith('http://') || cdnUrl.startsWith('https://'))) {
+            onChange(cdnUrl);
+          } else {
+            console.warn('[SingleImageUploader] Storage returned empty/non-http URL:', cdnUrl);
+            onChange(cdnUrl || raw);
+          }
         } catch (err) {
-          console.error('Errore upload immagine su Firebase Storage:', err);
-          onChange(raw);
+          console.error('Errore upload immagine su Storage:', err);
         } finally {
           setIsUploadingImage(false);
         }

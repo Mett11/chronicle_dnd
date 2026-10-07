@@ -46,7 +46,7 @@ import { CloudSyncService, markLocalWrite } from "../lib/cloudSync";
 import { UserPreferencesService } from "../lib/userPreferencesService";
 import { IndexedDbStorage } from "../lib/indexedDbStorage";
 import { SupabaseSyncService } from "../lib/supabaseSyncService";
-import { FirebaseStorageService } from "../lib/firebaseStorageService";
+import { FirebaseStorageService, pickBestImageUrl, ensureMediaUploaded } from "../lib/firebaseStorageService";
 import { isSupabaseConfigured } from "../lib/supabase";
 
 const DEFAULT_MAPS: WorldMap[] = [];
@@ -3530,7 +3530,7 @@ export class CampaignManager {
         const prevCover = (prev.coverImageUrl && typeof prev.coverImageUrl === 'string' ? prev.coverImageUrl.trim() : '') ||
           ((prev as any).imageUrl && typeof (prev as any).imageUrl === 'string' ? (prev as any).imageUrl.trim() : '');
 
-        const resolvedCover = rawCover || prevCover || "";
+        const resolvedCover = pickBestImageUrl(rawCover, prevCover);
         const resolvedDesc = (c.description && c.description.trim()) || (prev.description && prev.description.trim()) || "";
         const resolvedColor = c.color || prev.color || "#D4AF37";
         const canonicalId = (prev.id && !prev.id.startsWith('chap_0') && !prev.id.startsWith('chap_1') && !prev.id.startsWith('chap_2'))
@@ -3597,6 +3597,13 @@ export class CampaignManager {
       const code = this.getActiveCampaignCode() || 'default';
       markLocalWrite(newChapter.id);
       SupabaseSyncService.saveChapter(code, newChapter);
+      if (newChapter.coverImageUrl && newChapter.coverImageUrl.startsWith('data:')) {
+        ensureMediaUploaded(code, 'images', newChapter.coverImageUrl, `chap_${newChapter.id}`).then((cdnUrl) => {
+          if (cdnUrl && cdnUrl.startsWith('http')) {
+            this.updateChapter(newChapter.id, { coverImageUrl: cdnUrl });
+          }
+        }).catch(() => {});
+      }
     }
     return newChapter;
   }
@@ -3616,6 +3623,13 @@ export class CampaignManager {
       const code = this.getActiveCampaignCode() || 'default';
       markLocalWrite(updated.id || id);
       SupabaseSyncService.saveChapter(code, updated);
+      if (updates.coverImageUrl && updates.coverImageUrl.startsWith('data:')) {
+        ensureMediaUploaded(code, 'images', updates.coverImageUrl, `chap_${id}`).then((cdnUrl) => {
+          if (cdnUrl && cdnUrl.startsWith('http')) {
+            this.updateChapter(id, { coverImageUrl: cdnUrl });
+          }
+        }).catch(() => {});
+      }
     }
 
     // If chapter name changed, propagate to sessions that used old name

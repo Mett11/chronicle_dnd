@@ -3,6 +3,7 @@ import { CampaignManager } from '../store/campaignStore';
 import { UserProfileSyncService } from './userProfileSync';
 import { SupabaseSyncService } from './supabaseSyncService';
 import { isSupabaseConfigured } from './supabase';
+import { pickBestImageUrl, ensureMediaUploaded } from './firebaseStorageService';
 import { generateCampaignShareToken, resolveCampaignPresentationSlug, slugifyCampaignTitle, reverseCode } from './shareToken';
 import { extractTextFromContent } from './sanitize';
 import {
@@ -424,7 +425,7 @@ export class CloudSyncService {
 
       if (existingCanonicalId && chapterMap.has(existingCanonicalId)) {
         const existing = chapterMap.get(existingCanonicalId)!;
-        const resolvedCover = (chap.coverImageUrl && chap.coverImageUrl.trim()) || (existing.coverImageUrl && existing.coverImageUrl.trim()) || "";
+        const resolvedCover = pickBestImageUrl(chap.coverImageUrl, existing.coverImageUrl);
         const resolvedDesc = (chap.description && chap.description.trim()) || (existing.description && existing.description.trim()) || "";
         const resolvedColor = chap.color || existing.color || "#D4AF37";
         chapterMap.set(existingCanonicalId, {
@@ -438,7 +439,7 @@ export class CloudSyncService {
         });
       } else if (chap.id && chapterMap.has(chap.id)) {
         const existing = chapterMap.get(chap.id)!;
-        const resolvedCover = (chap.coverImageUrl && chap.coverImageUrl.trim()) || (existing.coverImageUrl && existing.coverImageUrl.trim()) || "";
+        const resolvedCover = pickBestImageUrl(chap.coverImageUrl, existing.coverImageUrl);
         const resolvedDesc = (chap.description && chap.description.trim()) || (existing.description && existing.description.trim()) || "";
         const resolvedColor = chap.color || existing.color || "#D4AF37";
         chapterMap.set(chap.id, {
@@ -483,7 +484,7 @@ export class CloudSyncService {
           ...r,
           ...l,
           pins: Array.from(pinMap.values()),
-          imageUrl: l.imageUrl || r.imageUrl,
+          imageUrl: pickBestImageUrl(l.imageUrl, r.imageUrl),
         });
       }
     });
