@@ -586,12 +586,23 @@ export class SupabaseSyncService {
       const characterBiosRows = characterBiosRes?.data || [];
       const familyRelationsRows = familyRelationsRes?.data || [];
 
+      const expelledSet = new Set(
+        [
+          ...(Array.isArray(campRow.expelled_account_ids) ? campRow.expelled_account_ids : []),
+          ...(Array.isArray(dossier.expelledAccountIds) ? dossier.expelledAccountIds : []),
+        ].map((id: string) => String(id).toLowerCase())
+      );
+
       // Resilient character bios merge: combine dossier fallback with character_bios table
       const biosMap = new Map<string, any>();
       if (Array.isArray(dossier.characterBios)) {
         dossier.characterBios.forEach((b: any) => {
           if (b && (b.playerId || b.id)) {
-            biosMap.set(b.playerId || b.id, b);
+            const pId = String(b.playerId || b.id).toLowerCase();
+            const pEmail = b.email ? String(b.email).toLowerCase() : '';
+            if (!expelledSet.has(pId) && (!pEmail || !expelledSet.has(pEmail))) {
+              biosMap.set(b.playerId || b.id, b);
+            }
           }
         });
       }
@@ -599,8 +610,12 @@ export class SupabaseSyncService {
         characterBiosRows.forEach((row: any) => {
           const model = characterBioRowToModel(row);
           if (model && model.playerId) {
-            const existing = biosMap.get(model.playerId) || {};
-            biosMap.set(model.playerId, { ...existing, ...model });
+            const pId = String(model.playerId).toLowerCase();
+            const pEmail = model.email ? String(model.email).toLowerCase() : '';
+            if (!expelledSet.has(pId) && (!pEmail || !expelledSet.has(pEmail))) {
+              const existing = biosMap.get(model.playerId) || {};
+              biosMap.set(model.playerId, { ...existing, ...model });
+            }
           }
         });
       }
@@ -1216,9 +1231,12 @@ export class SupabaseSyncService {
 
       await supabase.from('campaign_members').delete().eq('campaign_code', code).or(`user_id.eq.${userId}${cleanEmail ? `,user_id.eq.${cleanEmail}` : ''}`);
 
-      const { data: camp } = await supabase.from('campaigns').select('dossier, active_players').eq('code', code).maybeSingle();
+      const { data: camp } = await supabase.from('campaigns').select('dossier, active_players, expelled_account_ids').eq('code', code).maybeSingle();
       if (camp) {
-        const currentExpelled: string[] = Array.isArray(camp.dossier?.expelledAccountIds) ? [...camp.dossier.expelledAccountIds] : [];
+        const currentExpelled: string[] = Array.isArray(camp.expelled_account_ids)
+          ? [...camp.expelled_account_ids]
+          : (Array.isArray(camp.dossier?.expelledAccountIds) ? [...camp.dossier.expelledAccountIds] : []);
+
         if (!currentExpelled.includes(userId)) {
           currentExpelled.push(userId);
         }
@@ -1226,8 +1244,11 @@ export class SupabaseSyncService {
           currentExpelled.push(cleanEmail);
         }
 
-        const activePlayers = (camp.dossier?.activePlayers || []).filter(
+        const activePlayers = (camp.active_players || camp.dossier?.activePlayers || []).filter(
           (p: any) => p.id !== userId && p._id !== userId && (!cleanEmail || p.email !== cleanEmail)
+        );
+        const characterBios = (camp.dossier?.characterBios || []).filter(
+          (b: any) => b.playerId !== userId && (!cleanEmail || b.email !== cleanEmail)
         );
         const familyRelations = (camp.dossier?.familyRelations || []).filter(
           (r: any) => r.playerId !== userId && r.source_entity_id !== userId && (!cleanEmail || r.email !== cleanEmail)
@@ -1237,19 +1258,23 @@ export class SupabaseSyncService {
           dossier: {
             ...camp.dossier,
             activePlayers,
+            characterBios,
             familyRelations,
             expelledAccountIds: currentExpelled,
           },
           active_players: activePlayers,
+          expelled_account_ids: currentExpelled,
           updated_at: new Date().toISOString(),
         }).eq('code', code);
       }
 
       // Also clean standalone tables
       try {
-        await supabase.from('character_bios').delete().eq('campaign_code', code).eq('player_id', userId);
+        await supabase.from('character_bios').delete().eq('campaign_code', code).or(`player_id.eq.${userId}${cleanEmail ? `,player_id.eq.${cleanEmail}` : ''}`);
         await supabase.from('family_relations').delete().eq('campaign_code', code).eq('source_entity_id', userId);
       } catch {}
+
+      this.invalidateCampaignDataCache(code);
       return true;
     } catch (err) {
       console.warn('[Supabase] removeCampaignMember exception:', err);
