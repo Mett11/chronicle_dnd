@@ -1139,6 +1139,23 @@ export function CharacterProfile() {
                   <User size={12} /> {targetPlayer.email || account.email}
                 </span>
               </div>
+
+              {/* DM Assigned Character Tags */}
+              {targetPlayer.tags && targetPlayer.tags.length > 0 && (
+                <div className="flex items-center gap-1.5 flex-wrap pt-1">
+                  <span className="text-[10px] font-mono text-content-3 flex items-center gap-1">
+                    <Tag size={11} className="text-primary" /> Ruolo / Etichette DM:
+                  </span>
+                  {targetPlayer.tags.map((t) => (
+                    <span
+                      key={t}
+                      className="px-2 py-0.5 bg-primary/10 text-primary text-[11px] font-mono font-medium rounded border border-primary/20"
+                    >
+                      {t}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
 

@@ -1458,6 +1458,18 @@ function WorldLoreEditorModal({
                     />
                   </div>
 
+                  <div>
+                    <label className="block text-[11px] font-mono font-medium text-content-3 uppercase mb-1">
+                      Tag Chiave (separati da virgola)
+                    </label>
+                    <input
+                      type="text"
+                      value={tagsInput}
+                      onChange={(e) => setTagsInput(e.target.value)}
+                      placeholder="dei, sole, chierici, paladini"
+                      className="w-full px-3 py-2 rounded-lg bg-surface-2 border border-surface-3 text-xs text-content-1 focus:outline-none focus:border-primary"
+                    />
+                  </div>
                 </div>
 
                 <div>
@@ -1538,7 +1550,14 @@ function WorldLoreEditorModal({
                             value={bite.title}
                             onChange={(e) => handleUpdateBite(bIdx, { title: e.target.value })}
                             placeholder="Titolo nozione..."
-                            className="w-full px-2.5 py-1.5 rounded-lg bg-surface-1 border border-surface-3 text-xs text-content-1 font-semibold"
+                            className="sm:col-span-2 px-2.5 py-1.5 rounded-lg bg-surface-1 border border-surface-3 text-xs text-content-1 font-semibold"
+                          />
+                          <input
+                            type="text"
+                            value={bite.customTag || ''}
+                            onChange={(e) => handleUpdateBite(bIdx, { customTag: e.target.value })}
+                            placeholder="Tag opzionale (es. Dogma)"
+                            className="px-2.5 py-1.5 rounded-lg bg-surface-1 border border-surface-3 text-xs text-content-2"
                           />
                         </div>
 

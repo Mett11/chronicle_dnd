@@ -123,7 +123,6 @@ export interface CampaignMeta {
   dmEmail?: string;
   dmIsPlayer?: boolean;
   activePlayerEmails?: string[];
-  activePlayers?: any[];
   expelledAccountIds?: string[];
   titleFont?: CampaignTitleFont;
   titleEffect?: CampaignTitleEffect;
@@ -824,7 +823,6 @@ export interface CharacterKnownLoreItem {
 
 export interface CharacterBio {
   playerId: string;
-  email?: string;
   campaignCode?: string;
   characterName?: string;
   name?: string;

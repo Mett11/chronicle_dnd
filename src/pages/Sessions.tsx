@@ -1960,6 +1960,43 @@ export function Sessions() {
                 </button>
               )}
             </div>
+
+            {/* Tag Filter Chips if tags exist in party */}
+            {allPartyTags.length > 0 && (
+              <div className="flex items-center gap-2 pt-2 border-t border-surface-2 flex-wrap">
+                <span className="text-[11px] font-mono text-content-3 flex items-center gap-1">
+                  <Tag size={11} className="text-primary" />
+                  Filtro Etichetta:
+                </span>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => setPartyTagFilter('all')}
+                    className={`px-2 py-0.5 text-[11px] font-mono rounded-[2px] transition-colors cursor-pointer border ${
+                      partyTagFilter === 'all'
+                        ? 'bg-surface-3 text-content-1 border-primary/40'
+                        : 'bg-surface-1 text-content-3 border-surface-2 hover:text-content-2'
+                    }`}
+                  >
+                    Tutte
+                  </button>
+                  {allPartyTags.map((tag) => (
+                    <button
+                      key={tag}
+                      type="button"
+                      onClick={() => setPartyTagFilter(partyTagFilter === tag ? 'all' : tag)}
+                      className={`px-2 py-0.5 text-[11px] font-mono rounded-[2px] transition-colors cursor-pointer border ${
+                        partyTagFilter === tag
+                          ? 'bg-primary/15 text-primary border-primary/40 font-semibold'
+                          : 'bg-surface-1 text-content-3 border-surface-2 hover:text-content-1'
+                      }`}
+                    >
+                      {tag}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="divide-y divide-surface-2 border border-surface-2 rounded-[2px] bg-surface-1">
@@ -2016,6 +2053,39 @@ export function Sessions() {
                           {p.isDm ? 'Dungeon Master' : 'Personaggio Giocante'}
                           {p.email && ` • ${p.email}`}
                         </p>
+
+                        {/* Party Character Tags & DM Tagging */}
+                        {!p.isDm && (
+                          <div className="flex items-center gap-1.5 flex-wrap pt-1.5">
+                            {p.tags && p.tags.length > 0 ? (
+                              p.tags.map((tag) => (
+                                <span
+                                  key={tag}
+                                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-[2px] text-[10px] font-mono font-medium bg-surface-2 text-content-2 border border-surface-3"
+                                >
+                                  <Tag size={10} className="text-primary opacity-80" />
+                                  <span>{tag}</span>
+                                </span>
+                              ))
+                            ) : (
+                              <span className="text-[10px] font-mono text-content-3 italic">
+                                Nessuna etichetta
+                              </span>
+                            )}
+
+                            {canManage && (
+                              <button
+                                type="button"
+                                onClick={() => setManagingTagsPlayer(p)}
+                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-[2px] text-[10px] font-mono text-primary hover:text-primary-hover hover:bg-primary/10 border border-primary/20 transition-colors cursor-pointer"
+                                title="Assegna o modifica le etichette di questo PG"
+                              >
+                                <Plus size={10} />
+                                <span>{p.tags && p.tags.length > 0 ? 'Modifica Etichette' : 'Assegna Etichette'}</span>
+                              </button>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </div>
 

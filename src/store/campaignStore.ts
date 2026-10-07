@@ -1878,21 +1878,9 @@ export class CampaignManager {
     const campIdx = campaigns.findIndex((c) => c.code.toUpperCase() === cleanCode);
     if (campIdx !== -1) {
       const currentExpelled = campaigns[campIdx].expelledAccountIds || [];
-      const newExpelled = [...currentExpelled];
-      if (!newExpelled.includes(accountId)) {
-        newExpelled.push(accountId);
+      if (!currentExpelled.includes(accountId)) {
+        campaigns[campIdx].expelledAccountIds = [...currentExpelled, accountId];
       }
-      if (targetEmail && !newExpelled.includes(targetEmail)) {
-        newExpelled.push(targetEmail);
-      }
-      campaigns[campIdx].expelledAccountIds = newExpelled;
-
-      if (campaigns[campIdx].activePlayers) {
-        campaigns[campIdx].activePlayers = campaigns[campIdx].activePlayers.filter(
-          (p: any) => p.id !== accountId && p._id !== accountId && (!targetEmail || p.email?.toLowerCase() !== targetEmail.toLowerCase())
-        );
-      }
-
       if (campaigns[campIdx].dmId === accountId) {
         const otherDm = accounts.find(
           (a) => a.id !== accountId && a.dmCampaigns?.some((dmCode) => dmCode.toUpperCase() === cleanCode)
@@ -1910,16 +1898,6 @@ export class CampaignManager {
       this.saveCampaigns(campaigns);
       CloudSyncService.syncCampaignsToCloud(campaigns);
     }
-
-    // Decouple & remove character bio for this player/campaign locally
-    const currentBios = this.getAllCharacterBios();
-    const filteredBios = currentBios.filter((b) => {
-      if (!b) return false;
-      if (b.playerId === accountId) return false;
-      if (targetEmail && b.email?.toLowerCase() === targetEmail.toLowerCase()) return false;
-      return true;
-    });
-    this.saveAllCharacterBiosLocalOnly(filteredBios);
 
     // Immediately trigger cloud save so campaign payload is updated in Firestore
     CloudSyncService.triggerCloudSave();
@@ -2496,8 +2474,7 @@ export class CampaignManager {
       .filter((a) => {
         if (!a || !a.id) return false;
         const lowId = a.id.toLowerCase();
-        const lowEmail = a.email ? a.email.toLowerCase() : '';
-        if (deletedAccounts.has(lowId) || expelledSet.has(lowId) || (lowEmail && expelledSet.has(lowEmail))) return false;
+        if (deletedAccounts.has(lowId) || expelledSet.has(lowId)) return false;
         const isJoined = a.joinedCampaigns?.some((c) => c.toUpperCase() === cleanActiveCode);
         const isDm = a.dmCampaigns?.some((c) => c.toUpperCase() === cleanActiveCode) || campaign?.dmId === a.id;
         const hasProfile = Boolean(

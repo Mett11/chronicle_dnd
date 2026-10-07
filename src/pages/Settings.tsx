@@ -871,7 +871,7 @@ export function Settings() {
                 </div>
               </div>
 
-              {/* Roster Partecipanti & Co-Master */}
+              {/* Roster Partecipanti & Co-Master / Etichette */}
               <div className="bg-surface-1 border border-surface-2 rounded-2xl p-6 space-y-4">
                 <div className="flex items-center justify-between border-b border-surface-2 pb-3">
                   <div>
@@ -880,7 +880,7 @@ export function Settings() {
                       <span>Giocatori della Campagna ({allPlayers.length})</span>
                     </h2>
                     <p className="text-xs text-content-3 mt-0.5">
-                      Assegna il ruolo di Co-Master ed espelli partecipanti dal tavolo.
+                      Assegna il ruolo di Co-Master, attribuisci fino a 3 etichette per giocatore o espelli partecipanti dal tavolo.
                     </p>
                   </div>
 
@@ -933,10 +933,34 @@ export function Settings() {
                               {isSelf && <span className="text-[10px] bg-primary/20 text-primary px-1.5 py-0.2 rounded font-mono">(Tu)</span>}
                             </p>
 
+                            {/* Display assigned tags (max 3) */}
+                            {p.tags && p.tags.length > 0 && (
+                              <div className="flex items-center gap-1 flex-wrap pt-0.5">
+                                {p.tags.slice(0, 3).map((t) => (
+                                  <span
+                                    key={t}
+                                    className="px-1.5 py-0.2 bg-surface-3/80 text-content-2 rounded text-[10px] font-mono border border-surface-3 flex items-center gap-0.5"
+                                  >
+                                    <Tag size={9} className="text-primary" />
+                                    <span>{t}</span>
+                                  </span>
+                                ))}
+                              </div>
+                            )}
                           </div>
                         </div>
 
                         <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
+                          {/* Tags Button */}
+                          <button
+                            type="button"
+                            onClick={() => setTagsModalTargetPlayer(p)}
+                            className="px-2.5 py-1.5 rounded-lg bg-surface-2 hover:bg-surface-3 text-content-2 hover:text-content-1 border border-surface-3 text-xs font-medium flex items-center gap-1 transition-colors cursor-pointer"
+                            title="Gestisci etichette personaggio (max 3)"
+                          >
+                            <Tag size={12} />
+                            <span>Etichette</span>
+                          </button>
 
                           {/* Toggle Co-Master button (for non-main DMs) */}
                           {!isMainDm && (

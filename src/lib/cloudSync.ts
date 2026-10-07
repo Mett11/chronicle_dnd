@@ -619,15 +619,13 @@ export class CloudSyncService {
       : null;
     const mergedMap = new Map<string, UserAccount>();
 
-    // Build expelled lookup: accountId/email (lowercase) -> Set of uppercase campaignCodes they are expelled from
+    // Build expelled lookup: accountId -> Set of uppercase campaignCodes they are expelled from
     const expelledMap = new Map<string, Set<string>>();
     campaigns.forEach((c) => {
       if (c.expelledAccountIds && Array.isArray(c.expelledAccountIds)) {
         c.expelledAccountIds.forEach((accId) => {
-          if (!accId) return;
-          const cleanId = String(accId).toLowerCase().trim();
-          if (!expelledMap.has(cleanId)) expelledMap.set(cleanId, new Set());
-          expelledMap.get(cleanId)!.add(c.code.toUpperCase());
+          if (!expelledMap.has(accId)) expelledMap.set(accId, new Set());
+          expelledMap.get(accId)!.add(c.code.toUpperCase());
         });
       }
     });
@@ -637,35 +635,21 @@ export class CloudSyncService {
 
     remoteAccounts.forEach((acc) => {
       if (acc && acc.id && !deletedIds.has(acc.id)) {
-        const idKey = acc.id.toLowerCase();
-        const emailKey = acc.email ? acc.email.toLowerCase().trim() : '';
-        const userExpelled = new Set<string>([
-          ...(expelledMap.get(idKey) || []),
-          ...(emailKey ? (expelledMap.get(emailKey) || []) : []),
-        ]);
-
+        const userExpelled = expelledMap.get(acc.id);
         const joined = (acc.joinedCampaigns || []).filter(
-          (code) => !userExpelled.has(code.toUpperCase())
+          (code) => !userExpelled?.has(code.toUpperCase())
         );
-        // If restored from campaign active_players and joined is empty or missing current campaign, ensure it's joined ONLY IF not expelled
-        if (cleanActiveCode && !userExpelled.has(cleanActiveCode) && !joined.some((c) => c.toUpperCase() === cleanActiveCode)) {
+        // If restored from campaign active_players and joined is empty or missing current campaign, ensure it's joined
+        if (cleanActiveCode && !userExpelled?.has(cleanActiveCode) && !joined.some((c) => c.toUpperCase() === cleanActiveCode)) {
           joined.push(cleanActiveCode);
         }
 
         const dm = (acc.dmCampaigns || []).filter(
-          (code) => !userExpelled.has(code.toUpperCase())
+          (code) => !userExpelled?.has(code.toUpperCase())
         );
 
         const profiles = { ...(acc.campaignProfiles || {}) };
-        if (userExpelled.size > 0) {
-          Object.keys(profiles).forEach((k) => {
-            if (userExpelled.has(k.toUpperCase())) {
-              delete profiles[k];
-            }
-          });
-        }
-
-        if (cleanActiveCode && !userExpelled.has(cleanActiveCode) && !profiles[cleanActiveCode] && acc.characterName) {
+        if (cleanActiveCode && !profiles[cleanActiveCode] && acc.characterName) {
           profiles[cleanActiveCode] = {
             characterName: acc.characterName,
             avatarUrl: acc.avatarUrl || '',
@@ -1814,35 +1798,28 @@ export class CloudSyncService {
       }
 
       if (Array.isArray(remote.characterBios)) {
-        const currentCampaign = CampaignManager.getCampaigns().find((c) => c.code.toUpperCase() === (activeCode || '').toUpperCase());
-        const expelledSet = new Set(
-          (currentCampaign?.expelledAccountIds || []).map((id) => id.toLowerCase().trim())
-        );
-
-        const currentAccount = CampaignManager.getCurrentAccount();
-        const isDm = Boolean(currentAccount?.isDm || (activeCode && currentAccount?.dmCampaigns?.includes(activeCode)));
-        
-        const filteredRemoteBios = remote.characterBios.filter((bio: any) => {
-          if (!bio || !bio.playerId) return false;
-          const pId = String(bio.playerId).toLowerCase().trim();
-          const pEmail = bio.email ? String(bio.email).toLowerCase().trim() : '';
-          return !expelledSet.has(pId) && (!pEmail || !expelledSet.has(pEmail));
-        });
-
-        // Defense-in-depth: Non-DMs and non-owners must never receive unrevealed backstories/secrets
-        const sanitizedBios = filteredRemoteBios.map((bio: any) => {
-          if (!isDm && currentAccount?.id !== bio.playerId) {
-            const isBackstoryShared = bio.privacySettings?.backstory === true;
-            const isSecretsShared = bio.privacySettings?.secrets === true;
-            return {
-              ...bio,
-              backstoryMarkdown: isBackstoryShared ? bio.backstoryMarkdown : '',
-              secrets: isSecretsShared ? bio.secrets : '',
-            };
-          }
-          return bio;
-        });
-        CampaignManager.saveAllCharacterBiosLocalOnly(sanitizedBios);
+        const localBios = CampaignManager.getAllCharacterBios();
+        if (remote.characterBios.length === 0 && localBios.length > 0) {
+          console.warn('[CloudSync] Remote characterBios are empty but local has data. Preserving local characterBios.');
+        } else {
+          const currentAccount = CampaignManager.getCurrentAccount();
+          const isDm = Boolean(currentAccount?.isDm || (activeCode && currentAccount?.dmCampaigns?.includes(activeCode)));
+          
+          // Defense-in-depth: Non-DMs and non-owners must never receive unrevealed backstories/secrets
+          const sanitizedBios = remote.characterBios.map((bio: any) => {
+            if (!isDm && currentAccount?.id !== bio.playerId) {
+              const isBackstoryShared = bio.privacySettings?.backstory === true;
+              const isSecretsShared = bio.privacySettings?.secrets === true;
+              return {
+                ...bio,
+                backstoryMarkdown: isBackstoryShared ? bio.backstoryMarkdown : '',
+                secrets: isSecretsShared ? bio.secrets : '',
+              };
+            }
+            return bio;
+          });
+          CampaignManager.saveAllCharacterBiosLocalOnly(sanitizedBios);
+        }
       }
 
       if (Array.isArray(remote.familyRelations)) {
