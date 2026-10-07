@@ -996,12 +996,10 @@ export class CloudSyncService {
             
             // Discard response if a newer sync request was initiated (e.g. campaign switch)
             if (this.currentSyncRequestId !== syncId) {
-              console.log('[CloudSync] Sync request superseded, discarding response.');
               return;
             }
 
             if (supaData) {
-              console.log(`[CloudSync] Hydrated from Supabase: ${supaData.sessions?.length || 0} sessions, ${supaData.notes?.length || 0} notes, ${supaData.entities?.length || 0} entities`);
               
               if (supaData.title) {
                 try {

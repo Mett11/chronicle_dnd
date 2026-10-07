@@ -9,7 +9,7 @@ interface AtmosphericLoaderProps {
 
 export function AtmosphericLoader({
   title = 'Cronache di Campagna',
-  subtitle = 'Connessione al Grimorio Cloud...',
+  subtitle = 'Apertura del Grimorio Arcano...',
   isSupabaseWarming = false,
 }: AtmosphericLoaderProps) {
   const [phase, setPhase] = useState<number>(0);
@@ -63,23 +63,23 @@ export function AtmosphericLoader({
           <div className="absolute inset-y-0 left-0 bg-gradient-to-r from-primary/40 via-primary to-amber-400 rounded-full animate-progress" />
         </div>
 
-        {/* Dynamic Supabase Warmup Indicator */}
+        {/* Immersive Lore Progress Indicator */}
         <div className="pt-2 text-xs text-content-3 font-mono space-y-1">
           {phase === 0 && (
             <p className="flex items-center justify-center gap-1.5">
-              <span>Lettura cronache e dossier locali...</span>
+              <span>Apertura dei tomo e delle pergamene...</span>
             </p>
           )}
           {phase === 1 && (
             <p className="flex items-center justify-center gap-1.5 text-amber-400/90 font-medium">
-              <Database size={13} className="animate-spin" />
-              <span>Risveglio Database Supabase in corso...</span>
+              <Scroll size={13} className="animate-pulse" />
+              <span>Risveglio delle Antiche Cronache...</span>
             </p>
           )}
           {phase === 2 && (
             <p className="flex items-center justify-center gap-1.5 text-primary">
               <Shield size={13} />
-              <span>Sincronizzazione finale sessioni e mappe...</span>
+              <span>Armonizzazione di Mappe e Memorie...</span>
             </p>
           )}
         </div>

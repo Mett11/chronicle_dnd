@@ -146,7 +146,7 @@ function AppContent() {
     return (
       <AtmosphericLoader
         title="Cronache di Campagna"
-        subtitle="Inizializzazione Grimorio Cloud..."
+        subtitle="Apertura del Grimorio Arcano..."
       />
     );
   }
@@ -175,8 +175,8 @@ function AppContent() {
   if (isCampaignHydrating) {
     return (
       <AtmosphericLoader
-        title="Sincronizzazione della Campagna"
-        subtitle="Risveglio Database Supabase in corso..."
+        title="Armonizzazione della Saga"
+        subtitle="Risveglio delle Antiche Cronache..."
       />
     );
   }

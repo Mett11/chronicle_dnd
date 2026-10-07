@@ -3080,9 +3080,7 @@ export class SupabaseSyncService {
           }
         )
         .subscribe((status) => {
-          if (status === 'SUBSCRIBED') {
-            console.log(`[Supabase Realtime] Connected to live channel for campaign: ${code}`);
-          }
+          // Connected to live channel
         });
 
       this.activeRealtimeChannel = channel;
