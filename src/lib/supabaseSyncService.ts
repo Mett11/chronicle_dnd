@@ -1216,17 +1216,16 @@ export class SupabaseSyncService {
 
       await supabase.from('campaign_members').delete().eq('campaign_code', code).or(`user_id.eq.${userId}${cleanEmail ? `,user_id.eq.${cleanEmail}` : ''}`);
 
-      const { data: camp } = await supabase.from('campaigns').select('dossier, active_players').eq('code', code).maybeSingle();
+      const { data: camp } = await supabase.from('campaigns').select('dossier, active_players, expelled_account_ids').eq('code', code).maybeSingle();
       if (camp) {
-        const currentExpelled: string[] = Array.isArray(camp.dossier?.expelledAccountIds) ? [...camp.dossier.expelledAccountIds] : [];
-        if (!currentExpelled.includes(userId)) {
-          currentExpelled.push(userId);
-        }
-        if (cleanEmail && !currentExpelled.includes(cleanEmail)) {
-          currentExpelled.push(cleanEmail);
-        }
+        const currentExpelled: string[] = Array.from(new Set([
+          ...(Array.isArray(camp.expelled_account_ids) ? camp.expelled_account_ids : []),
+          ...(Array.isArray(camp.dossier?.expelledAccountIds) ? camp.dossier.expelledAccountIds : []),
+          userId,
+          ...(cleanEmail ? [cleanEmail] : []),
+        ]));
 
-        const activePlayers = (camp.dossier?.activePlayers || []).filter(
+        const activePlayers = (camp.dossier?.activePlayers || camp.active_players || []).filter(
           (p: any) => p.id !== userId && p._id !== userId && (!cleanEmail || p.email !== cleanEmail)
         );
         const familyRelations = (camp.dossier?.familyRelations || []).filter(
@@ -1234,6 +1233,7 @@ export class SupabaseSyncService {
         );
 
         await supabase.from('campaigns').update({
+          expelled_account_ids: currentExpelled,
           dossier: {
             ...camp.dossier,
             activePlayers,
@@ -1616,10 +1616,11 @@ export class SupabaseSyncService {
       const sanitized = Array.isArray(accounts) ? accounts.filter((a) => a && a.id) : [];
 
       // Fetch existing active_players from campaigns to avoid wiping out fellow party members
-      const { data: camp } = await supabase.from('campaigns').select('active_players, dossier').eq('code', code).maybeSingle();
+      const { data: camp } = await supabase.from('campaigns').select('active_players, dossier, expelled_account_ids').eq('code', code).maybeSingle();
       const existingPlayers: any[] = Array.isArray(camp?.active_players) ? camp.active_players : [];
 
       const expelledSet = new Set<string>([
+        ...(Array.isArray(camp?.expelled_account_ids) ? camp.expelled_account_ids : []),
         ...(Array.isArray(camp?.dossier?.expelledAccountIds) ? camp.dossier.expelledAccountIds : []),
       ].map((id: string) => String(id).toLowerCase()));
 

@@ -2465,16 +2465,19 @@ export class CampaignManager {
     const cleanActiveCode = activeCode.trim().toUpperCase();
     const campaign = this.getCampaigns().find((c) => c.code.toUpperCase() === cleanActiveCode);
     const expelledSet = new Set(
-      (campaign?.expelledAccountIds || []).map((id) => id.toLowerCase())
+      (campaign?.expelledAccountIds || []).map((id) => String(id).toLowerCase())
     );
-    const deletedAccounts = new Set(this.getDeletedAccountIds().map((id) => id.toLowerCase()));
+    const deletedAccounts = new Set(this.getDeletedAccountIds().map((id) => String(id).toLowerCase()));
 
     const accounts = this.getAccounts();
     return accounts
       .filter((a) => {
         if (!a || !a.id) return false;
-        const lowId = a.id.toLowerCase();
-        if (deletedAccounts.has(lowId) || expelledSet.has(lowId)) return false;
+        const lowId = String(a.id).toLowerCase();
+        const lowEmail = a.email ? String(a.email).toLowerCase() : '';
+        if (deletedAccounts.has(lowId) || (lowEmail && deletedAccounts.has(lowEmail))) return false;
+        if (expelledSet.has(lowId) || (lowEmail && expelledSet.has(lowEmail))) return false;
+
         const isJoined = a.joinedCampaigns?.some((c) => c.toUpperCase() === cleanActiveCode);
         const isDm = a.dmCampaigns?.some((c) => c.toUpperCase() === cleanActiveCode) || campaign?.dmId === a.id;
         const hasProfile = Boolean(

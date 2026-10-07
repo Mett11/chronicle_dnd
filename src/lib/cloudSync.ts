@@ -619,13 +619,15 @@ export class CloudSyncService {
       : null;
     const mergedMap = new Map<string, UserAccount>();
 
-    // Build expelled lookup: accountId -> Set of uppercase campaignCodes they are expelled from
+    // Build expelled lookup: accountId/email -> Set of uppercase campaignCodes they are expelled from
     const expelledMap = new Map<string, Set<string>>();
     campaigns.forEach((c) => {
       if (c.expelledAccountIds && Array.isArray(c.expelledAccountIds)) {
         c.expelledAccountIds.forEach((accId) => {
-          if (!expelledMap.has(accId)) expelledMap.set(accId, new Set());
-          expelledMap.get(accId)!.add(c.code.toUpperCase());
+          if (!accId) return;
+          const key = String(accId).toLowerCase();
+          if (!expelledMap.has(key)) expelledMap.set(key, new Set());
+          expelledMap.get(key)!.add(c.code.toUpperCase());
         });
       }
     });
@@ -635,21 +637,36 @@ export class CloudSyncService {
 
     remoteAccounts.forEach((acc) => {
       if (acc && acc.id && !deletedIds.has(acc.id)) {
-        const userExpelled = expelledMap.get(acc.id);
+        const idKey = String(acc.id).toLowerCase();
+        const emailKey = acc.email ? String(acc.email).toLowerCase() : '';
+        const userExpelledId = expelledMap.get(idKey);
+        const userExpelledEmail = emailKey ? expelledMap.get(emailKey) : undefined;
+        const isExpelledFromCode = (code: string) => {
+          const upper = code.toUpperCase();
+          return Boolean(userExpelledId?.has(upper) || userExpelledEmail?.has(upper));
+        };
+
         const joined = (acc.joinedCampaigns || []).filter(
-          (code) => !userExpelled?.has(code.toUpperCase())
+          (code) => !isExpelledFromCode(code)
         );
-        // If restored from campaign active_players and joined is empty or missing current campaign, ensure it's joined
-        if (cleanActiveCode && !userExpelled?.has(cleanActiveCode) && !joined.some((c) => c.toUpperCase() === cleanActiveCode)) {
+        // If restored from campaign active_players and joined is empty or missing current campaign, ensure it's joined ONLY if not expelled
+        if (cleanActiveCode && !isExpelledFromCode(cleanActiveCode) && !joined.some((c) => c.toUpperCase() === cleanActiveCode)) {
           joined.push(cleanActiveCode);
         }
 
         const dm = (acc.dmCampaigns || []).filter(
-          (code) => !userExpelled?.has(code.toUpperCase())
+          (code) => !isExpelledFromCode(code)
         );
 
         const profiles = { ...(acc.campaignProfiles || {}) };
-        if (cleanActiveCode && !profiles[cleanActiveCode] && acc.characterName) {
+        // Strip profiles for any campaign the user was expelled from
+        Object.keys(profiles).forEach((pCode) => {
+          if (isExpelledFromCode(pCode)) {
+            delete profiles[pCode];
+          }
+        });
+
+        if (cleanActiveCode && !isExpelledFromCode(cleanActiveCode) && !profiles[cleanActiveCode] && acc.characterName) {
           profiles[cleanActiveCode] = {
             characterName: acc.characterName,
             avatarUrl: acc.avatarUrl || '',
