@@ -27,7 +27,7 @@ import { CampaignManager } from '../store/campaignStore';
 import { useAuth } from './AuthProvider';
 import { CampaignMeta, CampaignProfile } from '../types';
 import { ConfirmModal } from './ConfirmModal';
-import { isSupabaseConfigured } from '../lib/supabase';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { SupabaseSyncService } from '../lib/supabaseSyncService';
 import { CampaignInviteModal } from './CampaignInviteModal';
 import { hasUserSavedTheme, getStoredTheme } from '../lib/theme';
@@ -346,20 +346,24 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
     if (!account) return null;
     const clean = code.toUpperCase();
     if (account.campaignProfiles && account.campaignProfiles[clean]) {
-      return account.campaignProfiles[clean];
+      const p = account.campaignProfiles[clean];
+      if (p && p.characterName && p.characterName.trim() && p.characterName !== 'Personaggio') {
+        return p;
+      }
+    }
+    // Also check character_bios
+    const bio = CampaignManager.getCharacterBio(account.id);
+    const bioName = bio?.characterName || bio?.name;
+    if (bioName && bioName.trim() && bioName !== 'Personaggio') {
+      return {
+        characterName: bioName.trim(),
+        avatarUrl: bio?.avatarUrl || account.avatarUrl,
+        color: bio?.color || account.color,
+      };
     }
     // Also check if account is already marked as joined
     const isJoined = account.joinedCampaigns?.some((c) => c.toUpperCase() === clean);
-    // Also check character_bios
-    const bio = CampaignManager.getCharacterBio(account.id);
-    if (bio && (bio.characterName || bio.name)) {
-      return {
-        characterName: bio.characterName || bio.name || account.characterName,
-        avatarUrl: bio.avatarUrl || account.avatarUrl,
-        color: bio.color || account.color,
-      };
-    }
-    if (isJoined && account.characterName) {
+    if ((isJoined || account.characterName) && account.characterName && account.characterName !== 'Avventuriero' && account.characterName !== 'Personaggio') {
       return {
         characterName: account.characterName,
         avatarUrl: account.avatarUrl,
@@ -451,7 +455,29 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
       }
 
       const isDm = isDmOf(existing);
-      const existingProfile = getProfileForCampaign(cleanCode);
+      let existingProfile = getProfileForCampaign(cleanCode);
+
+      // Check remote database if no local profile found before prompting modal
+      if (!isDm && (!existingProfile || !existingProfile.characterName?.trim() || existingProfile.characterName === 'Personaggio')) {
+        if (isSupabaseConfigured() && account) {
+          try {
+            const [memRes, bioRes] = await Promise.all([
+              supabase.from('campaign_members').select('character_name, avatar_url, color').eq('campaign_code', cleanCode).eq('user_id', account.id).maybeSingle(),
+              supabase.from('character_bios').select('name, character_name, avatar_url, color').eq('campaign_code', cleanCode).eq('player_id', account.id).maybeSingle(),
+            ]);
+            const foundName = bioRes?.data?.character_name || bioRes?.data?.name || memRes?.data?.character_name || account.characterName;
+            if (foundName && foundName !== 'Personaggio' && foundName !== 'Avventuriero') {
+              const adopted = {
+                characterName: foundName,
+                avatarUrl: bioRes?.data?.avatar_url || memRes?.data?.avatar_url || account.avatarUrl || '',
+                color: bioRes?.data?.color || memRes?.data?.color || account.color || '#6366f1',
+              };
+              CampaignManager.setCampaignProfile(account.id, cleanCode, adopted);
+              existingProfile = adopted;
+            }
+          } catch {}
+        }
+      }
 
       if (isDm || (existingProfile && existingProfile.characterName?.trim())) {
         if (account) {
@@ -560,11 +586,33 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
     onEnter(cleanCode);
   };
 
-  const handleSelectCampaign = (camp: CampaignMeta) => {
+  const handleSelectCampaign = async (camp: CampaignMeta) => {
     const isDm = isDmOf(camp);
-    const profile = getProfileForCampaign(camp.code);
+    let profile = getProfileForCampaign(camp.code);
 
-    if (!isDm && (!profile || !profile.characterName?.trim())) {
+    // If profile is not locally set, check if the user is already a member in Supabase or has a character bio
+    if (!isDm && (!profile || !profile.characterName?.trim() || profile.characterName === 'Personaggio')) {
+      if (isSupabaseConfigured() && account) {
+        try {
+          const [memRes, bioRes] = await Promise.all([
+            supabase.from('campaign_members').select('character_name, avatar_url, color').eq('campaign_code', camp.code).eq('user_id', account.id).maybeSingle(),
+            supabase.from('character_bios').select('name, character_name, avatar_url, color').eq('campaign_code', camp.code).eq('player_id', account.id).maybeSingle(),
+          ]);
+          const foundName = bioRes?.data?.character_name || bioRes?.data?.name || memRes?.data?.character_name || account.characterName;
+          if (foundName && foundName !== 'Personaggio' && foundName !== 'Avventuriero') {
+            const adopted = {
+              characterName: foundName,
+              avatarUrl: bioRes?.data?.avatar_url || memRes?.data?.avatar_url || account.avatarUrl || '',
+              color: bioRes?.data?.color || memRes?.data?.color || account.color || '#6366f1',
+            };
+            CampaignManager.setCampaignProfile(account.id, camp.code, adopted);
+            profile = adopted;
+          }
+        } catch {}
+      }
+    }
+
+    if (!isDm && (!profile || !profile.characterName?.trim() || profile.characterName === 'Personaggio')) {
       handleOpenPgModal(camp, false);
       return;
     }

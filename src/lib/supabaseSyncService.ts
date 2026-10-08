@@ -468,6 +468,8 @@ export class SupabaseSyncService {
           notesRes,
           characterBiosRes,
           familyRelationsRes,
+          mapsRes,
+          membersRes,
         ] = await Promise.all([
           supabase
             .from('chapters')
@@ -496,6 +498,17 @@ export class SupabaseSyncService {
             .select('id, campaign_code, source_entity_id, target_entity_id, relationship_type, description, is_secret, name, avatar_url, custom_relationship_label, title_or_role, generation_category, genealogy_role, side_of_family, status, second_parent_id, other_parent_name, linked_player_id, tags, order_index, updated_at')
             .or(activeOrCampFilter)
             .then(res => res, () => ({ data: [] })),
+          supabase
+            .from('maps')
+            .select('id, campaign_code, title, description, image_url, scale_label, entity_id, folder_id, pins, fog_of_war, is_default, is_secret, shared_with_dm, created_at, updated_at')
+            .or(activeOrCampFilter)
+            .order('created_at', { ascending: true })
+            .then(res => res, () => ({ data: [] })),
+          supabase
+            .from('campaign_members')
+            .select('campaign_code, user_id, role, character_name, avatar_url, color')
+            .or(activeOrCampFilter)
+            .then(res => res, () => ({ data: [] })),
         ]);
 
         const campaignRes = { data: campaignRow, error: null };
@@ -514,7 +527,9 @@ export class SupabaseSyncService {
         (entitiesRes.data && entitiesRes.data.length > 0) ||
         (notesRes.data && notesRes.data.length > 0) ||
         (characterBiosRes.data && characterBiosRes.data.length > 0) ||
-        (familyRelationsRes.data && familyRelationsRes.data.length > 0)
+        (familyRelationsRes.data && familyRelationsRes.data.length > 0) ||
+        (mapsRes.data && mapsRes.data.length > 0) ||
+        (membersRes.data && membersRes.data.length > 0)
       );
 
       if (!hasAnyData) {
@@ -562,8 +577,8 @@ export class SupabaseSyncService {
         noteRowToModel(row)
       );
 
-      // Heavy media/articles are lazy loaded on demand
-      const maps: WorldMap[] | undefined = undefined;
+      // Maps loaded directly from public.maps
+      const maps: WorldMap[] = (mapsRes.data || []).map((row: any) => mapRowToModel(row));
       const scrapbookItems: ScrapbookItem[] | undefined = undefined;
       const audioLogs: AudioLog[] | undefined = undefined;
       const worldLoreArticles: any[] | undefined = undefined;
@@ -602,6 +617,70 @@ export class SupabaseSyncService {
         }));
       }
 
+      // Reconcile complete and authoritative list of active party players
+      const activePlayers = (() => {
+        const expelled = new Set(
+          expelledAccounts.map((id: string) => String(id).toLowerCase())
+        );
+        const playerMap = new Map<string, any>();
+
+        // 1. Seed from JSONB active_players (if present)
+        const rawJsonPlayers = Array.isArray(campRow.active_players) ? campRow.active_players : [];
+        rawJsonPlayers.forEach((p: any) => {
+          if (!p || (!p.id && !p._id)) return;
+          const pId = String(p.id || p._id);
+          playerMap.set(pId, {
+            id: pId,
+            _id: pId,
+            characterName: p.characterName || p.name || 'Avventuriero',
+            email: p.email || '',
+            avatarUrl: p.avatarUrl || '',
+            color: p.color || '#6366f1',
+            isDm: Boolean(p.isDm || (campRow.dm_id && pId === campRow.dm_id)),
+          });
+        });
+
+        // 2. Overlay / add from campaign_members
+        const memberRows = membersRes.data || [];
+        memberRows.forEach((m: any) => {
+          if (!m || !m.user_id) return;
+          const uId = String(m.user_id);
+          const existing = playerMap.get(uId) || { id: uId, _id: uId };
+          playerMap.set(uId, {
+            ...existing,
+            id: uId,
+            _id: uId,
+            characterName: m.character_name || existing.characterName || 'Avventuriero',
+            avatarUrl: m.avatar_url || existing.avatarUrl || '',
+            color: m.color || existing.color || '#6366f1',
+            isDm: Boolean(m.role === 'dm' || (campRow.dm_id && uId === campRow.dm_id) || existing.isDm),
+          });
+        });
+
+        // 3. Overlay / add from character_bios (authoritative for character name, avatar, color!)
+        characterBios.forEach((bio: any) => {
+          if (!bio || !bio.playerId) return;
+          const pId = String(bio.playerId);
+          const existing = playerMap.get(pId) || { id: pId, _id: pId };
+          const bioName = bio.characterName || bio.name;
+          playerMap.set(pId, {
+            ...existing,
+            id: pId,
+            _id: pId,
+            characterName: (bioName && bioName !== 'Personaggio') ? bioName : (existing.characterName || 'Avventuriero'),
+            avatarUrl: bio.avatarUrl || existing.avatarUrl || '',
+            color: bio.color || existing.color || '#6366f1',
+            isDm: Boolean((campRow.dm_id && pId === campRow.dm_id) || existing.isDm),
+          });
+        });
+
+        return Array.from(playerMap.values()).filter((p) => {
+          const pId = String(p.id).toLowerCase();
+          const pEmail = p.email ? String(p.email).toLowerCase() : '';
+          return !expelled.has(pId) && (!pEmail || !expelled.has(pEmail));
+        });
+      })();
+
       const result = {
         campaignCode: campRow.code || campaignCode,
         title: campRow.title || campaignCode,
@@ -613,19 +692,7 @@ export class SupabaseSyncService {
         calendarSystem: campRow.calendar_system || {},
         aiConfig: campRow.ai_config || {},
         expelledAccountIds: expelledAccounts,
-        activePlayers: (() => {
-          const raw = Array.isArray(campRow.active_players) ? campRow.active_players : [];
-          const expelled = new Set(
-            expelledAccounts.map((id: string) => String(id).toLowerCase())
-          );
-          return raw.filter((p: any) => {
-            if (!p || !p.id) return false;
-            const pId = String(p.id).toLowerCase();
-            const pAltId = p._id ? String(p._id).toLowerCase() : '';
-            const pEmail = p.email ? String(p.email).toLowerCase() : '';
-            return !expelled.has(pId) && (!pAltId || !expelled.has(pAltId)) && (!pEmail || !expelled.has(pEmail));
-          });
-        })(),
+        activePlayers,
         dossier: {},
         characterBios,
         familyRelations,

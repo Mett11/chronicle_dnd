@@ -76,7 +76,7 @@ export function resolveStorageUrl(
 
 export function resolveStorageUrlArray(
   arr: any[] | null | undefined,
-  defaultBucket: string = 'campaign-assets'
+  defaultBucket: string = 'chronicle-media'
 ): string[] {
   if (!Array.isArray(arr)) return [];
   return arr
@@ -126,7 +126,7 @@ export function chapterRowToModel(
     description: String(row.synopsis || row.description || metaObj.description || '').trim(),
     order: Number(row.order_index ?? row.number ?? metaObj.order ?? 1),
     color: row.color || metaObj.color || '#6366f1',
-    coverImageUrl: resolveStorageUrl(rawCover, 'campaign-assets'),
+    coverImageUrl: resolveStorageUrl(rawCover, 'chronicle-media'),
     createdAt: row.created_at || metaObj.createdAt || new Date().toISOString(),
   };
 }
@@ -337,8 +337,8 @@ export function entityRowToModel(row: any): Entity {
     : customAttrs.imageUrl
     ? [customAttrs.imageUrl]
     : [];
-  const resolvedImages = resolveStorageUrlArray(rawImages, 'campaign-assets');
-  const mainImage = resolveStorageUrl(row.image_url || customAttrs.imageUrl || resolvedImages[0] || '', 'campaign-assets');
+  const resolvedImages = resolveStorageUrlArray(rawImages, 'chronicle-media');
+  const mainImage = resolveStorageUrl(row.image_url || customAttrs.imageUrl || resolvedImages[0] || '', 'chronicle-media');
 
   return {
     _id: String(row.id || ''),
@@ -417,7 +417,7 @@ export function noteRowToModel(
   const meta = notesMeta?.[row.id] || {};
   const resolvedImages = resolveStorageUrlArray(
     Array.isArray(meta.images) ? meta.images : Array.isArray(row.images) ? row.images : [],
-    'campaign-assets'
+    'chronicle-media'
   );
 
   return {
@@ -504,7 +504,7 @@ export function mapRowToModel(
     title: row.title || 'Mappa',
     description: meta.description || row.description || '',
     folderId: meta.folderId || row.folder_id || undefined,
-    imageUrl: resolveStorageUrl(row.image_url || meta.imageUrl || '', 'campaign-assets'),
+    imageUrl: resolveStorageUrl(row.image_url || meta.imageUrl || '', 'chronicle-media'),
     pins: Array.isArray(row.pins) ? row.pins : [],
     scaleLabel: row.scale_label || meta.scaleLabel || undefined,
     isDefault: Boolean(row.is_default || meta.isDefault),
@@ -543,7 +543,7 @@ export function scrapbookRowToModel(row: any): ScrapbookItem {
   return {
     id: String(row.id || ''),
     title: row.title || '',
-    imageUrl: resolveStorageUrl(row.image_url || '', 'campaign-assets'),
+    imageUrl: resolveStorageUrl(row.image_url || '', 'chronicle-media'),
     caption: row.caption || row.description || '',
     authorName: row.created_by || row.author_name || '',
     category: row.category || 'moment',

@@ -1107,6 +1107,9 @@ export class CloudSyncService {
                 window.dispatchEvent(new CustomEvent('chronicle_campaign_updated'));
                 window.dispatchEvent(new CustomEvent('chronicle_sessions_updated', { detail: { sessions: supaData.sessions } }));
                 window.dispatchEvent(new CustomEvent('chronicle_chapters_updated'));
+                window.dispatchEvent(new CustomEvent('chronicle_maps_updated', { detail: { maps: supaData.maps } }));
+                window.dispatchEvent(new CustomEvent('chronicle_character_bio_updated'));
+                window.dispatchEvent(new CustomEvent('chronicle_accounts_updated'));
                 window.dispatchEvent(new CustomEvent('chronicle_data_updated'));
               }
             }

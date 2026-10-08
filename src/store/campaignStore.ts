@@ -2450,8 +2450,19 @@ export class CampaignManager {
     );
 
     const charBio = this.getCharacterBio(account.id);
-    const resolvedCharName = profile?.characterName || charBio?.characterName || charBio?.name || account.characterName;
-    const resolvedAvatar = profile?.avatarUrl !== undefined ? profile.avatarUrl : (charBio?.avatarUrl || account.avatarUrl);
+    const resolvedCharName =
+      (charBio?.characterName && charBio.characterName.trim() && charBio.characterName !== 'Personaggio')
+        ? charBio.characterName.trim()
+        : (charBio?.name && charBio.name.trim() && charBio.name !== 'Personaggio')
+        ? charBio.name.trim()
+        : (profile?.characterName && profile.characterName.trim() && profile.characterName !== 'Personaggio')
+        ? profile.characterName.trim()
+        : account.characterName;
+    const resolvedAvatar = (charBio?.avatarUrl && charBio.avatarUrl.trim())
+      ? charBio.avatarUrl.trim()
+      : (profile?.avatarUrl !== undefined && profile.avatarUrl.trim())
+      ? profile.avatarUrl.trim()
+      : account.avatarUrl;
     const resolvedColorFinal = profile?.color || charBio?.color || resolvedColor;
 
     return {
