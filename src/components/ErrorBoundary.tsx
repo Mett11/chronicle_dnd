@@ -36,13 +36,36 @@ export class ErrorBoundary extends Component<Props, State> {
             <p className="text-xs text-content-3">
               Si è verificato un errore imprevisto nell'interfaccia.
             </p>
-            <button
-              type="button"
-              onClick={() => window.location.reload()}
-              className="px-4 py-2 bg-primary text-white rounded-xl text-xs font-semibold cursor-pointer"
-            >
-              Ricarica Pagina
-            </button>
+            {this.state.error && (
+              <div className="text-left bg-surface-2/60 border border-border-default/40 rounded-lg p-3 text-[11px] font-mono text-content-2 overflow-x-auto max-h-32">
+                {this.state.error.message || String(this.state.error)}
+              </div>
+            )}
+            <div className="flex items-center justify-center gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  this.setState({ hasError: false, error: null });
+                  window.location.reload();
+                }}
+                className="px-4 py-2 bg-primary text-white rounded-xl text-xs font-semibold cursor-pointer hover:bg-primary-hover transition-colors"
+              >
+                Ricarica Pagina
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  try {
+                    localStorage.removeItem('chronicle_current_campaign');
+                  } catch {}
+                  this.setState({ hasError: false, error: null });
+                  window.location.href = window.location.pathname;
+                }}
+                className="px-4 py-2 bg-surface-2 text-content-1 rounded-xl text-xs font-semibold cursor-pointer hover:bg-surface-3 transition-colors border border-border-default"
+              >
+                Torna al Portale
+              </button>
+            </div>
           </div>
         </div>
       );

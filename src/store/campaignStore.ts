@@ -2449,20 +2449,18 @@ export class CampaignManager {
       (profile?.tags && profile.tags.includes('Co-Master'))
     );
 
-    const charBio = this.getCharacterBio(account.id);
-    const resolvedCharName =
-      (charBio?.characterName && charBio.characterName.trim() && charBio.characterName !== 'Personaggio')
-        ? charBio.characterName.trim()
-        : (charBio?.name && charBio.name.trim() && charBio.name !== 'Personaggio')
-        ? charBio.name.trim()
-        : (profile?.characterName && profile.characterName.trim() && profile.characterName !== 'Personaggio')
-        ? profile.characterName.trim()
-        : account.characterName;
-    const resolvedAvatar = (charBio?.avatarUrl && charBio.avatarUrl.trim())
-      ? charBio.avatarUrl.trim()
-      : (profile?.avatarUrl !== undefined && profile.avatarUrl.trim())
-      ? profile.avatarUrl.trim()
-      : account.avatarUrl;
+    // Check bios directly without calling getCharacterBio (to prevent mutual recursion)
+    const bios = this.getAllCharacterBios();
+    const cleanId = String(account.id || '').toLowerCase();
+    const cleanEmail = String(account.email || '').toLowerCase();
+    const charBio = bios.find((b) => {
+      if (!b) return false;
+      const bPid = String(b.playerId || (b as any).player_id || '').toLowerCase();
+      const bEmail = String((b as any).email || '').toLowerCase();
+      return (cleanId && bPid === cleanId) || (cleanEmail && bEmail && bEmail === cleanEmail);
+    });
+    const resolvedCharName = profile?.characterName || charBio?.characterName || charBio?.name || account.characterName;
+    const resolvedAvatar = profile?.avatarUrl !== undefined ? profile.avatarUrl : (charBio?.avatarUrl || account.avatarUrl);
     const resolvedColorFinal = profile?.color || charBio?.color || resolvedColor;
 
     return {
@@ -5105,11 +5103,11 @@ export class CampaignManager {
     let found = bios.find((b) => b && b.playerId === playerId);
     if (found) return found;
 
-    // Smart fallback 1: Match by characterName or email from players pool
-    const players = this.getPlayers();
-    const targetPlayer = players.find((p) => p && (p._id === playerId || p.email === playerId));
-    const targetName = (targetPlayer?.characterName || '').trim().toLowerCase();
-    const targetEmail = (targetPlayer?.email || '').trim().toLowerCase();
+    // Smart fallback 1: Match by characterName or email from raw accounts pool (without calling getPlayers)
+    const accounts = this.getAccounts();
+    const targetAccount = accounts.find((a) => a && (a.id === playerId || a.email === playerId));
+    const targetName = (targetAccount?.characterName || '').trim().toLowerCase();
+    const targetEmail = (targetAccount?.email || '').trim().toLowerCase();
 
     if (targetName || targetEmail) {
       found = bios.find((b) => {
