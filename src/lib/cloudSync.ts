@@ -732,8 +732,13 @@ export class CloudSyncService {
                 ? pLoc.status
                 : (pRem.status || pLoc.status || 'active');
 
+            const authoritativeCharName =
+              (pRem?.characterName && pRem.characterName !== 'Avventuriero' && pRem.characterName !== rem.email)
+                ? pRem.characterName
+                : (pTop.characterName || pBase.characterName);
+
             mergedCampaignProfiles[k] = {
-              characterName: pTop.characterName || pBase.characterName,
+              characterName: authoritativeCharName,
               color: pTop.color || pBase.color || '#6366f1',
               avatarUrl: pTop.avatarUrl !== undefined ? pTop.avatarUrl : pBase.avatarUrl,
               status: resolvedStatus,
@@ -763,10 +768,15 @@ export class CloudSyncService {
             ? loc.aliases
             : (rem.aliases && rem.aliases.length > 0 ? rem.aliases : []);
 
+        const authoritativeAccountName =
+          (rem.characterName && rem.characterName !== 'Avventuriero' && rem.characterName !== 'Dungeon Master' && rem.characterName !== rem.email)
+            ? rem.characterName
+            : (loc.characterName || rem.characterName);
+
         mergedMap.set(loc.id, {
           ...rem,
           ...loc,
-          characterName: loc.characterName || rem.characterName,
+          characterName: authoritativeAccountName,
           color: (isLocActive && loc.color) ? loc.color : (loc.color || rem.color || '#6366f1'),
           avatarUrl: loc.avatarUrl !== undefined ? loc.avatarUrl : rem.avatarUrl,
           joinedCampaigns: finalJoined,
@@ -1080,9 +1090,22 @@ export class CloudSyncService {
               if (Array.isArray(supaData.worldLoreArticles)) {
                 CampaignManager.saveAllWorldLoreArticlesLocalOnly(supaData.worldLoreArticles);
               }
+              if (Array.isArray(supaData.campaignMembers)) {
+                CampaignManager.saveCampaignMembersLocalOnly(activeCode, supaData.campaignMembers);
+              }
               if (Array.isArray(supaData.activePlayers)) {
                 try { this.mergeRemoteAccounts(supaData.activePlayers); } catch (e) { console.warn(e); }
               }
+
+              CampaignManager.updateCampaignMetaLocalOnly(activeCode, {
+                name: supaData.title || undefined,
+                subtitle: supaData.subtitle || undefined,
+                description: supaData.description || undefined,
+                dmId: supaData.dmId || undefined,
+                dmIsPlayer: supaData.dmIsPlayer,
+                titleFont: supaData.titleFont as any,
+                titleEffect: supaData.titleEffect as any,
+              });
 
               if (supaData.calendarSystem && typeof supaData.calendarSystem === 'object' && Object.keys(supaData.calendarSystem).length > 0) {
                 try {
@@ -1107,9 +1130,6 @@ export class CloudSyncService {
                 window.dispatchEvent(new CustomEvent('chronicle_campaign_updated'));
                 window.dispatchEvent(new CustomEvent('chronicle_sessions_updated', { detail: { sessions: supaData.sessions } }));
                 window.dispatchEvent(new CustomEvent('chronicle_chapters_updated'));
-                window.dispatchEvent(new CustomEvent('chronicle_maps_updated', { detail: { maps: supaData.maps } }));
-                window.dispatchEvent(new CustomEvent('chronicle_character_bio_updated'));
-                window.dispatchEvent(new CustomEvent('chronicle_accounts_updated'));
                 window.dispatchEvent(new CustomEvent('chronicle_data_updated'));
               }
             }

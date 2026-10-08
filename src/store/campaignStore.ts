@@ -17,6 +17,7 @@ import {
   ScrapbookItem,
   CampaignChapter,
   CampaignProfile,
+  CampaignMemberRecord,
   DmResponse,
   CharacterBio,
   CharacterRelationship,
@@ -1947,6 +1948,41 @@ export class CampaignManager {
     }
   }
 
+  static getCampaignMembers(code: string): CampaignMemberRecord[] {
+    if (!code) return [];
+    const cleanCode = code.trim().toUpperCase();
+    const key = `chronicle_${cleanCode}_campaign_members`;
+    return getCached(key, () => {
+      const saved = localStorage.getItem(key);
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed)) return parsed;
+        } catch {}
+      }
+      return [];
+    });
+  }
+
+  static saveCampaignMembersLocalOnly(code: string, members: CampaignMemberRecord[]) {
+    if (!code) return;
+    const cleanCode = code.trim().toUpperCase();
+    const key = `chronicle_${cleanCode}_campaign_members`;
+    setCached(key, members);
+    safeLocalStorageSetItem(key, JSON.stringify(members));
+  }
+
+  static getCampaignMember(code: string, userId?: string, email?: string): CampaignMemberRecord | null {
+    if (!code || (!userId && !email)) return null;
+    const members = this.getCampaignMembers(code);
+    const lowId = userId ? String(userId).toLowerCase() : '';
+    const lowEmail = email ? String(email).toLowerCase() : '';
+    return members.find((m) => {
+      const mId = String(m.userId || '').toLowerCase();
+      return (lowId && mId === lowId) || (lowEmail && mId === lowEmail);
+    }) || null;
+  }
+
   static leaveCampaign(accountId: string, code: string) {
     const cleanCode = code.trim().toUpperCase();
     const accounts = this.getAccounts();
@@ -2449,6 +2485,10 @@ export class CampaignManager {
       (profile?.tags && profile.tags.includes('Co-Master'))
     );
 
+    const campaignMember = cleanCode
+      ? this.getCampaignMember(cleanCode, account.id, account.email)
+      : null;
+
     // Check bios directly without calling getCharacterBio (to prevent mutual recursion)
     const bios = this.getAllCharacterBios();
     const cleanId = String(account.id || '').toLowerCase();
@@ -2459,7 +2499,24 @@ export class CampaignManager {
       const bEmail = String((b as any).email || '').toLowerCase();
       return (cleanId && bPid === cleanId) || (cleanEmail && bEmail && bEmail === cleanEmail);
     });
-    const resolvedCharName = profile?.characterName || charBio?.characterName || charBio?.name || account.characterName;
+
+    const memName = campaignMember?.characterName?.trim();
+    const bioName = charBio?.characterName?.trim() || charBio?.name?.trim();
+    const accName = account.characterName?.trim();
+    const profName = profile?.characterName?.trim();
+    const emailPrefix = account.email ? account.email.split('@')[0].toLowerCase() : '';
+
+    const validProfName = profName && profName.toLowerCase() !== emailPrefix ? profName : null;
+    const validAccName = accName && accName !== 'Avventuriero' && accName !== 'Dungeon Master' && accName.toLowerCase() !== emailPrefix ? accName : null;
+
+    const resolvedCharName =
+      memName ||
+      validAccName ||
+      validProfName ||
+      bioName ||
+      profName ||
+      accName ||
+      'Avventuriero';
     const resolvedAvatar = profile?.avatarUrl !== undefined ? profile.avatarUrl : (charBio?.avatarUrl || account.avatarUrl);
     const resolvedColorFinal = profile?.color || charBio?.color || resolvedColor;
 

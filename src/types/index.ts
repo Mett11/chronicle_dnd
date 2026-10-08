@@ -1,5 +1,13 @@
 export type PlayerPartyStatus = 'active' | 'inactive' | 'retired' | 'dead';
 
+export interface CampaignMemberRecord {
+  campaignCode: string;
+  userId: string;
+  role: 'dm' | 'player';
+  characterName?: string;
+  createdAt?: string;
+}
+
 export interface CampaignProfile {
   characterName: string;
   avatarUrl?: string;

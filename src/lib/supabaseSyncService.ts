@@ -421,7 +421,7 @@ export class SupabaseSyncService {
         let campaignRow: any = null;
         const initialCampRes = await supabase
           .from('campaigns')
-          .select('code, title, subtitle, description, system, dm_id, calendar_system, ai_config, active_players, expelled_accounts, map_folders, dm_is_player, created_at, updated_at')
+          .select('code, title, subtitle, description, system, dm_id, calendar_system, ai_config, active_players, expelled_accounts, map_folders, dm_is_player, title_font, title_effect, created_at, updated_at')
           .or(orFilterCodes)
           .maybeSingle();
 
@@ -435,7 +435,7 @@ export class SupabaseSyncService {
           try {
             const allCampsRes = await supabase
               .from('campaigns')
-              .select('code, title, subtitle, description, system, dm_id, calendar_system, ai_config, active_players, expelled_accounts, map_folders, dm_is_player, created_at, updated_at')
+              .select('code, title, subtitle, description, system, dm_id, calendar_system, ai_config, active_players, expelled_accounts, map_folders, dm_is_player, title_font, title_effect, created_at, updated_at')
               .limit(50);
             if (allCampsRes.data && allCampsRes.data.length > 0) {
               const targetSlug = slugifyCampaignTitle(campaignTitleOrSlug || campaignCode);
@@ -468,7 +468,6 @@ export class SupabaseSyncService {
           notesRes,
           characterBiosRes,
           familyRelationsRes,
-          mapsRes,
           membersRes,
         ] = await Promise.all([
           supabase
@@ -499,14 +498,8 @@ export class SupabaseSyncService {
             .or(activeOrCampFilter)
             .then(res => res, () => ({ data: [] })),
           supabase
-            .from('maps')
-            .select('id, campaign_code, title, description, image_url, scale_label, entity_id, folder_id, pins, fog_of_war, is_default, is_secret, shared_with_dm, created_at, updated_at')
-            .or(activeOrCampFilter)
-            .order('created_at', { ascending: true })
-            .then(res => res, () => ({ data: [] })),
-          supabase
             .from('campaign_members')
-            .select('campaign_code, user_id, role, character_name, avatar_url, color')
+            .select('campaign_code, user_id, role, character_name, created_at')
             .or(activeOrCampFilter)
             .then(res => res, () => ({ data: [] })),
         ]);
@@ -527,9 +520,7 @@ export class SupabaseSyncService {
         (entitiesRes.data && entitiesRes.data.length > 0) ||
         (notesRes.data && notesRes.data.length > 0) ||
         (characterBiosRes.data && characterBiosRes.data.length > 0) ||
-        (familyRelationsRes.data && familyRelationsRes.data.length > 0) ||
-        (mapsRes.data && mapsRes.data.length > 0) ||
-        (membersRes.data && membersRes.data.length > 0)
+        (familyRelationsRes.data && familyRelationsRes.data.length > 0)
       );
 
       if (!hasAnyData) {
@@ -577,8 +568,8 @@ export class SupabaseSyncService {
         noteRowToModel(row)
       );
 
-      // Maps loaded directly from public.maps
-      const maps: WorldMap[] = (mapsRes.data || []).map((row: any) => mapRowToModel(row));
+      // Heavy media/articles are lazy loaded on demand
+      const maps: WorldMap[] | undefined = undefined;
       const scrapbookItems: ScrapbookItem[] | undefined = undefined;
       const audioLogs: AudioLog[] | undefined = undefined;
       const worldLoreArticles: any[] | undefined = undefined;
@@ -617,69 +608,13 @@ export class SupabaseSyncService {
         }));
       }
 
-      // Reconcile complete and authoritative list of active party players
-      const activePlayers = (() => {
-        const expelled = new Set(
-          expelledAccounts.map((id: string) => String(id).toLowerCase())
-        );
-        const playerMap = new Map<string, any>();
-
-        // 1. Seed from JSONB active_players (if present)
-        const rawJsonPlayers = Array.isArray(campRow.active_players) ? campRow.active_players : [];
-        rawJsonPlayers.forEach((p: any) => {
-          if (!p || (!p.id && !p._id)) return;
-          const pId = String(p.id || p._id);
-          playerMap.set(pId, {
-            id: pId,
-            _id: pId,
-            characterName: p.characterName || p.name || 'Avventuriero',
-            email: p.email || '',
-            avatarUrl: p.avatarUrl || '',
-            color: p.color || '#6366f1',
-            isDm: Boolean(p.isDm || (campRow.dm_id && pId === campRow.dm_id)),
-          });
-        });
-
-        // 2. Overlay / add from campaign_members
-        const memberRows = membersRes.data || [];
-        memberRows.forEach((m: any) => {
-          if (!m || !m.user_id) return;
-          const uId = String(m.user_id);
-          const existing = playerMap.get(uId) || { id: uId, _id: uId };
-          playerMap.set(uId, {
-            ...existing,
-            id: uId,
-            _id: uId,
-            characterName: m.character_name || existing.characterName || 'Avventuriero',
-            avatarUrl: m.avatar_url || existing.avatarUrl || '',
-            color: m.color || existing.color || '#6366f1',
-            isDm: Boolean(m.role === 'dm' || (campRow.dm_id && uId === campRow.dm_id) || existing.isDm),
-          });
-        });
-
-        // 3. Overlay / add from character_bios (authoritative for character name, avatar, color!)
-        characterBios.forEach((bio: any) => {
-          if (!bio || !bio.playerId) return;
-          const pId = String(bio.playerId);
-          const existing = playerMap.get(pId) || { id: pId, _id: pId };
-          const bioName = bio.characterName || bio.name;
-          playerMap.set(pId, {
-            ...existing,
-            id: pId,
-            _id: pId,
-            characterName: (bioName && bioName !== 'Personaggio') ? bioName : (existing.characterName || 'Avventuriero'),
-            avatarUrl: bio.avatarUrl || existing.avatarUrl || '',
-            color: bio.color || existing.color || '#6366f1',
-            isDm: Boolean((campRow.dm_id && pId === campRow.dm_id) || existing.isDm),
-          });
-        });
-
-        return Array.from(playerMap.values()).filter((p) => {
-          const pId = String(p.id).toLowerCase();
-          const pEmail = p.email ? String(p.email).toLowerCase() : '';
-          return !expelled.has(pId) && (!pEmail || !expelled.has(pEmail));
-        });
-      })();
+      const campaignMembers: any[] = (membersRes?.data || []).map((row: any) => ({
+        campaignCode: (row.campaign_code || '').trim().toUpperCase(),
+        userId: row.user_id,
+        role: row.role || 'player',
+        characterName: row.character_name || '',
+        createdAt: row.created_at,
+      }));
 
       const result = {
         campaignCode: campRow.code || campaignCode,
@@ -689,10 +624,31 @@ export class SupabaseSyncService {
         system: campRow.system || 'D&D 5e',
         dmId: campRow.dm_id || '',
         dmIsPlayer,
+        titleFont: campRow.title_font || 'cinzel',
+        titleEffect: campRow.title_effect || 'default',
         calendarSystem: campRow.calendar_system || {},
         aiConfig: campRow.ai_config || {},
         expelledAccountIds: expelledAccounts,
-        activePlayers,
+        campaignMembers,
+        activePlayers: (() => {
+          const raw = Array.isArray(campRow.active_players) ? campRow.active_players : [];
+          const expelled = new Set(
+            expelledAccounts.map((id: string) => String(id).toLowerCase())
+          );
+          return raw.filter((p: any) => {
+            if (!p || !p.id) return false;
+            const pId = String(p.id).toLowerCase();
+            const pAltId = p._id ? String(p._id).toLowerCase() : '';
+            const pEmail = p.email ? String(p.email).toLowerCase() : '';
+            return !expelled.has(pId) && (!pAltId || !expelled.has(pAltId)) && (!pEmail || !expelled.has(pEmail));
+          }).map((p: any) => {
+            const mem = campaignMembers.find((m) => m.userId === p.id || (p.email && m.userId === p.email));
+            if (mem && mem.characterName) {
+              return { ...p, characterName: mem.characterName };
+            }
+            return p;
+          });
+        })(),
         dossier: {},
         characterBios,
         familyRelations,
@@ -1220,7 +1176,7 @@ export class SupabaseSyncService {
         character_name: characterName || null,
         created_at: new Date().toISOString(),
       };
-      const { error } = await supabase.from('campaign_members').upsert(payload, { onConflict: 'campaign_code,user_id' });
+      const { error } = await supabase.from('campaign_members').upsert(payload, { onConflict: 'id' });
       return !error;
     } catch {
       return false;
@@ -1282,7 +1238,7 @@ export class SupabaseSyncService {
         user_id: newDmUserId,
         role: 'dm',
         created_at: new Date().toISOString(),
-      }, { onConflict: 'campaign_code,user_id' });
+      }, { onConflict: 'id' });
       return true;
     } catch {
       return false;
@@ -2088,7 +2044,7 @@ export class SupabaseSyncService {
       try {
         const { data, error } = await supabase
           .from('campaigns')
-          .select('code, title, subtitle, description, system, dm_id, active_players, expelled_accounts, dm_is_player, created_at, updated_at');
+          .select('code, title, subtitle, description, system, dm_id, active_players, expelled_accounts, dm_is_player, title_font, title_effect, created_at, updated_at');
         if (error || !Array.isArray(data)) return [];
         const result = data.map((c) => {
           const activePlayers = Array.isArray(c.active_players) ? c.active_players : [];
@@ -2103,6 +2059,8 @@ export class SupabaseSyncService {
             subtitle: c.subtitle || '',
             description: c.description || '',
             system: c.system || 'D&D 5e',
+            titleFont: (c.title_font as any) || 'cinzel',
+            titleEffect: (c.title_effect as any) || 'default',
             createdAt: c.created_at || new Date().toISOString(),
             dmId: c.dm_id || dmPlayer?.id || undefined,
             dmEmail: dmPlayer?.email || undefined,

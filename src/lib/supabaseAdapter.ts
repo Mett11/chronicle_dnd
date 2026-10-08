@@ -76,7 +76,7 @@ export function resolveStorageUrl(
 
 export function resolveStorageUrlArray(
   arr: any[] | null | undefined,
-  defaultBucket: string = 'chronicle-media'
+  defaultBucket: string = 'campaign-assets'
 ): string[] {
   if (!Array.isArray(arr)) return [];
   return arr
@@ -126,7 +126,7 @@ export function chapterRowToModel(
     description: String(row.synopsis || row.description || metaObj.description || '').trim(),
     order: Number(row.order_index ?? row.number ?? metaObj.order ?? 1),
     color: row.color || metaObj.color || '#6366f1',
-    coverImageUrl: resolveStorageUrl(rawCover, 'chronicle-media'),
+    coverImageUrl: resolveStorageUrl(rawCover, 'campaign-assets'),
     createdAt: row.created_at || metaObj.createdAt || new Date().toISOString(),
   };
 }
@@ -337,8 +337,8 @@ export function entityRowToModel(row: any): Entity {
     : customAttrs.imageUrl
     ? [customAttrs.imageUrl]
     : [];
-  const resolvedImages = resolveStorageUrlArray(rawImages, 'chronicle-media');
-  const mainImage = resolveStorageUrl(row.image_url || customAttrs.imageUrl || resolvedImages[0] || '', 'chronicle-media');
+  const resolvedImages = resolveStorageUrlArray(rawImages, 'campaign-assets');
+  const mainImage = resolveStorageUrl(row.image_url || customAttrs.imageUrl || resolvedImages[0] || '', 'campaign-assets');
 
   return {
     _id: String(row.id || ''),
@@ -417,7 +417,7 @@ export function noteRowToModel(
   const meta = notesMeta?.[row.id] || {};
   const resolvedImages = resolveStorageUrlArray(
     Array.isArray(meta.images) ? meta.images : Array.isArray(row.images) ? row.images : [],
-    'chronicle-media'
+    'campaign-assets'
   );
 
   return {
@@ -504,7 +504,7 @@ export function mapRowToModel(
     title: row.title || 'Mappa',
     description: meta.description || row.description || '',
     folderId: meta.folderId || row.folder_id || undefined,
-    imageUrl: resolveStorageUrl(row.image_url || meta.imageUrl || '', 'chronicle-media'),
+    imageUrl: resolveStorageUrl(row.image_url || meta.imageUrl || '', 'campaign-assets'),
     pins: Array.isArray(row.pins) ? row.pins : [],
     scaleLabel: row.scale_label || meta.scaleLabel || undefined,
     isDefault: Boolean(row.is_default || meta.isDefault),
@@ -543,7 +543,7 @@ export function scrapbookRowToModel(row: any): ScrapbookItem {
   return {
     id: String(row.id || ''),
     title: row.title || '',
-    imageUrl: resolveStorageUrl(row.image_url || '', 'chronicle-media'),
+    imageUrl: resolveStorageUrl(row.image_url || '', 'campaign-assets'),
     caption: row.caption || row.description || '',
     authorName: row.created_by || row.author_name || '',
     category: row.category || 'moment',
@@ -725,19 +725,15 @@ export function characterBioModelToRow(bio: CharacterBio, campaignCode?: string)
     player_id: bio.playerId,
     campaign_code: cleanCode,
     name: charName,
-    character_name: charName,
     avatar_url: bio.avatarUrl || null,
     color: bio.color || '#6366f1',
-    bio: bio.bio || bio.notes || null,
     background: bgVal,
     class_level: classVal,
-    character_class: classVal,
     alignment: alignmentVal,
-    character_alignment: alignmentVal,
     personality: personalityStr,
-    personality_traits: personalityTraitsArray,
-    traits: Array.isArray(bio.traits) ? bio.traits : [],
-    stats: (bio.stats && typeof bio.stats === 'object') ? bio.stats : {},
+    ideals: bio.ideals || '',
+    bonds: bio.bonds || '',
+    flaws: bio.flaws || '',
     secrets: typeof bio.secrets === 'string' ? bio.secrets : JSON.stringify(bio.secrets || ''),
     privacy_settings: bio.privacySettings || { isBioPublic: true, isStatsPublic: true, isBackgroundPublic: false, isSecretsPublic: false },
     timeline_memories: Array.isArray(bio.timelineMemories) ? bio.timelineMemories : [],
@@ -754,9 +750,6 @@ export function characterBioModelToRow(bio: CharacterBio, campaignCode?: string)
     birth_year: typeof bio.birthYear === 'number' ? bio.birthYear : 1492,
     appearance_description: bio.appearanceDescription || '',
     current_status: bio.currentStatus || '',
-    ideals: bio.ideals || '',
-    bonds: bio.bonds || '',
-    flaws: bio.flaws || '',
     extra_data: {
       ...bio,
       characterName: charName,
@@ -764,6 +757,8 @@ export function characterBioModelToRow(bio: CharacterBio, campaignCode?: string)
       characterAlignment: alignmentVal,
       backstoryMarkdown: bgVal,
       personalityTraits: personalityTraitsArray,
+      traits: Array.isArray(bio.traits) ? bio.traits : [],
+      stats: (bio.stats && typeof bio.stats === 'object') ? bio.stats : {},
       updatedAt: new Date().toISOString(),
     },
     updated_at: new Date().toISOString(),
@@ -788,7 +783,7 @@ export function worldLoreArticleRowToModel(row: any): any {
     categoryId: row.category_id || 'general',
     dmOnly: Boolean(row.is_draft),
     isDraft: Boolean(row.is_draft),
-    authorId: row.author_id || '',
+    authorId: row.author_player_id || row.author_id || '',
     authorPlayerId: row.author_player_id || row.author_id || '',
     authorName: row.author_name || '',
     tags: Array.isArray(row.tags) ? row.tags : [],
@@ -813,7 +808,6 @@ export function worldLoreArticleModelToRow(art: any, campaignCode: string): Reco
     content: art.fullContentMarkdown || art.content || '',
     category_id: art.category || art.categoryId || 'general',
     is_draft: Boolean(art.dmOnly ?? art.isDraft),
-    author_id: art.authorId || art.authorPlayerId || null,
     author_player_id: art.authorPlayerId || art.authorId || null,
     author_name: art.authorName || '',
     tags: Array.isArray(art.tags) ? art.tags : [],
