@@ -4410,14 +4410,44 @@ export class CampaignManager {
   }
 
   // === WORLD MAPS, FOLDERS & PINS ===
+  static normalizeFolder(raw: any, idx = 0): MapFolder {
+    const id = String(raw?.id || raw?._id || raw?.folder_id || raw?.code || `folder_${Date.now()}_${idx}`);
+    const name = String(raw?.name || raw?.title || raw?.label || raw?.folder_name || raw?.folderName || `Cartella ${idx + 1}`).trim();
+    const color = raw?.color || '#3B82F6';
+    const placeEntityId = raw?.placeEntityId || raw?.place_entity_id || raw?.entityId || raw?.entity_id || undefined;
+    return {
+      id,
+      name: name || `Cartella ${idx + 1}`,
+      description: raw?.description || '',
+      color,
+      placeEntityId,
+      createdAt: raw?.createdAt || raw?.created_at || new Date().toISOString(),
+      isSecret: Boolean(raw?.isSecret || raw?.is_secret),
+      sharedWithDm: raw?.sharedWithDm !== false,
+    };
+  }
+
   static getMapFolders(): MapFolder[] {
     const key = this.getStorageKey("map_folders");
     return getCached(key, () => {
       const saved = localStorage.getItem(key);
       if (saved) {
         try {
-          const parsed = sanitizeArray<MapFolder>(JSON.parse(saved));
-          if (Array.isArray(parsed)) return parsed;
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed)) {
+            const seen = new Set<string>();
+            const normalized: MapFolder[] = [];
+            for (let i = 0; i < parsed.length; i++) {
+              const item = parsed[i];
+              if (!item) continue;
+              const norm = this.normalizeFolder(item, i);
+              if (!seen.has(norm.id)) {
+                seen.add(norm.id);
+                normalized.push(norm);
+              }
+            }
+            return normalized;
+          }
         } catch {}
       }
       return [];
@@ -4426,26 +4456,26 @@ export class CampaignManager {
 
   static saveMapFolders(folders: MapFolder[]) {
     const key = this.getStorageKey("map_folders");
-    const sanitized = sanitizeArray<MapFolder>(folders);
-    setCached(key, sanitized);
-    safeLocalStorageSetItem(key, JSON.stringify(sanitized));
+    const normalized = (folders || []).map((f, i) => this.normalizeFolder(f, i));
+    setCached(key, normalized);
+    safeLocalStorageSetItem(key, JSON.stringify(normalized));
     CloudSyncService.triggerCloudSave();
     if (isSupabaseConfigured()) {
       const code = this.getActiveCampaignCode() || 'default';
-      SupabaseSyncService.saveMapFolders(code, sanitized).catch(() => {});
+      SupabaseSyncService.saveMapFolders(code, normalized).catch(() => {});
     }
     try {
-      window.dispatchEvent(new CustomEvent('chronicle_map_folders_updated', { detail: { folders: sanitized } }));
+      window.dispatchEvent(new CustomEvent('chronicle_map_folders_updated', { detail: { folders: normalized } }));
     } catch {}
   }
 
   static saveMapFoldersLocalOnly(folders: MapFolder[]) {
     const key = this.getStorageKey("map_folders");
-    const sanitized = sanitizeArray<MapFolder>(folders);
-    setCached(key, sanitized);
-    safeLocalStorageSetItem(key, JSON.stringify(sanitized));
+    const normalized = (folders || []).map((f, i) => this.normalizeFolder(f, i));
+    setCached(key, normalized);
+    safeLocalStorageSetItem(key, JSON.stringify(normalized));
     try {
-      window.dispatchEvent(new CustomEvent('chronicle_map_folders_updated', { detail: { folders: sanitized } }));
+      window.dispatchEvent(new CustomEvent('chronicle_map_folders_updated', { detail: { folders: normalized } }));
     } catch {}
   }
 

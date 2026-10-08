@@ -844,18 +844,34 @@ export class SupabaseSyncService {
     if (!isSupabaseConfigured() || !campaignCode) return null;
     try {
       const cleanCode = campaignCode.trim().toUpperCase();
-      const { data, error } = await supabase
-        .from('maps')
-        .select('id, campaign_code, title, description, image_url, scale_label, entity_id, folder_id, pins, fog_of_war, is_default, is_secret, shared_with_dm, created_at, updated_at')
-        .eq('campaign_code', cleanCode)
-        .order('created_at', { ascending: true });
+      const [mapsRes, campRes] = await Promise.all([
+        supabase
+          .from('maps')
+          .select('id, campaign_code, title, description, image_url, scale_label, entity_id, folder_id, pins, fog_of_war, is_default, is_secret, shared_with_dm, created_at, updated_at')
+          .eq('campaign_code', cleanCode)
+          .order('created_at', { ascending: true }),
+        supabase
+          .from('campaigns')
+          .select('map_folders')
+          .eq('code', cleanCode)
+          .maybeSingle(),
+      ]);
 
-      if (error) {
-        console.warn('[Supabase] Warning reading maps in fetchMapsOnly:', error.message);
+      if (mapsRes.error) {
+        console.warn('[Supabase] Warning reading maps in fetchMapsOnly:', mapsRes.error.message);
         return null;
       }
 
-      return (data || []).map((row: any) => mapRowToModel(row));
+      const rawFolders = campRes?.data?.map_folders;
+      if (Array.isArray(rawFolders) && typeof window !== 'undefined') {
+        try {
+          const key = `chronicle_${cleanCode}_map_folders`;
+          localStorage.setItem(key, JSON.stringify(rawFolders));
+          window.dispatchEvent(new CustomEvent('chronicle_map_folders_updated', { detail: { folders: rawFolders } }));
+        } catch {}
+      }
+
+      return (mapsRes.data || []).map((row: any) => mapRowToModel(row));
     } catch (e) {
       console.warn('[Supabase] fetchMapsOnly error:', e);
       return null;

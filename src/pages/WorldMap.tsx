@@ -169,28 +169,49 @@ export function WorldMap() {
     }, 3500);
   };
 
+  const normalizedFolders = useMemo(() => {
+    return folders.map((f, idx) => ({
+      ...f,
+      id: String(f.id || (f as any)._id || (f as any).folder_id || `folder_${idx}`),
+      name: String(f.name || (f as any).title || (f as any).label || (f as any).folder_name || (f as any).folderName || `Cartella ${idx + 1}`).trim(),
+      description: f.description || '',
+      color: f.color || '#3B82F6',
+      placeEntityId: f.placeEntityId || (f as any).place_entity_id || (f as any).entityId,
+    }));
+  }, [folders]);
+
   const activeMap = useMemo(() => {
     return maps.find((m) => m.id === activeMapId) || maps[0] || null;
   }, [maps, activeMapId]);
 
   const activeMapFolder = useMemo(() => {
     if (!activeMap?.folderId) return null;
-    return folders.find((f) => f.id === activeMap.folderId) || null;
-  }, [activeMap, folders]);
+    const tId = String(activeMap.folderId);
+    return normalizedFolders.find((f) => f.id === tId) || null;
+  }, [activeMap, normalizedFolders]);
 
   const activeMapLinkedEntity = useMemo(() => {
     if (!activeMap?.entityId) return null;
     return entities.find((e) => e._id === activeMap.entityId) || null;
   }, [activeMap, entities]);
 
+  const knownFolderIds = useMemo(() => new Set(normalizedFolders.map((f) => f.id)), [normalizedFolders]);
+  const unassignedMaps = useMemo(
+    () => maps.filter((m) => !m.folderId || !knownFolderIds.has(String(m.folderId))),
+    [maps, knownFolderIds]
+  );
+
   // Listen to store updates
   useEffect(() => {
     const code = CampaignManager.getActiveCampaignCode();
     if (code && isSupabaseConfigured()) {
       SupabaseSyncService.fetchMapsOnly(code).then((remoteMaps) => {
-        if (remoteMaps && Array.isArray(remoteMaps) && remoteMaps.length > 0) {
-          CampaignManager.saveMapsLocalOnly(remoteMaps);
-          setMaps(remoteMaps);
+        if (remoteMaps && Array.isArray(remoteMaps)) {
+          if (remoteMaps.length > 0) {
+            CampaignManager.saveMapsLocalOnly(remoteMaps);
+            setMaps(remoteMaps);
+          }
+          setFolders(CampaignManager.getMapFolders());
         }
       }).catch((err) => {
         console.warn('[WorldMap] Failed fetching maps from Supabase:', err);
@@ -200,7 +221,10 @@ export function WorldMap() {
     const handleMapsUpdated = () => {
       setMaps(CampaignManager.getMaps());
     };
-    const handleFoldersUpdated = () => {
+    const handleFoldersUpdated = (e?: any) => {
+      if (e?.detail?.folders && Array.isArray(e.detail.folders)) {
+        CampaignManager.saveMapFoldersLocalOnly(e.detail.folders);
+      }
       setFolders(CampaignManager.getMapFolders());
     };
     const handleEntitiesUpdated = () => {
@@ -309,9 +333,9 @@ export function WorldMap() {
     let result = maps;
     if (selectedFolderFilter !== 'all') {
       if (selectedFolderFilter === 'unassigned') {
-        result = result.filter((m) => !m.folderId);
+        result = result.filter((m) => !m.folderId || !knownFolderIds.has(String(m.folderId)));
       } else {
-        result = result.filter((m) => m.folderId === selectedFolderFilter);
+        result = result.filter((m) => String(m.folderId || '') === selectedFolderFilter);
       }
     }
     if (!mapSearchQuery.trim()) return result;
@@ -322,7 +346,7 @@ export function WorldMap() {
         (m.description && m.description.toLowerCase().includes(query)) ||
         (m.scaleLabel && m.scaleLabel.toLowerCase().includes(query))
     );
-  }, [maps, selectedFolderFilter, mapSearchQuery]);
+  }, [maps, selectedFolderFilter, mapSearchQuery, knownFolderIds]);
 
   const toggleFolderCollapse = (folderId: string) => {
     setCollapsedFolders((prev) => ({
@@ -762,12 +786,21 @@ export function WorldMap() {
                     {activeMap.scaleLabel}
                   </span>
                 )}
-                {activeMapFolder && (
-                  <span
-                    style={{ borderColor: `${activeMapFolder.color || '#3B82F6'}40`, color: activeMapFolder.color || '#3B82F6' }}
-                    className="text-[11px] font-medium px-2 py-0.5 rounded-md bg-surface-2 border flex items-center gap-1 whitespace-nowrap"
+                {activeMapFolder ? (
+                  <button
+                    onClick={() => setSelectedFolderFilter(activeMapFolder.id)}
+                    style={{
+                      borderColor: `${activeMapFolder.color || '#3B82F6'}50`,
+                      color: activeMapFolder.color || '#3B82F6',
+                    }}
+                    className="text-[11px] font-medium px-2 py-0.5 rounded-md bg-surface-2 border flex items-center gap-1 whitespace-nowrap hover:bg-surface-3 transition-colors cursor-pointer"
+                    title={`Filtra cartella: ${activeMapFolder.name}`}
                   >
                     <FolderIcon size={11} /> {activeMapFolder.name}
+                  </button>
+                ) : (
+                  <span className="text-[11px] font-medium px-2 py-0.5 rounded-md bg-surface-2 border border-surface-3 text-content-3 flex items-center gap-1 whitespace-nowrap">
+                    <FolderOpen size={11} /> Mappa Principale (Senza Cartella)
                   </span>
                 )}
                 {activeMapLinkedEntity && (
@@ -781,9 +814,20 @@ export function WorldMap() {
                   </Link>
                 )}
               </div>
-              <p className="text-[11px] text-content-3 truncate mt-0.5">
-                {activeMap?.description || `${maps.length} mappe e ${folders.length} cartelle geografiche registrate`}
-              </p>
+              <div className="flex items-center gap-2 mt-0.5 text-[11px] text-content-3 flex-wrap">
+                <span className="font-medium text-content-2">{maps.length} mappe</span>
+                <span>&bull;</span>
+                <span className="inline-flex items-center gap-1 font-medium text-content-1">
+                  <FolderIcon size={12} className="text-primary" />
+                  {normalizedFolders.length} cartelle geografiche
+                </span>
+                {activeMap?.description && (
+                  <>
+                    <span>&bull;</span>
+                    <span className="truncate max-w-sm">{activeMap.description}</span>
+                  </>
+                )}
+              </div>
             </div>
           </div>
 
@@ -838,7 +882,7 @@ export function WorldMap() {
             }`}
           >
             <FolderOpen size={14} className={mobileView === 'panel' ? 'text-primary' : ''} />
-            <span>Tomo Cartografico ({maps.length})</span>
+            <span>Tomo &amp; Cartelle ({maps.length} mappe, {normalizedFolders.length} cartelle)</span>
           </button>
         </div>
       )}
@@ -973,6 +1017,64 @@ export function WorldMap() {
               <span>{isAddingPinMode ? 'Annulla' : '+ Piazza Punto'}</span>
             </button>
           </div>
+
+          {/* Floating Quick Folder Selector directly on the Map Viewport */}
+          {normalizedFolders.length > 0 && (
+            <div className="absolute top-3 sm:top-4 left-14 sm:left-16 right-36 sm:right-44 z-20 flex items-center justify-start pointer-events-none">
+              <div className="pointer-events-auto bg-surface-1/90 backdrop-blur-md border border-surface-3/80 shadow-lg px-2.5 py-1 rounded-xl flex items-center gap-1.5 max-w-full overflow-x-auto custom-scrollbar">
+                <span className="text-[10px] font-mono text-content-3 uppercase tracking-wider shrink-0 flex items-center gap-1">
+                  <FolderIcon size={11} className="text-primary" />
+                  <span className="hidden sm:inline">Cartelle:</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setSelectedFolderFilter('all')}
+                  className={`px-2 py-0.5 rounded-lg text-[10px] font-medium whitespace-nowrap transition-colors cursor-pointer ${
+                    selectedFolderFilter === 'all'
+                      ? 'bg-primary text-surface-0 font-semibold'
+                      : 'text-content-3 hover:text-content-1 hover:bg-surface-2'
+                  }`}
+                >
+                  Tutte ({maps.length})
+                </button>
+                {normalizedFolders.map((f) => {
+                  const folderMaps = maps.filter((m) => String(m.folderId || '') === f.id);
+                  const isCurrentActive = activeMapFolder?.id === f.id;
+                  const isFilterSelected = selectedFolderFilter === f.id;
+                  return (
+                    <button
+                      key={f.id}
+                      type="button"
+                      onClick={() => {
+                        setSelectedFolderFilter(f.id);
+                        if (folderMaps.length > 0 && (!activeMap || String(activeMap.folderId || '') !== f.id)) {
+                          setActiveMapId(folderMaps[0].id);
+                          setSelectedPin(null);
+                          handleResetView();
+                        }
+                      }}
+                      style={{
+                        borderColor: isFilterSelected || isCurrentActive ? f.color || '#3B82F6' : undefined,
+                      }}
+                      className={`px-2 py-0.5 rounded-lg text-[10px] font-medium whitespace-nowrap transition-colors flex items-center gap-1 cursor-pointer border ${
+                        isFilterSelected || isCurrentActive
+                          ? 'bg-surface-2 text-content-1 font-semibold shadow-xs'
+                          : 'border-transparent text-content-3 hover:text-content-1 hover:bg-surface-2/60'
+                      }`}
+                      title={`Cartella: ${f.name} (${folderMaps.length} mappe)`}
+                    >
+                      <span
+                        className="w-1.5 h-1.5 rounded-full shrink-0"
+                        style={{ backgroundColor: f.color || '#3B82F6' }}
+                      />
+                      <span className="truncate max-w-[120px]">{f.name}</span>
+                      <span className="text-[9px] opacity-70">({folderMaps.length})</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* Scale label & settings badge */}
           <div className="absolute bottom-3 sm:bottom-4 left-3 sm:left-4 z-30 px-3 py-1.5 rounded-xl bg-surface-2/95 backdrop-blur-md border border-surface-3 text-xs font-mono text-content-2 flex items-center gap-2 shadow-lg max-w-[80%] overflow-hidden">
@@ -1143,7 +1245,7 @@ export function WorldMap() {
               }`}
             >
               <FolderOpen size={13} className={sidebarTab === 'maps' ? 'text-primary' : ''} />
-              <span>Mappe ({maps.length})</span>
+              <span>Mappe &amp; Cartelle ({maps.length}/{normalizedFolders.length})</span>
             </button>
             <button
               onClick={() => handleSidebarTabChange('pins')}
@@ -1179,7 +1281,7 @@ export function WorldMap() {
                     <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-content-3" />
                     <input
                       type="text"
-                      placeholder="Cerca mappe..."
+                      placeholder="Cerca per mappa o cartella..."
                       value={mapSearchQuery}
                       onChange={(e) => setMapSearchQuery(e.target.value)}
                       className="w-full bg-surface-2 border border-surface-3 focus:border-primary rounded-xl pl-8 pr-3 py-1.5 text-xs text-content-1 outline-none transition-colors placeholder-content-3"
@@ -1198,8 +1300,8 @@ export function WorldMap() {
                     >
                       Tutte ({maps.length})
                     </button>
-                    {folders.map((f) => {
-                      const count = maps.filter((m) => m.folderId === f.id).length;
+                    {normalizedFolders.map((f) => {
+                      const count = maps.filter((m) => String(m.folderId || '') === f.id).length;
                       const isSelected = selectedFolderFilter === f.id;
                       return (
                         <button
@@ -1223,7 +1325,7 @@ export function WorldMap() {
                         </button>
                       );
                     })}
-                    {maps.some((m) => !m.folderId) && folders.length > 0 && (
+                    {unassignedMaps.length > 0 && normalizedFolders.length > 0 && (
                       <button
                         onClick={() => setSelectedFolderFilter('unassigned')}
                         className={`px-2.5 py-1 rounded-lg text-[11px] font-medium whitespace-nowrap transition-colors cursor-pointer ${
@@ -1232,19 +1334,34 @@ export function WorldMap() {
                             : 'bg-surface-2 text-content-3 hover:text-content-1 border border-surface-3'
                         }`}
                       >
-                        Senza cartella ({maps.filter((m) => !m.folderId).length})
+                        Senza cartella ({unassignedMaps.length})
                       </button>
                     )}
+                    <button
+                      onClick={() => handleOpenNewFolderModal()}
+                      className="px-2.5 py-1 rounded-lg text-[11px] font-medium whitespace-nowrap transition-colors flex items-center gap-1 bg-surface-2 text-content-3 hover:text-content-1 border border-surface-3 cursor-pointer"
+                      title="Crea una nuova cartella per organizzare le mappe"
+                    >
+                      <Plus size={11} /> + Cartella
+                    </button>
                   </div>
                 </div>
 
                 {/* Maps & Folders Tree / Accordion View */}
                 <div className="flex-1 overflow-y-auto custom-scrollbar space-y-3 pr-1">
                   {/* Folders Grouping */}
-                  {folders
-                    .filter((f) => selectedFolderFilter === 'all' || selectedFolderFilter === f.id)
+                  {normalizedFolders
+                    .filter((f) => {
+                      if (selectedFolderFilter !== 'all' && selectedFolderFilter !== f.id) return false;
+                      if (!mapSearchQuery.trim()) return true;
+                      const q = mapSearchQuery.toLowerCase();
+                      const matchesFolder = f.name.toLowerCase().includes(q) || (f.description && f.description.toLowerCase().includes(q));
+                      const folderMaps = maps.filter((m) => String(m.folderId || '') === f.id);
+                      const matchesMaps = folderMaps.some((m) => m.title.toLowerCase().includes(q) || (m.description && m.description.toLowerCase().includes(q)));
+                      return matchesFolder || matchesMaps;
+                    })
                     .map((f) => {
-                      const folderMaps = maps.filter((m) => m.folderId === f.id);
+                      const folderMaps = maps.filter((m) => String(m.folderId || '') === f.id);
                       const isCollapsed = !!collapsedFolders[f.id];
                       const linkedPlace = placeEntities.find((p) => p._id === f.placeEntityId);
 
@@ -1318,7 +1435,7 @@ export function WorldMap() {
                                   Nessuna mappa in questa cartella.
                                   <button
                                     onClick={() => handleOpenNewMapModal(f.id)}
-                                    className="block mx-auto mt-1 text-primary hover:underline font-medium not-italic"
+                                    className="block mx-auto mt-1 text-primary hover:underline font-medium not-italic cursor-pointer"
                                   >
                                     + Aggiungi mappa qui
                                   </button>
@@ -1416,17 +1533,16 @@ export function WorldMap() {
 
                   {/* Root / Unassigned Maps (if any or when selected) */}
                   {(selectedFolderFilter === 'all' || selectedFolderFilter === 'unassigned') &&
-                    maps.filter((m) => !m.folderId).length > 0 && (
+                    unassignedMaps.length > 0 && (
                       <div className="space-y-1.5 pt-1">
-                        {folders.length > 0 && (
+                        {normalizedFolders.length > 0 && (
                           <div className="px-1 text-[10px] font-mono uppercase tracking-wider text-content-3 flex items-center justify-between">
                             <span>Mappe Principali (Senza Cartella)</span>
-                            <span>({maps.filter((m) => !m.folderId).length})</span>
+                            <span>({unassignedMaps.length})</span>
                           </div>
                         )}
 
-                        {maps
-                          .filter((m) => !m.folderId)
+                        {unassignedMaps
                           .map((m) => {
                             const isActive = m.id === activeMapId;
                             const mapPlace = placeEntities.find((p) => p._id === m.entityId);
@@ -1631,8 +1747,8 @@ export function WorldMap() {
                       // Check if this linked place entity has its own dedicated Map in the Atlas
                       const dedicatedMap = maps.find((m) => m.id === linkedEnt.mapId || m.entityId === linkedEnt._id);
                       // Check if there are sub-maps in a folder linked to this place
-                      const placeFolder = folders.find((f) => f.placeEntityId === linkedEnt._id || (linkedEnt.folderId && f.id === linkedEnt.folderId));
-                      const folderMaps = placeFolder ? maps.filter((m) => m.folderId === placeFolder.id) : [];
+                      const placeFolder = normalizedFolders.find((f) => f.placeEntityId === linkedEnt._id || (linkedEnt.folderId && f.id === String(linkedEnt.folderId)));
+                      const folderMaps = placeFolder ? maps.filter((m) => String(m.folderId || '') === placeFolder.id) : [];
 
                       return (
                         <div className="p-3 rounded-xl bg-surface-2 border border-surface-3 space-y-2.5">
@@ -1833,8 +1949,8 @@ export function WorldMap() {
                     .map((place) => {
                       const isPinnedOnActiveMap = place.mapId === activeMap?.id && place.pinId;
                       const linkedDedicatedMap = maps.find((m) => m.id === place.mapId || m.entityId === place._id);
-                      const placeFolder = folders.find((f) => f.placeEntityId === place._id || (place.folderId && f.id === place.folderId));
-                      const folderMaps = placeFolder ? maps.filter((m) => m.folderId === placeFolder.id) : [];
+                      const placeFolder = normalizedFolders.find((f) => f.placeEntityId === place._id || (place.folderId && f.id === String(place.folderId)));
+                      const folderMaps = placeFolder ? maps.filter((m) => String(m.folderId || '') === placeFolder.id) : [];
 
                       return (
                         <div
@@ -1995,7 +2111,7 @@ export function WorldMap() {
                     className="w-full bg-surface-2 border border-surface-3 focus:border-primary rounded-xl px-3 py-2 text-content-1 outline-none"
                   >
                     <option value="">-- Nessuna (Mappa Principale / Root) --</option>
-                    {folders.map((f) => (
+                    {normalizedFolders.map((f) => (
                       <option key={f.id} value={f.id}>
                         📁 {f.name}
                       </option>
@@ -2112,7 +2228,7 @@ export function WorldMap() {
                     className="w-full bg-surface-2 border border-surface-3 focus:border-primary rounded-xl px-3 py-2 text-content-1 outline-none"
                   >
                     <option value="">-- Nessuna (Mappa Principale / Root) --</option>
-                    {folders.map((f) => (
+                    {normalizedFolders.map((f) => (
                       <option key={f.id} value={f.id}>
                         📁 {f.name}
                       </option>
@@ -2349,8 +2465,8 @@ export function WorldMap() {
                     {!mapToMove.folderId && <CheckCircle2 size={13} />}
                   </button>
 
-                  {folders.map((f) => {
-                    const isCurrent = mapToMove.folderId === f.id;
+                  {normalizedFolders.map((f) => {
+                    const isCurrent = String(mapToMove.folderId || '') === f.id;
                     return (
                       <button
                         key={f.id}

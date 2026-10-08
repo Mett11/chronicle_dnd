@@ -1794,9 +1794,9 @@ export function Entities() {
                 {detailEntity.type === 'place' && (() => {
                   const placeMap = maps.find((m) => m.id === detailEntity.mapId);
                   const linkedFolder = folders.find(
-                    (f) => f.placeEntityId === detailEntity._id || (detailEntity.folderId && f.id === detailEntity.folderId)
+                    (f) => f.placeEntityId === detailEntity._id || (detailEntity.folderId && String(f.id) === String(detailEntity.folderId))
                   );
-                  const folderMaps = linkedFolder ? maps.filter((m) => m.folderId === linkedFolder.id) : [];
+                  const folderMaps = linkedFolder ? maps.filter((m) => String(m.folderId || '') === linkedFolder.id) : [];
                   const directlyLinkedMaps = maps.filter((m) => m.entityId === detailEntity._id && m.id !== detailEntity.mapId);
 
                   return (
