@@ -314,7 +314,9 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
         const code = extractCampaignCode(pending);
         if (code) {
           setJoinCode(code);
-          localStorage.removeItem('chronicle_pending_join_code');
+          setTimeout(() => {
+            executeJoinByCode(code);
+          }, 150);
         }
       }
     } catch {}
@@ -406,10 +408,9 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
     setIsPgModalOpen(true);
   };
 
-  const handleJoinCampaign = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const executeJoinByCode = async (targetCode: string) => {
     setJoinError(null);
-    const cleanCode = extractCampaignCode(joinCode);
+    const cleanCode = extractCampaignCode(targetCode);
 
     if (!cleanCode) {
       setJoinError('Inserisci o incolla un link d’invito o un codice campagna valido.');
@@ -467,6 +468,15 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
         return;
       }
 
+      // Clear pending code from localStorage & clean URL query params once verified
+      try {
+        localStorage.removeItem('chronicle_pending_join_code');
+        if (typeof window !== 'undefined' && window.history?.replaceState) {
+          const cleanUrl = window.location.pathname;
+          window.history.replaceState({}, document.title, cleanUrl);
+        }
+      } catch {}
+
       const isDm = isDmOf(existing);
       const existingProfile = getProfileForCampaign(cleanCode);
 
@@ -478,11 +488,17 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
         CampaignManager.setActiveCampaignCode(cleanCode);
         onEnter(cleanCode);
       } else {
+        // Player registration modal automatically opens for this campaign!
         handleOpenPgModal(existing, false);
       }
     } finally {
       setIsSearching(false);
     }
+  };
+
+  const handleJoinCampaign = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await executeJoinByCode(joinCode);
   };
 
   const handlePgModalSubmit = (e: React.FormEvent) => {
