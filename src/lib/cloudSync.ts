@@ -862,8 +862,7 @@ export class CloudSyncService {
    */
   private static applyDmSecrets(dmData: any, activeCode: string) {
     if (!dmData) return;
-    const currentAccount = CampaignManager.getCurrentAccount();
-    const isDm = Boolean(currentAccount?.isDm || (activeCode && currentAccount?.dmCampaigns?.includes(activeCode)));
+    const isDm = CampaignManager.isCurrentUserDm();
     if (!isDm) return;
 
     isApplyingRemoteUpdate = true;
@@ -1635,7 +1634,7 @@ export class CloudSyncService {
           );
 
           const currentAccount = CampaignManager.getCurrentAccount();
-          const isDm = Boolean(currentAccount?.isDm || (activeCode && currentAccount?.dmCampaigns?.includes(activeCode)));
+          const isDm = CampaignManager.isCurrentUserDm();
 
           const hydratedSessions = uniqueSessions.map((s: any) => {
             const sMedia = aggregatedSessionMedia[s._id];
@@ -1743,7 +1742,7 @@ export class CloudSyncService {
           let targetNotesToMerge = remote.notes.filter((n: any) => n && n._id && !activeDeletedNotesSet.has(n._id));
           // RBAC Note Filter: If user is not DM, exclude dmOnly notes and other users' private notes
           const currentAccount = CampaignManager.getCurrentAccount();
-          const isDm = Boolean(currentAccount?.isDm || (activeCode && currentAccount?.dmCampaigns?.includes(activeCode)));
+          const isDm = CampaignManager.isCurrentUserDm();
           if (!isDm) {
             targetNotesToMerge = targetNotesToMerge.filter((n: any) => {
               if (n.dmOnly) return false;
@@ -1839,7 +1838,7 @@ export class CloudSyncService {
           console.warn('[CloudSync] Remote characterBios are empty but local has data. Preserving local characterBios.');
         } else {
           const currentAccount = CampaignManager.getCurrentAccount();
-          const isDm = Boolean(currentAccount?.isDm || (activeCode && currentAccount?.dmCampaigns?.includes(activeCode)));
+          const isDm = CampaignManager.isCurrentUserDm();
           
           // Defense-in-depth: Non-DMs and non-owners must never receive unrevealed backstories/secrets
           const sanitizedBios = remote.characterBios.map((bio: any) => {

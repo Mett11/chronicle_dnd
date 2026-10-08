@@ -898,7 +898,11 @@ export function Settings() {
                 <div className="space-y-2.5">
                   {allPlayers.map((p) => {
                     const isSelf = p._id === account.id || p.email === account.email;
-                    const isMainDm = activeCampaign?.dmId === p._id || p.isDm;
+                    const isMainDm = Boolean(
+                      (activeCampaign?.dmId && (activeCampaign.dmId === p._id || activeCampaign.dmId === (p as any).id)) ||
+                      (activeCampaign?.dmEmail && p.email && activeCampaign.dmEmail.toLowerCase() === p.email.toLowerCase()) ||
+                      (p.isDm && !p.isCoDm && !p.isCoMaster)
+                    );
                     const isCoMaster = Boolean(p.isCoDm || p.isCoMaster || p.tags?.includes('Co-Master'));
 
                     return (
@@ -950,7 +954,6 @@ export function Settings() {
                               }`}
                             >
                               <Shield size={12} />
-                              <span>{isCoMaster}</span>
                               <span>{isCoMaster ? 'Co-Master Attivo' : 'Rendi Co-Master'}</span>
                             </button>
                           )}

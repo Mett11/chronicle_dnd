@@ -806,21 +806,25 @@ export class CampaignManager {
     const account = this.getCurrentAccount();
     if (!account) return false;
     const activeCode = this.getActiveCampaignCode();
-    if (activeCode) {
-      const cleanCode = activeCode.trim().toUpperCase();
-      const campaign = this.getCampaigns().find((c) => c.code.toUpperCase() === cleanCode);
-      if (campaign?.dmId === account.id) return true;
-      const userEmail = (account.email || '').toLowerCase().trim();
-      const campDmEmail = (campaign?.dmEmail || '').toLowerCase().trim();
-      if (campDmEmail && userEmail && campDmEmail === userEmail) {
-        if (!account.dmCampaigns?.some((c) => c.toUpperCase() === cleanCode)) {
-          this.makeDmOfCampaign(account.id, cleanCode);
-        }
-        return true;
+    if (!activeCode) return Boolean(account.isDm);
+
+    const cleanCode = activeCode.trim().toUpperCase();
+    const campaign = this.getCampaigns().find((c) => c.code.toUpperCase() === cleanCode);
+    if (campaign?.dmId && campaign.dmId === account.id) return true;
+    const userEmail = (account.email || '').toLowerCase().trim();
+    const campDmEmail = (campaign?.dmEmail || '').toLowerCase().trim();
+    if (campDmEmail && userEmail && campDmEmail === userEmail) {
+      if (!account.dmCampaigns?.some((c) => c.toUpperCase() === cleanCode)) {
+        this.makeDmOfCampaign(account.id, cleanCode);
       }
-      if (account.dmCampaigns?.some((c) => c.toUpperCase() === cleanCode)) return true;
+      return true;
     }
-    return Boolean(account.isDm);
+    if (account.dmCampaigns?.some((c) => c.toUpperCase() === cleanCode)) return true;
+    const member = this.getCampaignMember(cleanCode, account.id, account.email);
+    if (member && (member.role === 'dm' || member.role === 'co-dm' || member.role === 'comaster')) return true;
+    const profile = account.campaignProfiles?.[cleanCode] || Object.entries(account.campaignProfiles || {}).find(([k]) => k.toUpperCase() === cleanCode)?.[1];
+    if (profile && (profile.isCoDm || profile.isCoMaster || profile.tags?.includes('Co-Master'))) return true;
+    return false;
   }
 
   static isDmPlayerCampaign(campaignCode?: string): boolean {
@@ -1052,6 +1056,7 @@ export class CampaignManager {
     code: string,
     name: string,
     dmAccount?: UserAccount | null,
+    initialMeta?: Partial<CampaignMeta>,
   ): CampaignMeta {
     const cleanCode = code.trim().toUpperCase();
     const cleanName = name.trim();
@@ -1065,6 +1070,18 @@ export class CampaignManager {
         existing.dmEmail = dmAccount.email;
         this.saveCampaigns(campaigns);
       }
+      if (initialMeta) {
+        let changed = false;
+        if (initialMeta.dmId && !existing.dmId) { existing.dmId = initialMeta.dmId; changed = true; }
+        if (initialMeta.dmEmail && !existing.dmEmail) { existing.dmEmail = initialMeta.dmEmail; changed = true; }
+        if (initialMeta.dmName && !existing.dmName) { existing.dmName = initialMeta.dmName; changed = true; }
+        if (initialMeta.dmIsPlayer !== undefined && existing.dmIsPlayer === undefined) { existing.dmIsPlayer = initialMeta.dmIsPlayer; changed = true; }
+        if (initialMeta.expelledAccountIds && (!existing.expelledAccountIds || existing.expelledAccountIds.length === 0)) {
+          existing.expelledAccountIds = initialMeta.expelledAccountIds;
+          changed = true;
+        }
+        if (changed) this.saveCampaigns(campaigns);
+      }
       if (dmAccount) {
         this.makeDmOfCampaign(dmAccount.id, cleanCode);
         this.joinCampaign(dmAccount.id, cleanCode);
@@ -1075,17 +1092,22 @@ export class CampaignManager {
     const newCamp: CampaignMeta = {
       code: cleanCode,
       name: cleanName,
-      createdAt: new Date().toISOString(),
-      dmId: dmAccount?.id,
-      dmName: dmAccount?.characterName,
-      dmEmail: dmAccount?.email,
+      createdAt: initialMeta?.createdAt || new Date().toISOString(),
+      dmId: initialMeta?.dmId || dmAccount?.id,
+      dmName: initialMeta?.dmName || dmAccount?.characterName,
+      dmEmail: initialMeta?.dmEmail || dmAccount?.email,
+      dmIsPlayer: initialMeta?.dmIsPlayer,
+      expelledAccountIds: initialMeta?.expelledAccountIds || [],
     };
     campaigns.push(newCamp);
     this.saveCampaignsLocalOnly(campaigns);
     if (isSupabaseConfigured()) {
       SupabaseSyncService.saveCampaign(cleanCode, {
         title: cleanName,
-        dmId: dmAccount?.id || '',
+        dmId: newCamp.dmId || '',
+        dmName: newCamp.dmName || '',
+        dmEmail: newCamp.dmEmail || '',
+        dmIsPlayer: newCamp.dmIsPlayer,
       }).catch(() => {});
     }
 
@@ -2460,12 +2482,12 @@ export class CampaignManager {
         : null;
 
     const isDm = Boolean(
-      (cleanCode &&
-        account.dmCampaigns &&
-        account.dmCampaigns.some((c) => c.toUpperCase() === cleanCode)) ||
-      (campaign?.dmId && campaign.dmId === account.id) ||
-      (campaign?.dmEmail && account.email && campaign.dmEmail.toLowerCase() === account.email.toLowerCase()) ||
-      account.isDm,
+      cleanCode
+        ? ((account.dmCampaigns &&
+            account.dmCampaigns.some((c) => c.toUpperCase() === cleanCode)) ||
+          (campaign?.dmId && campaign.dmId === account.id) ||
+          (campaign?.dmEmail && account.email && campaign.dmEmail.toLowerCase() === account.email.toLowerCase()))
+        : (account.dmCampaigns && account.dmCampaigns.length > 0)
     );
 
     const resolvedColor = profile?.color || account.color || '#6366f1';
@@ -2480,8 +2502,6 @@ export class CampaignManager {
     const isCoDm = Boolean(
       profile?.isCoDm ||
       profile?.isCoMaster ||
-      account.isCoDm ||
-      account.isCoMaster ||
       (profile?.tags && profile.tags.includes('Co-Master'))
     );
 

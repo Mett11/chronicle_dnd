@@ -3,7 +3,7 @@ export type PlayerPartyStatus = 'active' | 'inactive' | 'retired' | 'dead';
 export interface CampaignMemberRecord {
   campaignCode: string;
   userId: string;
-  role: 'dm' | 'player';
+  role: 'dm' | 'player' | 'co-dm' | 'comaster';
   characterName?: string;
   createdAt?: string;
 }

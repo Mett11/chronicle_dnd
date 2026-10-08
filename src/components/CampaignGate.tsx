@@ -27,7 +27,7 @@ import { CampaignManager } from '../store/campaignStore';
 import { useAuth } from './AuthProvider';
 import { CampaignMeta, CampaignProfile } from '../types';
 import { ConfirmModal } from './ConfirmModal';
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { isSupabaseConfigured } from '../lib/supabase';
 import { SupabaseSyncService } from '../lib/supabaseSyncService';
 import { CampaignInviteModal } from './CampaignInviteModal';
 import { hasUserSavedTheme, getStoredTheme } from '../lib/theme';
@@ -118,6 +118,7 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [newCampName, setNewCampName] = useState('');
   const [newCampCode, setNewCampCode] = useState('');
+  const [isCreateAsDm, setIsCreateAsDm] = useState(true);
   const [createError, setCreateError] = useState<string | null>(null);
 
   // Invite Modal State (QR & Link)
@@ -331,14 +332,18 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
 
   const isDmOf = (camp: CampaignMeta) => {
     if (!account) return false;
-    const userEmail = (account.email || '').toLowerCase().trim();
-    const campDmEmail = (camp.dmEmail || '').toLowerCase().trim();
-    if (account.dmCampaigns?.some((code) => code.toUpperCase() === camp.code.toUpperCase())) {
+    const cleanCode = camp.code.toUpperCase();
+    if (account.dmCampaigns?.some((code) => code.toUpperCase() === cleanCode)) {
       return true;
     }
     if (camp.dmId && camp.dmId === account.id) return true;
+    const userEmail = (account.email || '').toLowerCase().trim();
+    const campDmEmail = (camp.dmEmail || '').toLowerCase().trim();
     if (campDmEmail && userEmail && campDmEmail === userEmail) return true;
-    if (account.isDm) return true;
+    const member = CampaignManager.getCampaignMember(cleanCode, account.id, account.email);
+    if (member && (member.role === 'dm' || member.role === 'co-dm' || member.role === 'comaster')) return true;
+    const profile = account.campaignProfiles?.[cleanCode];
+    if (profile && (profile.isCoDm || profile.isCoMaster || profile.tags?.includes('Co-Master'))) return true;
     return false;
   };
 
@@ -346,24 +351,20 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
     if (!account) return null;
     const clean = code.toUpperCase();
     if (account.campaignProfiles && account.campaignProfiles[clean]) {
-      const p = account.campaignProfiles[clean];
-      if (p && p.characterName && p.characterName.trim() && p.characterName !== 'Personaggio') {
-        return p;
-      }
-    }
-    // Also check character_bios
-    const bio = CampaignManager.getCharacterBio(account.id);
-    const bioName = bio?.characterName || bio?.name;
-    if (bioName && bioName.trim() && bioName !== 'Personaggio') {
-      return {
-        characterName: bioName.trim(),
-        avatarUrl: bio?.avatarUrl || account.avatarUrl,
-        color: bio?.color || account.color,
-      };
+      return account.campaignProfiles[clean];
     }
     // Also check if account is already marked as joined
     const isJoined = account.joinedCampaigns?.some((c) => c.toUpperCase() === clean);
-    if ((isJoined || account.characterName) && account.characterName && account.characterName !== 'Avventuriero' && account.characterName !== 'Personaggio') {
+    // Also check character_bios
+    const bio = CampaignManager.getCharacterBio(account.id);
+    if (bio && (bio.characterName || bio.name)) {
+      return {
+        characterName: bio.characterName || bio.name || account.characterName,
+        avatarUrl: bio.avatarUrl || account.avatarUrl,
+        color: bio.color || account.color,
+      };
+    }
+    if (isJoined && account.characterName) {
       return {
         characterName: account.characterName,
         avatarUrl: account.avatarUrl,
@@ -376,6 +377,7 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
   const handleOpenCreateModal = () => {
     const freshCode = CampaignManager.generateCampaignCode(newCampName);
     setNewCampCode(freshCode);
+    setIsCreateAsDm(true);
     setCreateError(null);
     setIsCreateModalOpen(true);
   };
@@ -423,7 +425,18 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
         try {
           const supaData = await SupabaseSyncService.fetchCampaignMeta(cleanCode);
           if (supaData) {
-            existing = CampaignManager.createCampaign(cleanCode, supaData.name || `Campagna ${cleanCode}`);
+            existing = CampaignManager.createCampaign(
+              cleanCode,
+              supaData.name || `Campagna ${cleanCode}`,
+              null,
+              {
+                dmId: supaData.dmId,
+                dmEmail: supaData.dmEmail,
+                dmName: supaData.dmName,
+                dmIsPlayer: supaData.dmIsPlayer,
+                expelledAccountIds: supaData.expelledAccountIds,
+              }
+            );
             const dmIsPlayer = supaData.dmIsPlayer !== undefined ? Boolean(supaData.dmIsPlayer) : undefined;
             if (dmIsPlayer !== undefined) {
               existing.dmIsPlayer = dmIsPlayer;
@@ -455,29 +468,7 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
       }
 
       const isDm = isDmOf(existing);
-      let existingProfile = getProfileForCampaign(cleanCode);
-
-      // Check remote database if no local profile found before prompting modal
-      if (!isDm && (!existingProfile || !existingProfile.characterName?.trim() || existingProfile.characterName === 'Personaggio')) {
-        if (isSupabaseConfigured() && account) {
-          try {
-            const [memRes, bioRes] = await Promise.all([
-              supabase.from('campaign_members').select('character_name, avatar_url, color').eq('campaign_code', cleanCode).eq('user_id', account.id).maybeSingle(),
-              supabase.from('character_bios').select('name, character_name, avatar_url, color').eq('campaign_code', cleanCode).eq('player_id', account.id).maybeSingle(),
-            ]);
-            const foundName = bioRes?.data?.character_name || bioRes?.data?.name || memRes?.data?.character_name || account.characterName;
-            if (foundName && foundName !== 'Personaggio' && foundName !== 'Avventuriero') {
-              const adopted = {
-                characterName: foundName,
-                avatarUrl: bioRes?.data?.avatar_url || memRes?.data?.avatar_url || account.avatarUrl || '',
-                color: bioRes?.data?.color || memRes?.data?.color || account.color || '#6366f1',
-              };
-              CampaignManager.setCampaignProfile(account.id, cleanCode, adopted);
-              existingProfile = adopted;
-            }
-          } catch {}
-        }
-      }
+      const existingProfile = getProfileForCampaign(cleanCode);
 
       if (isDm || (existingProfile && existingProfile.characterName?.trim())) {
         if (account) {
@@ -560,15 +551,19 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
       }
     }
 
-    const newCamp = CampaignManager.createCampaign(cleanCode, cleanName, account);
+    const newCamp = CampaignManager.createCampaign(
+      cleanCode,
+      cleanName,
+      isCreateAsDm ? account : null,
+    );
 
     if (isSupabaseConfigured()) {
       try {
         await SupabaseSyncService.saveCampaign(cleanCode, {
           title: cleanName,
-          dmId: account?.id,
-          dmName: account?.characterName || account?.email?.split('@')[0] || 'Dungeon Master',
-          dmEmail: account?.email,
+          dmId: isCreateAsDm ? (account?.id || '') : '',
+          dmName: isCreateAsDm ? (account?.characterName || account?.email?.split('@')[0] || 'Dungeon Master') : '',
+          dmEmail: isCreateAsDm ? (account?.email || '') : '',
         });
       } catch (e) {
         console.warn('Errore salvataggio campagna su cloud:', e);
@@ -576,43 +571,29 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
     }
 
     if (account) {
-      CampaignManager.makeDmOfCampaign(account.id, cleanCode);
+      if (isCreateAsDm) {
+        CampaignManager.makeDmOfCampaign(account.id, cleanCode);
+      }
       CampaignManager.joinCampaign(account.id, cleanCode);
       refreshAccount();
     }
 
     setIsCreateModalOpen(false);
-    CampaignManager.setActiveCampaignCode(cleanCode);
-    onEnter(cleanCode);
+
+    if (isCreateAsDm) {
+      CampaignManager.setActiveCampaignCode(cleanCode);
+      onEnter(cleanCode);
+    } else {
+      // Created as player: open PG modal to configure character
+      handleOpenPgModal(newCamp, false);
+    }
   };
 
-  const handleSelectCampaign = async (camp: CampaignMeta) => {
+  const handleSelectCampaign = (camp: CampaignMeta) => {
     const isDm = isDmOf(camp);
-    let profile = getProfileForCampaign(camp.code);
+    const profile = getProfileForCampaign(camp.code);
 
-    // If profile is not locally set, check if the user is already a member in Supabase or has a character bio
-    if (!isDm && (!profile || !profile.characterName?.trim() || profile.characterName === 'Personaggio')) {
-      if (isSupabaseConfigured() && account) {
-        try {
-          const [memRes, bioRes] = await Promise.all([
-            supabase.from('campaign_members').select('character_name, avatar_url, color').eq('campaign_code', camp.code).eq('user_id', account.id).maybeSingle(),
-            supabase.from('character_bios').select('name, character_name, avatar_url, color').eq('campaign_code', camp.code).eq('player_id', account.id).maybeSingle(),
-          ]);
-          const foundName = bioRes?.data?.character_name || bioRes?.data?.name || memRes?.data?.character_name || account.characterName;
-          if (foundName && foundName !== 'Personaggio' && foundName !== 'Avventuriero') {
-            const adopted = {
-              characterName: foundName,
-              avatarUrl: bioRes?.data?.avatar_url || memRes?.data?.avatar_url || account.avatarUrl || '',
-              color: bioRes?.data?.color || memRes?.data?.color || account.color || '#6366f1',
-            };
-            CampaignManager.setCampaignProfile(account.id, camp.code, adopted);
-            profile = adopted;
-          }
-        } catch {}
-      }
-    }
-
-    if (!isDm && (!profile || !profile.characterName?.trim() || profile.characterName === 'Personaggio')) {
+    if (!isDm && (!profile || !profile.characterName?.trim())) {
       handleOpenPgModal(camp, false);
       return;
     }
@@ -737,7 +718,7 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
         />
       </div>
 
-      {/* Top Header: Brand on left, ONLY User Email and Logout on right */}
+      {/* Top Header: Brand on left, User Badge and Logout on right */}
       <header
         className="relative z-20 border-b backdrop-blur-md"
         style={{
@@ -745,11 +726,11 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
           backgroundColor: `${palette.bgBase}d9`,
         }}
       >
-        <div className="max-w-[1440px] mx-auto px-6 sm:px-12 h-20 flex justify-between items-center w-full">
+        <div className="max-w-[1440px] mx-auto px-4 sm:px-12 h-16 sm:h-20 flex justify-between items-center w-full gap-2">
           {/* Brand Logo */}
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
             <span
-              className="text-xl sm:text-2xl font-normal tracking-[0.2em] uppercase transition-colors"
+              className="text-lg sm:text-2xl font-normal tracking-[0.15em] sm:tracking-[0.2em] uppercase transition-colors"
               style={{
                 fontFamily: "'Cinzel Decorative', 'Cinzel', Georgia, serif",
                 color: palette.accent,
@@ -758,7 +739,7 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
               Chronicle
             </span>
             <span
-              className="hidden sm:inline text-xs italic tracking-widest pl-3 border-l"
+              className="hidden md:inline text-xs italic tracking-widest pl-3 border-l"
               style={{
                 color: palette.textMuted,
                 borderColor: palette.borderHeader,
@@ -769,26 +750,30 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
           </div>
 
           {/* User Account and Logout */}
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3 shrink-0 min-w-0">
+            {/* Truncated User Email Badge */}
             <div
-              className="px-3.5 py-1.5 rounded-lg border text-xs font-mono shadow-sm select-all"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 sm:px-3.5 sm:py-1.5 rounded-xl border text-[11px] sm:text-xs font-mono shadow-xs max-w-[120px] xs:max-w-[180px] sm:max-w-xs transition-colors shrink min-w-0 overflow-hidden"
               style={{
                 backgroundColor: palette.bgInput,
                 borderColor: palette.borderCard,
                 color: palette.textSub,
               }}
+              title={account?.email}
             >
-              {account?.email}
+              <User size={13} className="shrink-0 text-amber-400/90" />
+              <span className="truncate">{account?.email}</span>
             </div>
 
+            {/* Logout Button */}
             <button
               id="btn-logout"
               onClick={() => logout()}
-              className="text-[#e06c75] hover:text-[#ff8b94] hover:bg-red-950/20 px-3.5 py-1.5 rounded-lg border border-red-900/40 text-xs font-mono transition-all flex items-center gap-1.5 cursor-pointer shadow-md"
+              className="text-red-400 hover:text-red-300 hover:bg-red-950/40 bg-red-950/20 px-2.5 py-1.5 sm:px-3.5 sm:py-1.5 rounded-xl border border-red-900/50 text-[11px] sm:text-xs font-mono font-medium transition-all flex items-center gap-1.5 cursor-pointer shrink-0 shadow-sm active:scale-95"
               title="Disconnetti account"
             >
-              <LogOut size={13} />
-              <span>Disconnetti</span>
+              <LogOut size={13} className="shrink-0" />
+              <span className="hidden xs:inline">Disconnetti</span>
             </button>
           </div>
         </div>
@@ -1351,6 +1336,50 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
             </form>
           </div>
         </div>
+
+        {/* ================= SECTION 3: ACCOUNT PROFILE & LOGOUT CARD ================= */}
+        <div className="mt-12 pt-8 border-t max-w-2xl mx-auto text-left" style={{ borderColor: palette.borderHeader }}>
+          <div
+            className="p-5 sm:p-6 rounded-2xl border shadow-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4"
+            style={{
+              backgroundColor: palette.bgCard,
+              borderColor: palette.borderCard,
+            }}
+          >
+            <div className="flex items-center gap-3 min-w-0">
+              <div
+                className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border font-bold text-sm shadow-xs"
+                style={{
+                  backgroundColor: palette.accentMuted,
+                  borderColor: `${palette.accent}40`,
+                  color: palette.accent,
+                }}
+              >
+                <User size={20} />
+              </div>
+              <div className="min-w-0 space-y-0.5">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs uppercase tracking-wider font-semibold" style={{ color: palette.textMain }}>
+                    Account Connesso
+                  </span>
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" title="Sincronizzato" />
+                </div>
+                <p className="text-xs font-mono truncate" style={{ color: palette.textSub }}>
+                  {account?.email}
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => logout()}
+              className="w-full sm:w-auto px-4 py-2.5 rounded-xl border border-red-900/50 bg-red-950/20 hover:bg-red-950/50 text-red-300 text-xs font-mono font-medium flex items-center justify-center gap-2 transition-all cursor-pointer shrink-0 shadow-sm active:scale-95"
+            >
+              <LogOut size={14} />
+              <span>Disconnetti Account</span>
+            </button>
+          </div>
+        </div>
       </main>
 
       {/* ================= MODAL: CONFIGURA PERSONAGGIO (PG) ================= */}
@@ -1582,7 +1611,7 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
                   Forgia Nuova Campagna
                 </h3>
                 <span className="text-xs font-mono" style={{ color: palette.accent }}>
-                  Sarai automaticamente il Dungeon Master (DM)
+                  {isCreateAsDm ? 'Creerai come Dungeon Master (DM)' : 'Creerai come Giocatore (Player)'}
                 </span>
               </div>
             </div>
@@ -1666,6 +1695,47 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
                 />
               </div>
 
+              {/* Checkbox / Toggle: Ruolo Master vs Player */}
+              <div
+                onClick={() => setIsCreateAsDm(!isCreateAsDm)}
+                className="p-3.5 rounded-xl border transition-all cursor-pointer flex items-center justify-between gap-3 select-none"
+                style={{
+                  backgroundColor: isCreateAsDm ? `${palette.accent}15` : palette.bgInput,
+                  borderColor: isCreateAsDm ? palette.accent : palette.borderCard,
+                }}
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  <div
+                    className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 border shadow-xs"
+                    style={{
+                      backgroundColor: isCreateAsDm ? palette.accent : 'transparent',
+                      borderColor: isCreateAsDm ? palette.accent : palette.borderCard,
+                      color: isCreateAsDm ? '#050406' : palette.textMuted,
+                    }}
+                  >
+                    {isCreateAsDm ? <Crown size={15} /> : <User size={15} />}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold" style={{ color: palette.textMain }}>
+                      {isCreateAsDm ? 'Sono il Dungeon Master (DM)' : 'Creo come Giocatore (Player)'}
+                    </p>
+                    <p className="text-[11px] leading-tight" style={{ color: palette.textMuted }}>
+                      {isCreateAsDm
+                        ? 'Sarai il Master ufficiale con pieni poteri di gestione del tavolo'
+                        : 'Entrerai come giocatore e configurerai il tuo personaggio'}
+                    </p>
+                  </div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={isCreateAsDm}
+                  onChange={(e) => setIsCreateAsDm(e.target.checked)}
+                  onClick={(e) => e.stopPropagation()}
+                  className="w-4 h-4 rounded cursor-pointer"
+                  style={{ accentColor: palette.accent }}
+                />
+              </div>
+
               <div className="pt-2 flex gap-3">
                 <button
                   type="button"
@@ -1692,8 +1762,8 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
                     color: palette.textMain,
                   }}
                 >
-                  <Crown size={14} style={{ color: palette.accent }} />
-                  <span>Crea & Entra come Master</span>
+                  {isCreateAsDm ? <Crown size={14} style={{ color: palette.accent }} /> : <Sparkles size={14} style={{ color: palette.accent }} />}
+                  <span>{isCreateAsDm ? 'Crea & Entra come Master' : 'Crea & Configura Personaggio'}</span>
                 </button>
               </div>
             </form>
