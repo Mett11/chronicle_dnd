@@ -22,7 +22,7 @@ import {
  */
 export function resolveStorageUrl(
   pathOrUrl: string | null | undefined,
-  defaultBucket: string = 'campaign-assets'
+  defaultBucket: string = 'chronicle-media'
 ): string {
   if (!pathOrUrl || typeof pathOrUrl !== 'string') return '';
   const trimmed = pathOrUrl.trim();

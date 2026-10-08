@@ -1940,6 +1940,11 @@ export class CampaignManager {
     setCached(`chronicle_user_${accountId}_active_campaign`, cleanCode);
     localStorage.setItem("chronicle_current_campaign", cleanCode);
     setCached("chronicle_current_campaign", cleanCode);
+
+    if (isSupabaseConfigured() && accountId && cleanCode) {
+      const acc = idx !== -1 ? accounts[idx] : null;
+      SupabaseSyncService.joinCampaignMember(cleanCode, accountId, 'player', acc?.characterName).catch(() => {});
+    }
   }
 
   static leaveCampaign(accountId: string, code: string) {
@@ -2444,15 +2449,20 @@ export class CampaignManager {
       (profile?.tags && profile.tags.includes('Co-Master'))
     );
 
+    const charBio = this.getCharacterBio(account.id);
+    const resolvedCharName = profile?.characterName || charBio?.characterName || charBio?.name || account.characterName;
+    const resolvedAvatar = profile?.avatarUrl !== undefined ? profile.avatarUrl : (charBio?.avatarUrl || account.avatarUrl);
+    const resolvedColorFinal = profile?.color || charBio?.color || resolvedColor;
+
     return {
       _id: account.id,
-      characterName: profile?.characterName || account.characterName,
+      characterName: resolvedCharName,
       email: account.email,
       isDm,
       isCoDm,
       isCoMaster: isCoDm,
-      color: resolvedColor,
-      avatarUrl: profile?.avatarUrl !== undefined ? profile.avatarUrl : account.avatarUrl,
+      color: resolvedColorFinal,
+      avatarUrl: resolvedAvatar,
       status,
       tags: resolvedTags,
       aliases: resolvedAliases,

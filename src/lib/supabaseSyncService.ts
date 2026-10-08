@@ -1757,20 +1757,30 @@ export class SupabaseSyncService {
         if (userId) candidateUserIds.add(userId);
         const cleanEmail = (email || '').trim().toLowerCase();
 
-        // Check user_accounts to resolve any canonical user IDs for this email
+        const candidateUserAccounts: any[] = [];
+        // Check user_accounts to resolve any canonical user IDs and campaigns for this email or userId
         if (cleanEmail) {
           try {
             const { data: uRows } = await supabase
               .from('user_accounts')
               .select('id, dm_campaigns, joined_campaigns')
               .eq('email', cleanEmail);
-            if (Array.isArray(uRows)) {
-              uRows.forEach((r) => {
-                if (r.id) candidateUserIds.add(r.id);
-              });
-            }
+            if (Array.isArray(uRows)) candidateUserAccounts.push(...uRows);
           } catch {}
         }
+        if (userId) {
+          try {
+            const { data: uById } = await supabase
+              .from('user_accounts')
+              .select('id, dm_campaigns, joined_campaigns')
+              .eq('id', userId);
+            if (Array.isArray(uById)) candidateUserAccounts.push(...uById);
+          } catch {}
+        }
+
+        candidateUserAccounts.forEach((r) => {
+          if (r.id) candidateUserIds.add(r.id);
+        });
 
         const idList = Array.from(candidateUserIds);
 
@@ -1796,6 +1806,29 @@ export class SupabaseSyncService {
         const dmCampaigns: string[] = [];
         const joinedCampaigns: string[] = [];
         const orphanCodes: string[] = [];
+
+        // Check user_accounts joined_campaigns and dm_campaigns
+        candidateUserAccounts.forEach((r) => {
+          const jCamps = Array.isArray(r.joined_campaigns) ? r.joined_campaigns : [];
+          const dCamps = Array.isArray(r.dm_campaigns) ? r.dm_campaigns : [];
+          jCamps.forEach((c: any) => {
+            if (typeof c === 'string' && c.trim()) {
+              const clean = c.trim().toUpperCase();
+              if (realCodes.has(clean) && !joinedCampaigns.includes(clean)) {
+                joinedCampaigns.push(clean);
+              }
+            }
+          });
+          dCamps.forEach((c: any) => {
+            if (typeof c === 'string' && c.trim()) {
+              const clean = c.trim().toUpperCase();
+              if (realCodes.has(clean)) {
+                if (!dmCampaigns.includes(clean)) dmCampaigns.push(clean);
+                if (!joinedCampaigns.includes(clean)) joinedCampaigns.push(clean);
+              }
+            }
+          });
+        });
 
         // Check if user is DM of any campaign directly via dm_id
         (realCampaigns || []).forEach((rc: any) => {

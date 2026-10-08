@@ -343,8 +343,30 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
   };
 
   const getProfileForCampaign = (code: string): CampaignProfile | null => {
-    if (!account?.campaignProfiles) return null;
-    return account.campaignProfiles[code.toUpperCase()] || null;
+    if (!account) return null;
+    const clean = code.toUpperCase();
+    if (account.campaignProfiles && account.campaignProfiles[clean]) {
+      return account.campaignProfiles[clean];
+    }
+    // Also check if account is already marked as joined
+    const isJoined = account.joinedCampaigns?.some((c) => c.toUpperCase() === clean);
+    // Also check character_bios
+    const bio = CampaignManager.getCharacterBio(account.id);
+    if (bio && (bio.characterName || bio.name)) {
+      return {
+        characterName: bio.characterName || bio.name || account.characterName,
+        avatarUrl: bio.avatarUrl || account.avatarUrl,
+        color: bio.color || account.color,
+      };
+    }
+    if (isJoined && account.characterName) {
+      return {
+        characterName: account.characterName,
+        avatarUrl: account.avatarUrl,
+        color: account.color,
+      };
+    }
+    return null;
   };
 
   const handleOpenCreateModal = () => {
@@ -391,7 +413,7 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
     setIsSearching(true);
     try {
       const allCamp = CampaignManager.getCampaigns();
-      let existing = allCamp.find((c) => c.code === cleanCode);
+      let existing = allCamp.find((c) => c.code.toUpperCase() === cleanCode.toUpperCase());
 
       if (!existing && isSupabaseConfigured()) {
         try {

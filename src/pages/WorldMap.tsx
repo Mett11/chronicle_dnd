@@ -186,13 +186,15 @@ export function WorldMap() {
   // Listen to store updates
   useEffect(() => {
     const code = CampaignManager.getActiveCampaignCode();
-    if (code && isSupabaseConfigured() && CampaignManager.getMaps().length === 0) {
+    if (code && isSupabaseConfigured()) {
       SupabaseSyncService.fetchMapsOnly(code).then((remoteMaps) => {
         if (remoteMaps && Array.isArray(remoteMaps) && remoteMaps.length > 0) {
           CampaignManager.saveMapsLocalOnly(remoteMaps);
           setMaps(remoteMaps);
         }
-      }).catch(() => {});
+      }).catch((err) => {
+        console.warn('[WorldMap] Failed fetching maps from Supabase:', err);
+      });
     }
 
     const handleMapsUpdated = () => {
@@ -204,13 +206,20 @@ export function WorldMap() {
     const handleEntitiesUpdated = () => {
       setEntities(CampaignManager.getEntities());
     };
+    const handleDataUpdated = () => {
+      setMaps(CampaignManager.getMaps());
+      setFolders(CampaignManager.getMapFolders());
+      setEntities(CampaignManager.getEntities());
+    };
     window.addEventListener('chronicle_maps_updated', handleMapsUpdated);
     window.addEventListener('chronicle_map_folders_updated', handleFoldersUpdated);
     window.addEventListener('chronicle_entities_updated', handleEntitiesUpdated);
+    window.addEventListener('chronicle_data_updated', handleDataUpdated);
     return () => {
       window.removeEventListener('chronicle_maps_updated', handleMapsUpdated);
       window.removeEventListener('chronicle_map_folders_updated', handleFoldersUpdated);
       window.removeEventListener('chronicle_entities_updated', handleEntitiesUpdated);
+      window.removeEventListener('chronicle_data_updated', handleDataUpdated);
     };
   }, []);
 
