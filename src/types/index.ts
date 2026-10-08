@@ -125,6 +125,7 @@ export interface CampaignMeta {
   activePlayerEmails?: string[];
   activePlayers?: any[];
   expelledAccountIds?: string[];
+  mapFolders?: any[];
   titleFont?: CampaignTitleFont;
   titleEffect?: CampaignTitleEffect;
   titleUppercase?: boolean;

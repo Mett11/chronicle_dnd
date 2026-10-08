@@ -1008,7 +1008,7 @@ export class CloudSyncService {
                   const idx = allCamps.findIndex((c) => c.code.toUpperCase() === activeCode.toUpperCase());
                   const remoteDmIsPlayer = supaData.dmIsPlayer !== undefined
                     ? Boolean(supaData.dmIsPlayer)
-                    : (supaData.dossier?.dmIsPlayer !== undefined ? Boolean(supaData.dossier.dmIsPlayer) : undefined);
+                    : undefined;
 
                   if (idx !== -1) {
                     allCamps[idx] = {
@@ -1092,9 +1092,9 @@ export class CloudSyncService {
                 }
               }
 
-              if (supaData.dossier?.aiKeys || supaData.aiConfig?.aiKeys) {
+              if (supaData.aiConfig?.aiKeys) {
                 try {
-                  ApiKeyManager.hydrateCampaignKeysFromRemote(activeCode, supaData.dossier?.aiKeys || supaData.aiConfig?.aiKeys);
+                  ApiKeyManager.hydrateCampaignKeysFromRemote(activeCode, supaData.aiConfig?.aiKeys);
                 } catch (e) {
                   console.warn('[CloudSync] AI keys hydration warn:', e);
                 }
@@ -1412,7 +1412,7 @@ export class CloudSyncService {
             if (row.calendar_system && typeof row.calendar_system === 'object') {
               CampaignManager.saveCalendarLocalOnly(row.calendar_system);
             }
-            const dmIsPlayer = row.dossier?.dmIsPlayer !== undefined ? Boolean(row.dossier.dmIsPlayer) : undefined;
+            const dmIsPlayer = row.dm_is_player !== undefined ? Boolean(row.dm_is_player) : undefined;
             if (row.title || row.dm_id || dmIsPlayer !== undefined) {
               CampaignManager.updateCampaignMetaLocalOnly(activeCode, {
                 name: row.title || undefined,
@@ -1426,9 +1426,6 @@ export class CloudSyncService {
                 localStorage.setItem('chronicle_include_dm_as_player', String(dmIsPlayer));
                 window.dispatchEvent(new CustomEvent('chronicle_campaign_updated', { detail: { code: cleanCode, dmIsPlayer } }));
               }
-            }
-            if (row.dossier?.chapters && Array.isArray(row.dossier.chapters)) {
-              CampaignManager.saveChaptersLocalOnly(row.dossier.chapters);
             }
           }
         } catch (e) {

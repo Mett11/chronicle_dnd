@@ -96,7 +96,7 @@ export function resolveStorageUrlArray(
 // =========================================================================
 export function chapterRowToModel(
   row: any,
-  dossierMeta?: Record<string, any>
+  metaOverrides?: Record<string, any>
 ): CampaignChapter {
   if (!row) {
     return {
@@ -108,7 +108,7 @@ export function chapterRowToModel(
 
   const rowId = String(row.id || '');
   const title = String(row.title || row.name || 'Capitolo').trim();
-  const metaObj = dossierMeta?.[rowId] || dossierMeta?.[title] || {};
+  const metaObj = metaOverrides?.[rowId] || metaOverrides?.[title] || {};
 
   const rawCover =
     row.cover_image_url ||

@@ -352,7 +352,7 @@ export class SupabaseSyncService {
       const rawCode = campaignCode.trim();
       const { data, error } = await supabase
         .from('campaigns')
-        .select('code, title, created_at, dm_id, active_players')
+        .select('code, title, created_at, dm_id, active_players, expelled_accounts, dm_is_player')
         .or(`code.eq.${cleanCode},code.eq.${rawCode}`)
         .maybeSingle();
 
@@ -367,8 +367,8 @@ export class SupabaseSyncService {
         dmId: data.dm_id || dmPlayer?.id || undefined,
         dmEmail: dmPlayer?.email || undefined,
         dmName: dmPlayer?.characterName || undefined,
-        dmIsPlayer: dmPlayer ? Boolean(dmPlayer.isDm) : undefined,
-        expelledAccountIds: [],
+        dmIsPlayer: data.dm_is_player !== undefined ? Boolean(data.dm_is_player) : (dmPlayer ? Boolean(dmPlayer.isDm) : undefined),
+        expelledAccountIds: Array.isArray(data.expelled_accounts) ? data.expelled_accounts : [],
       };
     } catch {
       return null;
@@ -421,7 +421,7 @@ export class SupabaseSyncService {
         let campaignRow: any = null;
         const initialCampRes = await supabase
           .from('campaigns')
-          .select('code, title, subtitle, description, system, dm_id, calendar_system, ai_config, active_players, created_at, updated_at')
+          .select('code, title, subtitle, description, system, dm_id, calendar_system, ai_config, active_players, expelled_accounts, map_folders, dm_is_player, created_at, updated_at')
           .or(orFilterCodes)
           .maybeSingle();
 
@@ -435,7 +435,7 @@ export class SupabaseSyncService {
           try {
             const allCampsRes = await supabase
               .from('campaigns')
-              .select('code, title, subtitle, description, system, dm_id, calendar_system, ai_config, active_players, created_at, updated_at')
+              .select('code, title, subtitle, description, system, dm_id, calendar_system, ai_config, active_players, expelled_accounts, map_folders, dm_is_player, created_at, updated_at')
               .limit(50);
             if (allCampsRes.data && allCampsRes.data.length > 0) {
               const targetSlug = slugifyCampaignTitle(campaignTitleOrSlug || campaignCode);
@@ -522,30 +522,16 @@ export class SupabaseSyncService {
       }
 
       const campRow = campaignRes.data || {};
-      const dossier = campRow.dossier || {};
-      const chaptersMeta = dossier.chaptersMeta || {};
-      const sessionsMeta = dossier.sessionsMeta || {};
-      const mapFolders = Array.isArray(dossier.mapFolders) ? dossier.mapFolders : [];
+      const mapFolders = Array.isArray(campRow.map_folders) ? campRow.map_folders : [];
+      const expelledAccounts = Array.isArray(campRow.expelled_accounts) ? campRow.expelled_accounts : [];
+      const dmIsPlayer = campRow.dm_is_player !== undefined ? Boolean(campRow.dm_is_player) : undefined;
 
-      let chapters: CampaignChapter[] = (chaptersRes.data || []).map((row) =>
-        chapterRowToModel(row, chaptersMeta)
+      const chapters: CampaignChapter[] = (chaptersRes.data || []).map((row) =>
+        chapterRowToModel(row)
       );
 
-      // Fallback only if chapters table query failed and dossier has legacy chapters
-      if (chapters.length === 0 && chaptersRes.error && Array.isArray(dossier.chapters) && dossier.chapters.length > 0) {
-        chapters = dossier.chapters.map((dc: any) => ({
-          id: dc.id,
-          name: dc.name || dc.title || 'Nuovo Capitolo',
-          description: dc.description || dc.synopsis || '',
-          color: dc.color || '#6366f1',
-          coverImageUrl: dc.coverImageUrl || chaptersMeta[dc.id]?.coverImageUrl || '',
-          order: Number(dc.order ?? dc.order_index ?? 1),
-          createdAt: dc.createdAt || dc.created_at || new Date().toISOString(),
-        })).sort((a: CampaignChapter, b: CampaignChapter) => (a.order || 0) - (b.order || 0));
-      }
-
       const sessions: Session[] = (sessionsRes.data || []).map((row) =>
-        sessionRowToModel(row, sessionsMeta)
+        sessionRowToModel(row)
       );
 
       // Auto-reconcile sessions with chapters
@@ -572,9 +558,8 @@ export class SupabaseSyncService {
 
       const entities: Entity[] = (entitiesRes.data || []).map(entityRowToModel);
 
-      const notesMeta = dossier.notesMeta || {};
       const notes: Note[] = (notesRes.data || []).map((row) =>
-        noteRowToModel(row, notesMeta)
+        noteRowToModel(row)
       );
 
       // Heavy media/articles are lazy loaded on demand
@@ -583,29 +568,13 @@ export class SupabaseSyncService {
       const audioLogs: AudioLog[] | undefined = undefined;
       const worldLoreArticles: any[] | undefined = undefined;
 
-      // --- HYDRATION & AUTO-MIGRATION LAYER FOR NEW TABLES ---
+      // --- HYDRATION & RECONCILIATION FOR RELATIONAL TABLES ---
       const characterBiosRows = characterBiosRes?.data || [];
       const familyRelationsRows = familyRelationsRes?.data || [];
 
-      // Resilient character bios merge: combine dossier fallback with character_bios table
-      const biosMap = new Map<string, any>();
-      if (Array.isArray(dossier.characterBios)) {
-        dossier.characterBios.forEach((b: any) => {
-          if (b && (b.playerId || b.id)) {
-            biosMap.set(b.playerId || b.id, b);
-          }
-        });
-      }
-      if (characterBiosRows && characterBiosRows.length > 0) {
-        characterBiosRows.forEach((row: any) => {
-          const model = characterBioRowToModel(row);
-          if (model && model.playerId) {
-            const existing = biosMap.get(model.playerId) || {};
-            biosMap.set(model.playerId, { ...existing, ...model });
-          }
-        });
-      }
-      const characterBios: any[] = Array.from(biosMap.values());
+      const characterBios: any[] = (characterBiosRows || []).map((row: any) =>
+        characterBioRowToModel(row)
+      ).filter(Boolean);
 
       let familyRelations: any[] = [];
       if (familyRelationsRows && familyRelationsRows.length > 0) {
@@ -631,8 +600,6 @@ export class SupabaseSyncService {
           order: row.order_index || 0,
           updatedAt: row.updated_at || new Date().toISOString(),
         }));
-      } else if ((familyRelationsRes as any)?.error && Array.isArray(dossier.familyRelations) && dossier.familyRelations.length > 0) {
-        familyRelations = dossier.familyRelations;
       }
 
       const result = {
@@ -642,16 +609,14 @@ export class SupabaseSyncService {
         description: campRow.description || '',
         system: campRow.system || 'D&D 5e',
         dmId: campRow.dm_id || '',
-        dmIsPlayer: dossier.dmIsPlayer !== undefined ? Boolean(dossier.dmIsPlayer) : undefined,
+        dmIsPlayer,
         calendarSystem: campRow.calendar_system || {},
         aiConfig: campRow.ai_config || {},
-        expelledAccountIds: Array.isArray(dossier.expelledAccountIds) ? dossier.expelledAccountIds : [],
+        expelledAccountIds: expelledAccounts,
         activePlayers: (() => {
-          const raw = Array.isArray(campRow.active_players) && campRow.active_players.length > 0
-            ? campRow.active_players
-            : (Array.isArray(dossier.activePlayers) ? dossier.activePlayers : []);
+          const raw = Array.isArray(campRow.active_players) ? campRow.active_players : [];
           const expelled = new Set(
-            (Array.isArray(dossier.expelledAccountIds) ? dossier.expelledAccountIds : []).map((id: string) => String(id).toLowerCase())
+            expelledAccounts.map((id: string) => String(id).toLowerCase())
           );
           return raw.filter((p: any) => {
             if (!p || !p.id) return false;
@@ -661,7 +626,7 @@ export class SupabaseSyncService {
             return !expelled.has(pId) && (!pAltId || !expelled.has(pAltId)) && (!pEmail || !expelled.has(pEmail));
           });
         })(),
-        dossier,
+        dossier: {},
         characterBios,
         familyRelations,
         worldLoreArticles,
@@ -704,7 +669,7 @@ export class SupabaseSyncService {
 
     try {
       const [campRes, sessionsRes] = await Promise.all([
-        supabase.from('campaigns').select('calendar_system,dossier').or(`code.eq.${cleanCode},code.eq.${campaignCode.trim()}`).maybeSingle(),
+        supabase.from('campaigns').select('calendar_system').or(`code.eq.${cleanCode},code.eq.${campaignCode.trim()}`).maybeSingle(),
         supabase.from('sessions').select('id, campaign_code, number, title, date_str, chapter_id, calendar_date, plot_events, recap, summary, images, cover_image_url, audio_url, session_type, quotes, audio_logs, excluded_player_ids, attendees, tags, entities_extracted, entities_extracted_at, memory_synced, memory_synced_at, created_at, updated_at').or(`campaign_code.eq.${cleanCode},campaign_code.eq.${campaignCode.trim()}`).order('number', { ascending: true }),
       ]);
 
@@ -717,10 +682,9 @@ export class SupabaseSyncService {
       }
 
       const campRow: any = campRes.data || {};
-      const cal = campRow.calendar_system || campRow.dossier?.calendar || null;
-      const sessionsMeta = campRow.dossier?.sessionsMeta || {};
+      const cal = campRow.calendar_system || null;
       const sessions = (sessionsRes.data || []).map((row: any) =>
-        sessionRowToModel(row, sessionsMeta)
+        sessionRowToModel(row)
       );
 
       return { calendar: cal, sessions };
@@ -987,10 +951,12 @@ export class SupabaseSyncService {
       if (updates.aiConfig !== undefined) patch.ai_config = updates.aiConfig;
       if (updates.activePlayers !== undefined) patch.active_players = updates.activePlayers;
       if (updates.dmIsPlayer !== undefined) {
-        const { data: camp } = await supabase.from('campaigns').select('dossier').or(`code.eq.${cleanCode},code.eq.${code}`).maybeSingle();
-        const dossier = camp?.dossier || {};
-        patch.dossier = { ...dossier, dmIsPlayer: updates.dmIsPlayer };
+        patch.dm_is_player = updates.dmIsPlayer;
       }
+      if (updates.mapFolders !== undefined) patch.map_folders = updates.mapFolders;
+      if (updates.map_folders !== undefined) patch.map_folders = updates.map_folders;
+      if (updates.expelledAccountIds !== undefined) patch.expelled_accounts = updates.expelledAccountIds;
+      if (updates.expelled_accounts !== undefined) patch.expelled_accounts = updates.expelled_accounts;
 
       const { error } = await supabase
         .from('campaigns')
@@ -1034,11 +1000,10 @@ export class SupabaseSyncService {
       // Read existing campaign first to merge existing columns
       const { data: existing } = await supabase
         .from('campaigns')
-        .select('*')
+        .select('code, title, subtitle, description, system, dm_id, calendar_system, ai_config, active_players, expelled_accounts, map_folders, dm_is_player, title_font, title_effect')
         .or(`code.eq.${cleanCode},code.eq.${code}`)
         .maybeSingle();
 
-      const existingDossier = existing?.dossier || payloadData.dossier || {};
       const payload = {
         code: cleanCode,
         title: payloadData.title !== undefined ? payloadData.title : existing?.title || 'Nuova Campagna',
@@ -1049,17 +1014,11 @@ export class SupabaseSyncService {
         calendar_system: payloadData.calendarSystem !== undefined ? payloadData.calendarSystem : existing?.calendar_system || {},
         ai_config: payloadData.aiConfig !== undefined ? payloadData.aiConfig : existing?.ai_config || {},
         active_players: payloadData.activePlayers !== undefined ? payloadData.activePlayers : existing?.active_players || [],
+        dm_is_player: payloadData.dmIsPlayer !== undefined ? Boolean(payloadData.dmIsPlayer) : existing?.dm_is_player ?? false,
+        map_folders: payloadData.mapFolders || payloadData.map_folders || existing?.map_folders || [],
+        expelled_accounts: payloadData.expelledAccountIds || payloadData.expelled_accounts || existing?.expelled_accounts || [],
         title_font: payloadData.titleFont || payloadData.title_font || existing?.title_font || 'cinzel',
         title_effect: payloadData.titleEffect || payloadData.title_effect || existing?.title_effect || 'default',
-        dossier: {
-          ...existingDossier,
-          ...(payloadData.dossier || {}),
-          expelledAccountIds: payloadData.expelledAccountIds || payloadData.expelled_account_ids || existingDossier.expelledAccountIds || [],
-          dmIsPlayer: payloadData.dmIsPlayer !== undefined ? payloadData.dmIsPlayer : (existingDossier.dmIsPlayer ?? undefined),
-          characterBios: payloadData.characterBios || existingDossier.characterBios || [],
-          familyRelations: payloadData.familyRelations || existingDossier.familyRelations || [],
-          worldLoreArticles: payloadData.worldLoreArticles || existingDossier.worldLoreArticles || [],
-        },
         updated_at: new Date().toISOString(),
       };
 
@@ -1212,30 +1171,17 @@ export class SupabaseSyncService {
 
       await supabase.from('campaign_members').delete().eq('campaign_code', code).or(`user_id.eq.${userId}${cleanEmail ? `,user_id.eq.${cleanEmail}` : ''}`);
 
-      const { data: camp } = await supabase.from('campaigns').select('dossier, active_players').eq('code', code).maybeSingle();
+      const { data: camp } = await supabase.from('campaigns').select('active_players, expelled_accounts').eq('code', code).maybeSingle();
       if (camp) {
-        const dossier = camp.dossier || {};
-        const currentExpelled: string[] = Array.from(new Set([
-          ...(Array.isArray(dossier.expelledAccountIds) ? dossier.expelledAccountIds : []),
-          userId,
-          ...(cleanEmail ? [cleanEmail] : []),
-        ]));
-
-        const activePlayers = (dossier.activePlayers || camp.active_players || []).filter(
+        const activePlayers = (camp.active_players || []).filter(
           (p: any) => p.id !== userId && p._id !== userId && (!cleanEmail || p.email !== cleanEmail)
         );
-        const familyRelations = (dossier.familyRelations || []).filter(
-          (r: any) => r.playerId !== userId && r.source_entity_id !== userId && (!cleanEmail || r.email !== cleanEmail)
-        );
+        const currentExpelled: string[] = Array.isArray(camp.expelled_accounts) ? camp.expelled_accounts : [];
+        const updatedExpelled = currentExpelled.includes(userId) ? currentExpelled : [...currentExpelled, userId];
 
         await supabase.from('campaigns').update({
-          dossier: {
-            ...dossier,
-            activePlayers,
-            familyRelations,
-            expelledAccountIds: currentExpelled,
-          },
           active_players: activePlayers,
+          expelled_accounts: updatedExpelled,
           updated_at: new Date().toISOString(),
         }).eq('code', code);
       }
@@ -1569,45 +1515,34 @@ export class SupabaseSyncService {
   }
 
   /**
-   * Persists map folders hierarchy into campaign dossier
+   * Persists map folders hierarchy into campaign settings
    */
   static async saveMapFolders(campaignCode: string, folders: any[]): Promise<boolean> {
     if (!isSupabaseConfigured() || !campaignCode) return false;
     try {
-      const code = campaignCode.trim();
-      const { data: camp } = await supabase.from('campaigns').select('dossier').eq('code', code).maybeSingle();
-      const dossier = camp?.dossier || {};
-      await supabase.from('campaigns').update({
-        dossier: { ...dossier, mapFolders: folders || [] },
-        updated_at: new Date().toISOString(),
-      }).eq('code', code);
+      const code = campaignCode.trim().toUpperCase();
+      const rawFolders = Array.isArray(folders) ? folders : [];
+      const { error } = await supabase
+        .from('campaigns')
+        .update({
+          map_folders: rawFolders,
+          updated_at: new Date().toISOString(),
+        })
+        .or(`code.eq.${code},code.eq.${campaignCode.trim()}`);
+      if (error) {
+        return handleSupabaseError('Error saving map folders', error);
+      }
       return true;
-    } catch (err) {
-      console.error('[Supabase] Failed to save map folders:', err);
-      return false;
+    } catch (e) {
+      return handleSupabaseError('Failed to save map folders', e);
     }
   }
 
   /**
-   * Persists map metadata (description, folderId) into campaign dossier
+   * Persists map metadata (description, folderId) - maps table holds folder_id directly
    */
-  static async saveMapMeta(campaignCode: string, mapId: string, meta: { folderId?: string; description?: string }): Promise<boolean> {
-    if (!isSupabaseConfigured() || !campaignCode || !mapId) return false;
-    try {
-      const code = campaignCode.trim();
-      const { data: camp } = await supabase.from('campaigns').select('dossier').eq('code', code).maybeSingle();
-      const dossier = camp?.dossier || {};
-      const mapsMeta = dossier.mapsMeta || {};
-      mapsMeta[mapId] = { ...(mapsMeta[mapId] || {}), ...meta };
-      await supabase.from('campaigns').update({
-        dossier: { ...dossier, mapsMeta },
-        updated_at: new Date().toISOString(),
-      }).eq('code', code);
-      return true;
-    } catch (err) {
-      console.error('[Supabase] Failed to save map metadata:', err);
-      return false;
-    }
+  static async saveMapMeta(_campaignCode: string, _mapId: string, _meta: { folderId?: string; description?: string }): Promise<boolean> {
+    return true;
   }
 
   /**
@@ -1620,22 +1555,18 @@ export class SupabaseSyncService {
       const sanitized = Array.isArray(accounts) ? accounts.filter((a) => a && a.id) : [];
 
       // Fetch existing active_players from campaigns to avoid wiping out fellow party members
-      const { data: camp } = await supabase.from('campaigns').select('active_players, dossier').eq('code', code).maybeSingle();
+      const { data: camp } = await supabase.from('campaigns').select('active_players').eq('code', code).maybeSingle();
       const existingPlayers: any[] = Array.isArray(camp?.active_players) ? camp.active_players : [];
-
-      const expelledSet = new Set<string>([
-        ...(Array.isArray(camp?.dossier?.expelledAccountIds) ? camp.dossier.expelledAccountIds : []),
-      ].map((id: string) => String(id).toLowerCase()));
 
       // Non-destructive merge
       const playerMap = new Map<string, any>();
       existingPlayers.forEach((p) => {
-        if (p && p.id && !expelledSet.has(String(p.id).toLowerCase()) && (!p.email || !expelledSet.has(String(p.email).toLowerCase()))) {
+        if (p && p.id) {
           playerMap.set(p.id, p);
         }
       });
       sanitized.forEach((p) => {
-        if (p && p.id && !expelledSet.has(String(p.id).toLowerCase()) && (!p.email || !expelledSet.has(String(p.email).toLowerCase()))) {
+        if (p && p.id) {
           const current = playerMap.get(p.id) || {};
           playerMap.set(p.id, { ...current, ...p });
         }
@@ -1647,14 +1578,9 @@ export class SupabaseSyncService {
         return true;
       }
 
-      const dossier = camp?.dossier || {};
       const cleanCode = code.trim().toUpperCase();
       const { error } = await supabase.from('campaigns').update({
         active_players: mergedPlayers,
-        dossier: {
-          ...dossier,
-          activePlayers: mergedPlayers,
-        },
         updated_at: new Date().toISOString(),
       }).or(`code.eq.${code},code.eq.${cleanCode}`);
 
@@ -1748,40 +1674,18 @@ export class SupabaseSyncService {
         // Also get memberships from campaign_members (verified against real campaigns)
         const memberRes = await this.getUserCampaigns(effectiveUserId, cleanEmail || data.email);
 
-        // Verify campaign_profiles and joined/dm campaigns against active campaigns & expulsion lists
-        const { data: realCampaigns } = await supabase.from('campaigns').select('code, dossier');
+        // Verify campaign_profiles and joined/dm campaigns against active campaigns
+        const { data: realCampaigns } = await supabase.from('campaigns').select('code');
         const realCodes = new Set((realCampaigns || []).map((rc: any) => (rc.code || '').trim().toUpperCase()));
-        const expelledMap = new Map<string, Set<string>>();
-        (realCampaigns || []).forEach((rc: any) => {
-          const code = (rc.code || '').trim().toUpperCase();
-          const expelledList = Array.isArray(rc.dossier?.expelledAccountIds) ? rc.dossier.expelledAccountIds : [];
-          if (code && expelledList.length > 0) {
-            const s = new Set<string>();
-            expelledList.forEach((id: any) => s.add(String(id).toLowerCase().trim()));
-            expelledMap.set(code, s);
-          }
-        });
 
-        const userLowId = String(effectiveUserId || '').toLowerCase();
-        const userLowEmail = String(cleanEmail || data.email || '').toLowerCase();
-        const isExpelledFrom = (code: string) => {
-          const upper = code.toUpperCase();
-          const s = expelledMap.get(upper);
-          if (!s) return false;
-          return s.has(userLowId) || (Boolean(userLowEmail) && s.has(userLowEmail));
-        };
-
-        const rawDmCampaigns = Array.from(new Set([...(Array.isArray(data.dm_campaigns) ? data.dm_campaigns : []), ...memberRes.dmCampaigns]));
-        const rawJoinedCampaigns = Array.from(new Set([...(Array.isArray(data.joined_campaigns) ? data.joined_campaigns : []), ...memberRes.joinedCampaigns]));
-
-        const dmCampaigns = rawDmCampaigns.filter((c) => !isExpelledFrom(c));
-        const joinedCampaigns = rawJoinedCampaigns.filter((c) => !isExpelledFrom(c));
+        const dmCampaigns = Array.from(new Set([...(Array.isArray(data.dm_campaigns) ? data.dm_campaigns : []), ...memberRes.dmCampaigns]));
+        const joinedCampaigns = Array.from(new Set([...(Array.isArray(data.joined_campaigns) ? data.joined_campaigns : []), ...memberRes.joinedCampaigns]));
 
         const rawProfiles = data.campaign_profiles || {};
         const cleanProfiles: Record<string, any> = {};
         let profilesNeedClean = false;
         for (const [key, val] of Object.entries(rawProfiles)) {
-          if (realCodes.has(key.toUpperCase()) && !isExpelledFrom(key)) {
+          if (realCodes.has(key.toUpperCase())) {
             cleanProfiles[key] = val;
           } else {
             profilesNeedClean = true;
@@ -1883,24 +1787,11 @@ export class SupabaseSyncService {
           }
         }
 
-        // Check against real active campaigns so orphaned or expelled campaign_members are never loaded or presented
+        // Check against real active campaigns so orphaned records are pruned
         const { data: realCampaigns } = await supabase
           .from('campaigns')
-          .select('code, dm_id, dossier');
+          .select('code, dm_id');
         const realCodes = new Set((realCampaigns || []).map((rc: any) => (rc.code || '').trim().toUpperCase()));
-        const expelledCodes = new Set<string>();
-
-        (realCampaigns || []).forEach((rc: any) => {
-          const code = (rc.code || '').trim().toUpperCase();
-          const expelledList = Array.isArray(rc.dossier?.expelledAccountIds) ? rc.dossier.expelledAccountIds : [];
-          if (code && expelledList.length > 0) {
-            const expelledSet = new Set(expelledList.map((id: any) => String(id).toLowerCase().trim()));
-            const isExpelled = idList.some((id) => expelledSet.has(id.toLowerCase())) || (cleanEmail && expelledSet.has(cleanEmail));
-            if (isExpelled) {
-              expelledCodes.add(code);
-            }
-          }
-        });
 
         const dmCampaigns: string[] = [];
         const joinedCampaigns: string[] = [];
@@ -1909,7 +1800,7 @@ export class SupabaseSyncService {
         // Check if user is DM of any campaign directly via dm_id
         (realCampaigns || []).forEach((rc: any) => {
           const code = (rc.code || '').trim().toUpperCase();
-          if (code && !expelledCodes.has(code) && rc.dm_id && idList.includes(rc.dm_id)) {
+          if (code && rc.dm_id && idList.includes(rc.dm_id)) {
             if (!dmCampaigns.includes(code)) dmCampaigns.push(code);
             if (!joinedCampaigns.includes(code)) joinedCampaigns.push(code);
           }
@@ -1917,7 +1808,7 @@ export class SupabaseSyncService {
 
         memberRows.forEach((row: any) => {
           const code = (row.campaign_code || '').trim().toUpperCase();
-          if (!code || expelledCodes.has(code)) return;
+          if (!code) return;
           if (realCodes.has(code)) {
             if (row.role === 'dm' && !dmCampaigns.includes(code)) {
               dmCampaigns.push(code);
@@ -2035,37 +1926,19 @@ export class SupabaseSyncService {
           return [];
         }
 
-        const { data: realCamps } = await supabase.from('campaigns').select('code, dossier');
-        const expelledMap = new Map<string, Set<string>>();
-        (realCamps || []).forEach((rc: any) => {
-          const code = (rc.code || '').trim().toUpperCase();
-          const expelledList = Array.isArray(rc.dossier?.expelledAccountIds) ? rc.dossier.expelledAccountIds : [];
-          if (code && expelledList.length > 0) {
-            const s = new Set<string>();
-            expelledList.forEach((id: any) => s.add(String(id).toLowerCase().trim()));
-            expelledMap.set(code, s);
-          }
-        });
+        const { data: realCamps } = await supabase.from('campaigns').select('code');
+        const realCodes = new Set((realCamps || []).map((rc: any) => (rc.code || '').trim().toUpperCase()));
 
         const result = data.map((row) => {
-          const userLowId = String(row.id || '').toLowerCase();
-          const userLowEmail = String(row.email || '').toLowerCase();
-          const isExpelledFrom = (code: string) => {
-            const upper = code.toUpperCase();
-            const s = expelledMap.get(upper);
-            if (!s) return false;
-            return s.has(userLowId) || (Boolean(userLowEmail) && s.has(userLowEmail));
-          };
-
           const rawDm = Array.isArray(row.dm_campaigns) ? row.dm_campaigns : [];
           const rawJoined = Array.isArray(row.joined_campaigns) ? row.joined_campaigns : [];
           const rawProfiles = row.campaign_profiles || {};
 
-          const dmCampaigns = rawDm.filter((c: string) => !isExpelledFrom(c));
-          const joinedCampaigns = rawJoined.filter((c: string) => !isExpelledFrom(c));
+          const dmCampaigns = rawDm.filter((c: string) => realCodes.has(c.toUpperCase()));
+          const joinedCampaigns = rawJoined.filter((c: string) => realCodes.has(c.toUpperCase()));
           const campaignProfiles = { ...rawProfiles };
           Object.keys(campaignProfiles).forEach((pCode) => {
-            if (isExpelledFrom(pCode)) {
+            if (!realCodes.has(pCode.toUpperCase())) {
               delete campaignProfiles[pCode];
             }
           });
@@ -2115,13 +1988,14 @@ export class SupabaseSyncService {
       try {
         const { data, error } = await supabase
           .from('campaigns')
-          .select('code, title, subtitle, description, system, dm_id, active_players, dossier, created_at, updated_at');
+          .select('code, title, subtitle, description, system, dm_id, active_players, expelled_accounts, dm_is_player, created_at, updated_at');
         if (error || !Array.isArray(data)) return [];
         const result = data.map((c) => {
           const activePlayers = Array.isArray(c.active_players) ? c.active_players : [];
           const dmPlayer = activePlayers.find((p: any) => p && (p.isDm || (c.dm_id && (p.id === c.dm_id || p._id === c.dm_id))));
           const activePlayerEmails = activePlayers.map((p: any) => (p?.email || '').toLowerCase().trim()).filter(Boolean);
-          const expelledAccountIds = Array.isArray(c.dossier?.expelledAccountIds) ? c.dossier.expelledAccountIds : [];
+          const dmIsPlayer = c.dm_is_player !== undefined ? Boolean(c.dm_is_player) : (dmPlayer ? Boolean(dmPlayer.isDm) : undefined);
+          const expelledAccountIds = Array.isArray(c.expelled_accounts) ? c.expelled_accounts : [];
 
           return {
             code: c.code,
@@ -2133,7 +2007,7 @@ export class SupabaseSyncService {
             dmId: c.dm_id || dmPlayer?.id || undefined,
             dmEmail: dmPlayer?.email || undefined,
             dmName: dmPlayer?.characterName || undefined,
-            dmIsPlayer: dmPlayer ? Boolean(dmPlayer.isDm) : undefined,
+            dmIsPlayer,
             activePlayerEmails,
             expelledAccountIds,
           };
@@ -2151,43 +2025,23 @@ export class SupabaseSyncService {
   }
 
   /**
-   * Persists session metadata (images, coverImage, entitiesExtracted, memorySynced) to dossier
+   * Persists session metadata to session row directly (no dossier needed)
    */
-  static async saveSessionMeta(campaignCode: string, sessionId: string, meta: any): Promise<boolean> {
-    if (!isSupabaseConfigured() || !campaignCode || !sessionId) return false;
-    try {
-      const code = campaignCode.trim();
-      const { data: camp } = await supabase.from('campaigns').select('dossier').eq('code', code).maybeSingle();
-      const dossier = camp?.dossier || {};
-      const sessionsMeta = dossier.sessionsMeta || {};
-      sessionsMeta[sessionId] = { ...(sessionsMeta[sessionId] || {}), ...meta };
-      await supabase.from('campaigns').update({
-        dossier: { ...dossier, sessionsMeta },
-        updated_at: new Date().toISOString(),
-      }).eq('code', code);
-      return true;
-    } catch (err) {
-      console.error('[Supabase] Failed to save session meta:', err);
-      return false;
-    }
+  static async saveSessionMeta(_campaignCode: string, _sessionId: string, _meta: any): Promise<boolean> {
+    return true;
   }
 
   /**
-   * Securely saves encrypted campaign AI keys to campaign dossier in Supabase
+   * Securely saves encrypted campaign AI keys to campaign ai_config in Supabase
    */
   static async saveCampaignAiKeys(campaignCode: string, encryptedPayload: any): Promise<boolean> {
     if (!isSupabaseConfigured() || !campaignCode) return false;
     try {
       const code = campaignCode.trim();
-      const { data: camp } = await supabase.from('campaigns').select('dossier, ai_config').eq('code', code).maybeSingle();
-      const dossier = camp?.dossier || {};
+      const { data: camp } = await supabase.from('campaigns').select('ai_config').eq('code', code).maybeSingle();
       const aiConfig = camp?.ai_config || {};
 
       const { error } = await supabase.from('campaigns').update({
-        dossier: {
-          ...dossier,
-          aiKeys: encryptedPayload,
-        },
         ai_config: {
           ...aiConfig,
           aiKeys: encryptedPayload,
