@@ -231,6 +231,10 @@ export function Oracle() {
 
   // Provider: 'gemini' | 'openrouter'
   const [provider, setProvider] = useState<LlmProviderType>(() => {
+    const campConf = CampaignManager.getCampaignAiConfig();
+    if (campConf.provider === 'gemini' || campConf.provider === 'openrouter') {
+      return campConf.provider as LlmProviderType;
+    }
     const prefs = UserPreferencesService.getLocalPreferences();
     if (prefs.ai?.oracleProvider === 'gemini' || prefs.ai?.oracleProvider === 'openrouter') {
       return prefs.ai.oracleProvider as LlmProviderType;
@@ -455,8 +459,17 @@ export function Oracle() {
     } catch {}
   }, [selectedPersonaId]);
 
+  // Active campaign & account info
+  const campaignMeta = CampaignManager.getCampaignMeta();
+  const campaignCode = CampaignManager.getActiveCampaignCode();
+  const activeCampaignCodeClean = (campaignCode || 'GLOBAL').trim().toUpperCase();
+
   // Gemini state
   const [geminiModel, setGeminiModel] = useState<string>(() => {
+    const campConf = CampaignManager.getCampaignAiConfig();
+    if (campConf.provider === 'gemini' && campConf.oracleModel) {
+      return campConf.oracleModel;
+    }
     const prefs = UserPreferencesService.getLocalPreferences();
     if (prefs.ai?.oracleGeminiModel) return prefs.ai.oracleGeminiModel;
     try {
@@ -514,6 +527,10 @@ export function Oracle() {
 
   // OpenRouter state
   const [openrouterModel, setOpenrouterModel] = useState<string>(() => {
+    const campConf = CampaignManager.getCampaignAiConfig();
+    if (campConf.provider === 'openrouter' && campConf.oracleModel) {
+      return cleanOpenRouterModelId(campConf.oracleModel);
+    }
     const prefs = UserPreferencesService.getLocalPreferences();
     if (prefs.ai?.oracleOpenrouterModel) return cleanOpenRouterModelId(prefs.ai.oracleOpenrouterModel);
     try {
@@ -522,6 +539,25 @@ export function Oracle() {
     } catch {}
     return 'openrouter/free';
   });
+
+  // Listen to remote campaign AI config updates (from Master or Supabase)
+  useEffect(() => {
+    const handleAiConfigChange = () => {
+      const campConf = CampaignManager.getCampaignAiConfig(activeCampaignCodeClean);
+      if (campConf.provider) {
+        setProvider(campConf.provider as LlmProviderType);
+      }
+      if (campConf.provider === 'openrouter' && campConf.oracleModel) {
+        setOpenrouterModel(cleanOpenRouterModelId(campConf.oracleModel));
+      } else if (campConf.provider === 'gemini' && campConf.oracleModel) {
+        setGeminiModel(campConf.oracleModel);
+      }
+    };
+    window.addEventListener('chronicle_ai_config_updated', handleAiConfigChange);
+    return () => {
+      window.removeEventListener('chronicle_ai_config_updated', handleAiConfigChange);
+    };
+  }, [activeCampaignCodeClean]);
   const [customOpenrouterModel, setCustomOpenrouterModel] = useState<string>('');
   const [isCustomOpenrouter, setIsCustomOpenrouter] = useState(false);
   const [isOpenRouterCatalogOpen, setIsOpenRouterCatalogOpen] = useState(false);
@@ -606,12 +642,7 @@ export function Oracle() {
 
   const [isClearModalOpen, setIsClearModalOpen] = useState(false);
 
-  // Active campaign & account info
-  const campaignMeta = CampaignManager.getCampaignMeta();
-  const campaignCode = CampaignManager.getActiveCampaignCode();
-
   const currentUserId = (account?.id || player?._id || 'guest').trim();
-  const activeCampaignCodeClean = (campaignCode || 'GLOBAL').trim().toUpperCase();
 
   const getScopedChatKey = (cCode: string, uId: string) =>
     `chronicle_oracle_chat_history_${cCode}_${uId}`;

@@ -18,6 +18,8 @@ import {
   CampaignChapter,
   CampaignProfile,
   CampaignMemberRecord,
+  CampaignMemberPermissions,
+  PermissionAction,
   DmResponse,
   CharacterBio,
   CharacterRelationship,
@@ -48,7 +50,7 @@ import { UserPreferencesService } from "../lib/userPreferencesService";
 import { IndexedDbStorage } from "../lib/indexedDbStorage";
 import { SupabaseSyncService } from "../lib/supabaseSyncService";
 import { FirebaseStorageService, pickBestImageUrl, ensureMediaUploaded } from "../lib/firebaseStorageService";
-import { isSupabaseConfigured } from "../lib/supabase";
+import { supabase, isSupabaseConfigured } from "../lib/supabase";
 
 const DEFAULT_MAPS: WorldMap[] = [];
 
@@ -931,7 +933,36 @@ export class CampaignManager {
       this.saveUserPreferences({ aiProvider: updates.provider });
     }
 
+    if (isSupabaseConfigured() && code) {
+      SupabaseSyncService.saveCampaignAiConfig(code, updates).catch((err) => {
+        console.warn('[Supabase] Failed to persist campaign AI config:', err);
+      });
+    }
+
     if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('chronicle_campaigns_updated'));
+      window.dispatchEvent(new CustomEvent('chronicle_ai_config_updated'));
+    }
+  }
+
+  static updateCampaignAiConfigFromRemote(campaignCode: string, remoteConfig: any) {
+    if (!campaignCode || !remoteConfig || typeof remoteConfig !== 'object') return;
+    const cleanCode = campaignCode.trim().toUpperCase();
+    const campaigns = this.getCampaigns();
+    const idx = campaigns.findIndex((c) => c.code.toUpperCase() === cleanCode);
+    if (idx !== -1) {
+      const current = campaigns[idx].aiConfig || {};
+      campaigns[idx].aiConfig = {
+        ...current,
+        ...remoteConfig,
+      };
+      this.saveCampaignsLocalOnly(campaigns);
+    }
+    if (typeof window !== 'undefined') {
+      try {
+        const prev = JSON.parse(localStorage.getItem('chronicle_campaign_ai_config') || '{}');
+        localStorage.setItem('chronicle_campaign_ai_config', JSON.stringify({ ...prev, ...remoteConfig }));
+      } catch {}
       window.dispatchEvent(new CustomEvent('chronicle_campaigns_updated'));
       window.dispatchEvent(new CustomEvent('chronicle_ai_config_updated'));
     }
@@ -1045,6 +1076,34 @@ export class CampaignManager {
 
     accounts[index] = account;
     this.saveAccounts(accounts);
+
+    // Sync into campaign_members
+    const newRole = newCoMasterState ? 'co-dm' : 'player';
+    const localMembers = this.getCampaignMembers(cleanCode);
+    const mIdx = localMembers.findIndex((m) => m.userId === account.id || (account.email && m.userId === account.email));
+    if (mIdx !== -1) {
+      localMembers[mIdx] = { ...localMembers[mIdx], role: newRole };
+    } else {
+      localMembers.push({
+        campaignCode: cleanCode,
+        userId: account.id,
+        role: newRole,
+        characterName: account.characterName,
+        status: 'active',
+        createdAt: new Date().toISOString(),
+      });
+    }
+    this.saveCampaignMembersLocalOnly(cleanCode, localMembers);
+
+    if (isSupabaseConfigured()) {
+      Promise.resolve(
+        supabase.from('campaign_members')
+          .update({ role: newRole })
+          .eq('campaign_code', cleanCode)
+          .eq('user_id', account.id)
+      ).catch(() => {});
+    }
+
     if (typeof window !== "undefined") {
       window.dispatchEvent(new CustomEvent("chronicle_accounts_updated"));
       window.dispatchEvent(new CustomEvent("chronicle_data_updated"));
@@ -1925,6 +1984,15 @@ export class CampaignManager {
     // Immediately trigger cloud save so campaign payload is updated in Firestore
     CloudSyncService.triggerCloudSave();
 
+    // Mark as expelled in local campaign_members cache
+    const localMembers = this.getCampaignMembers(cleanCode).map((m) => {
+      if (m.userId === accountId || (targetEmail && m.userId.toLowerCase() === targetEmail.toLowerCase())) {
+        return { ...m, status: 'expelled' as const };
+      }
+      return m;
+    });
+    this.saveCampaignMembersLocalOnly(cleanCode, localMembers);
+
     if (isSupabaseConfigured()) {
       SupabaseSyncService.removeCampaignMember(cleanCode, accountId, targetEmail).catch(() => {});
     }
@@ -1968,6 +2036,27 @@ export class CampaignManager {
       const acc = idx !== -1 ? accounts[idx] : null;
       SupabaseSyncService.joinCampaignMember(cleanCode, accountId, 'player', acc?.characterName).catch(() => {});
     }
+
+    const localMembers = this.getCampaignMembers(cleanCode);
+    const mIdx = localMembers.findIndex((m) => m.userId === accountId);
+    const acc = idx !== -1 ? accounts[idx] : null;
+    if (mIdx !== -1) {
+      localMembers[mIdx] = {
+        ...localMembers[mIdx],
+        status: 'active',
+        characterName: acc?.characterName || localMembers[mIdx].characterName,
+      };
+    } else {
+      localMembers.push({
+        campaignCode: cleanCode,
+        userId: accountId,
+        role: 'player',
+        characterName: acc?.characterName,
+        status: 'active',
+        createdAt: new Date().toISOString(),
+      });
+    }
+    this.saveCampaignMembersLocalOnly(cleanCode, localMembers);
   }
 
   static getCampaignMembers(code: string): CampaignMemberRecord[] {
@@ -2005,6 +2094,113 @@ export class CampaignManager {
     }) || null;
   }
 
+  static updateMemberPermissions(
+    code: string,
+    userId: string,
+    permissions: CampaignMemberPermissions
+  ) {
+    if (!code || !userId) return;
+    const cleanCode = code.trim().toUpperCase();
+    const members = this.getCampaignMembers(cleanCode);
+    const mIdx = members.findIndex(
+      (m) => String(m.userId).toLowerCase() === String(userId).toLowerCase()
+    );
+    if (mIdx !== -1) {
+      members[mIdx] = {
+        ...members[mIdx],
+        permissions: {
+          ...(members[mIdx].permissions || {}),
+          ...permissions,
+        },
+      };
+      this.saveCampaignMembersLocalOnly(cleanCode, members);
+    }
+    if (isSupabaseConfigured()) {
+      SupabaseSyncService.saveMemberPermissions(cleanCode, userId, permissions).catch((err) => {
+        console.warn('[Supabase] Failed to persist member permissions:', err);
+      });
+    }
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('chronicle_members_updated'));
+      window.dispatchEvent(new CustomEvent('chronicle_data_updated'));
+    }
+  }
+
+  static canUser(
+    action: PermissionAction,
+    campaignCode?: string,
+    userId?: string
+  ): boolean {
+    const code = (campaignCode || this.getActiveCampaignCode() || '').trim().toUpperCase();
+    if (!code) return false;
+    const campaign = this.getCampaigns().find((c) => c.code.toUpperCase() === code);
+    const targetUserId = (userId || this.getCurrentAccount()?.id || '').trim();
+    if (!targetUserId) return false;
+
+    // 1. Super-Admin / Master bypass: campaign creator or dmId always has all permissions
+    if (campaign && campaign.dmId && String(campaign.dmId).toLowerCase() === targetUserId.toLowerCase()) {
+      return true;
+    }
+
+    const member = this.getCampaignMember(code, targetUserId);
+    if (member?.role === 'dm') {
+      return true;
+    }
+
+    // If expelled, no permissions
+    if (member?.status === 'expelled') {
+      return false;
+    }
+
+    const isCoDm = member?.role === 'co-dm' || member?.role === 'comaster';
+    const perms = member?.permissions;
+
+    switch (action) {
+      case 'create_session':
+        if (perms?.canCreateSessions !== undefined) return Boolean(perms.canCreateSessions);
+        return Boolean(isCoDm);
+
+      case 'edit_session':
+        if (perms?.canEditSessions !== undefined) return Boolean(perms.canEditSessions);
+        return Boolean(isCoDm);
+
+      case 'delete_session':
+        if (perms?.canDeleteSessions !== undefined) return Boolean(perms.canDeleteSessions);
+        return false;
+
+      case 'create_entity':
+        if (perms?.canCreateEntities !== undefined) return Boolean(perms.canCreateEntities);
+        return Boolean(isCoDm);
+
+      case 'edit_entity':
+        if (perms?.canEditEntities !== undefined) return Boolean(perms.canEditEntities);
+        return Boolean(isCoDm);
+
+      case 'delete_entity':
+        if (perms?.canDeleteEntities !== undefined) return Boolean(perms.canDeleteEntities);
+        return false;
+
+      case 'create_lore':
+        if (perms?.canCreateLore !== undefined) return Boolean(perms.canCreateLore);
+        return Boolean(isCoDm);
+
+      case 'edit_lore':
+        if (perms?.canEditLore !== undefined) return Boolean(perms.canEditLore);
+        return Boolean(isCoDm);
+
+      case 'delete_lore':
+        if (perms?.canDeleteLore !== undefined) return Boolean(perms.canDeleteLore);
+        return false;
+
+      case 'manage_maps':
+        if (perms?.canManageMaps !== undefined) return Boolean(perms.canManageMaps);
+        return Boolean(isCoDm);
+
+      default:
+        return false;
+    }
+  }
+
   static leaveCampaign(accountId: string, code: string) {
     const cleanCode = code.trim().toUpperCase();
     const accounts = this.getAccounts();
@@ -2027,6 +2223,14 @@ export class CampaignManager {
         accounts[idx].lastCampaignCode = undefined;
       }
       this.saveAccounts(accounts);
+    }
+
+    // Clean from local campaign_members cache
+    const localMembers = this.getCampaignMembers(cleanCode).filter((m) => m.userId !== accountId);
+    this.saveCampaignMembersLocalOnly(cleanCode, localMembers);
+
+    if (isSupabaseConfigured() && accountId && cleanCode) {
+      SupabaseSyncService.removeCampaignMember(cleanCode, accountId).catch(() => {});
     }
 
     // If active campaign was this one, reset it
@@ -2565,8 +2769,17 @@ export class CampaignManager {
     );
     const deletedAccounts = new Set(this.getDeletedAccountIds().map((id) => String(id).toLowerCase()));
 
+    const members = this.getCampaignMembers(cleanActiveCode);
+    const memberMap = new Map<string, CampaignMemberRecord>();
+    members.forEach((m) => {
+      if (m.userId) memberMap.set(String(m.userId).toLowerCase(), m);
+      if (m.status === 'expelled') {
+        expelledSet.add(String(m.userId).toLowerCase());
+      }
+    });
+
     const accounts = this.getAccounts();
-    return accounts
+    const resultPlayers = accounts
       .filter((a) => {
         if (!a || !a.id) return false;
         const lowId = String(a.id).toLowerCase();
@@ -2574,8 +2787,10 @@ export class CampaignManager {
         if (deletedAccounts.has(lowId) || (lowEmail && deletedAccounts.has(lowEmail))) return false;
         if (expelledSet.has(lowId) || (lowEmail && expelledSet.has(lowEmail))) return false;
 
-        const isJoined = a.joinedCampaigns?.some((c) => c.toUpperCase() === cleanActiveCode);
-        const isDm = a.dmCampaigns?.some((c) => c.toUpperCase() === cleanActiveCode) || campaign?.dmId === a.id;
+        const isMember = memberMap.has(lowId) || (lowEmail && memberMap.has(lowEmail));
+        const memRec = memberMap.get(lowId) || (lowEmail ? memberMap.get(lowEmail) : undefined);
+        const isJoined = (isMember && memRec?.status !== 'expelled') || a.joinedCampaigns?.some((c) => c.toUpperCase() === cleanActiveCode);
+        const isDm = a.dmCampaigns?.some((c) => c.toUpperCase() === cleanActiveCode) || campaign?.dmId === a.id || memRec?.role === 'dm';
         const hasProfile = Boolean(
           a.campaignProfiles &&
           (a.campaignProfiles[cleanActiveCode] ||
@@ -2583,7 +2798,42 @@ export class CampaignManager {
         );
         return Boolean(isJoined || isDm || hasProfile);
       })
-      .map((a) => this.accountToPlayer(a));
+      .map((a) => {
+        const p = this.accountToPlayer(a);
+        const lowId = String(a.id).toLowerCase();
+        const lowEmail = a.email ? String(a.email).toLowerCase() : '';
+        const memRec = memberMap.get(lowId) || (lowEmail ? memberMap.get(lowEmail) : undefined);
+        if (memRec) {
+          if (memRec.role === 'dm') p.isDm = true;
+          if (memRec.role === 'co-dm' || memRec.role === 'comaster') {
+            p.isCoDm = true;
+            p.isCoMaster = true;
+          }
+        }
+        return p;
+      });
+
+    // Also include any members from campaign_members that are not in local accounts array
+    const coveredIds = new Set(resultPlayers.map((p) => String(p._id).toLowerCase()));
+    members.forEach((m) => {
+      const mId = String(m.userId || '').toLowerCase();
+      if (!mId) return;
+      if (m.status !== 'expelled' && !coveredIds.has(mId)) {
+        resultPlayers.push({
+          _id: m.userId,
+          name: m.characterName || 'Avventuriero',
+          characterName: m.characterName || 'Avventuriero',
+          isDm: m.role === 'dm',
+          isCoDm: m.role === 'co-dm' || m.role === 'comaster',
+          isCoMaster: m.role === 'co-dm' || m.role === 'comaster',
+          color: '#6366f1',
+          role: m.role,
+        } as any);
+        coveredIds.add(mId);
+      }
+    });
+
+    return resultPlayers;
   }
 
   static getPlayers(): Player[] {

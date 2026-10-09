@@ -387,6 +387,29 @@ export function Entities() {
   const [entityToDelete, setEntityToDelete] = useState<string | null>(null);
   const [tomePairIndex, setTomePairIndex] = useState<number>(0);
 
+  const activeCampaignCode = CampaignManager.getActiveCampaignCode() || '';
+  const [canCreateEntity, setCanCreateEntity] = useState(() => CampaignManager.canUser('create_entity', activeCampaignCode));
+  const [canEditEntity, setCanEditEntity] = useState(() => CampaignManager.canUser('edit_entity', activeCampaignCode));
+  const [canDeleteEntity, setCanDeleteEntity] = useState(() => CampaignManager.canUser('delete_entity', activeCampaignCode));
+
+  useEffect(() => {
+    const handleSync = () => {
+      setCanCreateEntity(CampaignManager.canUser('create_entity', activeCampaignCode));
+      setCanEditEntity(CampaignManager.canUser('edit_entity', activeCampaignCode));
+      setCanDeleteEntity(CampaignManager.canUser('delete_entity', activeCampaignCode));
+    };
+    window.addEventListener('chronicle_campaign_updated', handleSync);
+    window.addEventListener('chronicle_campaigns_updated', handleSync);
+    window.addEventListener('chronicle_data_updated', handleSync);
+    window.addEventListener('chronicle_members_updated', handleSync);
+    return () => {
+      window.removeEventListener('chronicle_campaign_updated', handleSync);
+      window.removeEventListener('chronicle_campaigns_updated', handleSync);
+      window.removeEventListener('chronicle_data_updated', handleSync);
+      window.removeEventListener('chronicle_members_updated', handleSync);
+    };
+  }, [activeCampaignCode]);
+
   const refreshEntities = () => {
     setEntities(CampaignManager.getEntities());
     setMaps(CampaignManager.getMaps());
@@ -859,16 +882,18 @@ export function Entities() {
                   <span className="sm:hidden">Tutto</span>
                 </button>
 
-                <button
-                  type="button"
-                  onClick={() => handleOpenCreateModal('npc')}
-                  className="px-3.5 py-1.5 rounded-[2px] font-medium text-xs bg-primary text-surface-0 hover:bg-primary-hover transition-colors flex items-center justify-center gap-1.5 shrink-0 cursor-pointer shadow-xs font-mono"
-                  title="Aggiungi nuova voce all'archivio"
-                >
-                  <Plus size={14} />
-                  <span className="hidden xs:inline">Nuova Voce</span>
-                  <span className="xs:hidden">Nuovo</span>
-                </button>
+                {canCreateEntity && (
+                  <button
+                    type="button"
+                    onClick={() => handleOpenCreateModal('npc')}
+                    className="px-3.5 py-1.5 rounded-[2px] font-medium text-xs bg-primary text-surface-0 hover:bg-primary-hover transition-colors flex items-center justify-center gap-1.5 shrink-0 cursor-pointer shadow-xs font-mono"
+                    title="Aggiungi nuova voce all'archivio"
+                  >
+                    <Plus size={14} />
+                    <span className="hidden xs:inline">Nuova Voce</span>
+                    <span className="xs:hidden">Nuovo</span>
+                  </button>
+                )}
               </div>
             </div>
           </header>
@@ -1166,15 +1191,17 @@ export function Entities() {
               </span>
             </div>
 
-            <button
-              type="button"
-              onClick={() => handleOpenCreateModal(activeType)}
-              className="px-3.5 py-1.5 rounded-[2px] font-medium text-xs bg-primary text-surface-0 hover:bg-primary-hover transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs shrink-0 font-mono"
-            >
-              <Plus size={14} />
-              <span className="hidden xs:inline">Nuovo {activeCategory.singular}</span>
-              <span className="xs:hidden">Nuovo</span>
-            </button>
+            {canCreateEntity && (
+              <button
+                type="button"
+                onClick={() => handleOpenCreateModal(activeType)}
+                className="px-3.5 py-1.5 rounded-[2px] font-medium text-xs bg-primary text-surface-0 hover:bg-primary-hover transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs shrink-0 font-mono"
+              >
+                <Plus size={14} />
+                <span className="hidden xs:inline">Nuovo {activeCategory.singular}</span>
+                <span className="xs:hidden">Nuovo</span>
+              </button>
+            )}
           </div>
 
           {/* Mobile Horizontal Tome Selector (Tutto + Tomi I — VI) */}
@@ -1639,17 +1666,19 @@ export function Entities() {
                           </span>
 
                           <div className="flex items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setEntityToDelete(ent._id);
-                              }}
-                              className="p-1 text-content-3/60 hover:text-red-400 hover:bg-red-950/30 rounded transition-colors opacity-0 group-hover:opacity-100 cursor-pointer"
-                              title={`Elimina ${ent.name} dal Codex`}
-                            >
-                              <Trash2 size={12} />
-                            </button>
+                            {canDeleteEntity && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setEntityToDelete(ent._id);
+                                }}
+                                className="p-1 text-content-3/60 hover:text-red-400 hover:bg-red-950/30 rounded transition-colors opacity-0 group-hover:opacity-100 cursor-pointer"
+                                title={`Elimina ${ent.name} dal Codex`}
+                              >
+                                <Trash2 size={12} />
+                              </button>
+                            )}
 
                             <div className="flex items-center gap-1 text-[11px] font-medium text-primary/80 group-hover:text-primary transition-colors">
                               {ent.aiConfig?.enabled ? (
@@ -1748,27 +1777,31 @@ export function Entities() {
                       <ExternalLink size={10} className="text-content-3" />
                     </button>
                   )}
-                  <button
-                    type="button"
-                    onClick={() => handleOpenEditModal(detailEntity)}
-                    className="px-3.5 py-1.5 rounded-[2px] bg-primary text-surface-0 hover:bg-primary-hover font-medium text-xs flex items-center gap-1.5 transition-colors shadow-xs cursor-pointer font-mono"
-                  >
-                    <Edit3 size={13} />
-                    <span>Modifica</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const idToDelete = detailEntity._id;
-                      setDetailEntity(null);
-                      setEntityToDelete(idToDelete);
-                    }}
-                    className="px-3 py-1.5 rounded-[2px] bg-red-950/40 hover:bg-red-900/60 text-red-400 hover:text-red-300 font-medium text-xs font-mono flex items-center gap-1.5 transition-colors border border-red-800/50 cursor-pointer"
-                    title={`Elimina ${detailEntity.name} dal Codex`}
-                  >
-                    <Trash2 size={13} />
-                    <span className="hidden sm:inline">Elimina</span>
-                  </button>
+                  {canEditEntity && (
+                    <button
+                      type="button"
+                      onClick={() => handleOpenEditModal(detailEntity)}
+                      className="px-3.5 py-1.5 rounded-[2px] bg-primary text-surface-0 hover:bg-primary-hover font-medium text-xs flex items-center gap-1.5 transition-colors shadow-xs cursor-pointer font-mono"
+                    >
+                      <Edit3 size={13} />
+                      <span>Modifica</span>
+                    </button>
+                  )}
+                  {canDeleteEntity && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const idToDelete = detailEntity._id;
+                        setDetailEntity(null);
+                        setEntityToDelete(idToDelete);
+                      }}
+                      className="px-3 py-1.5 rounded-[2px] bg-red-950/40 hover:bg-red-900/60 text-red-400 hover:text-red-300 font-medium text-xs font-mono flex items-center gap-1.5 transition-colors border border-red-800/50 cursor-pointer"
+                      title={`Elimina ${detailEntity.name} dal Codex`}
+                    >
+                      <Trash2 size={13} />
+                      <span className="hidden sm:inline">Elimina</span>
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => setDetailEntity(null)}
@@ -3995,7 +4028,7 @@ export function Entities() {
               </div>
 
               <div className="flex-shrink-0 flex items-center justify-between gap-3 p-5 sm:p-6 border-t border-surface-2 bg-surface-1">
-                {isEditing && selectedEntityId ? (
+                {isEditing && selectedEntityId && canDeleteEntity ? (
                   <button
                     type="button"
                     onClick={() => {

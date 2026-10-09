@@ -220,21 +220,30 @@ export function Sessions() {
   const [isDmPlayer, setIsDmPlayer] = useState(() => CampaignManager.isDmPlayerCampaign());
   const isMaster = Boolean(player?.isDm || CampaignManager.isCurrentUserDm() || player?.isCoDm);
 
+  const [canCreateSession, setCanCreateSession] = useState(() => CampaignManager.canUser('create_session', activeCampaignCode));
+  const [canEditSession, setCanEditSession] = useState(() => CampaignManager.canUser('edit_session', activeCampaignCode));
+  const [canDeleteSession, setCanDeleteSession] = useState(() => CampaignManager.canUser('delete_session', activeCampaignCode));
+
   useEffect(() => {
     const handleCampaignSync = () => {
       setIsDmPlayer(CampaignManager.isDmPlayerCampaign());
+      setCanCreateSession(CampaignManager.canUser('create_session', activeCampaignCode));
+      setCanEditSession(CampaignManager.canUser('edit_session', activeCampaignCode));
+      setCanDeleteSession(CampaignManager.canUser('delete_session', activeCampaignCode));
     };
     window.addEventListener('chronicle_campaign_updated', handleCampaignSync);
     window.addEventListener('chronicle_campaigns_updated', handleCampaignSync);
     window.addEventListener('chronicle_data_updated', handleCampaignSync);
     window.addEventListener('chronicle_campaign_changed', handleCampaignSync);
+    window.addEventListener('chronicle_members_updated', handleCampaignSync);
     return () => {
       window.removeEventListener('chronicle_campaign_updated', handleCampaignSync);
       window.removeEventListener('chronicle_campaigns_updated', handleCampaignSync);
       window.removeEventListener('chronicle_data_updated', handleCampaignSync);
       window.removeEventListener('chronicle_campaign_changed', handleCampaignSync);
+      window.removeEventListener('chronicle_members_updated', handleCampaignSync);
     };
-  }, []);
+  }, [activeCampaignCode]);
 
   const handleToggleSessionParticipant = (targetPlayerId: string) => {
     if (!selectedSession || !isMaster) return;
@@ -693,35 +702,35 @@ export function Sessions() {
             {/* Action Controls */}
             <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
               {player?.isDm && (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEditingChapter(null);
-                      setNewChapName('');
-                      setNewChapDesc('');
-                      setNewChapColor('#6366f1');
-                      setNewChapCoverUrl('');
-                      setIsChapterModalOpen(true);
-                    }}
-                    className="px-2.5 sm:px-3 py-1.5 rounded-[2px] font-medium text-xs bg-surface-2 hover:bg-surface-3 text-content-1 border border-surface-3 transition-colors flex items-center gap-1 cursor-pointer shrink-0"
-                    title="Crea un nuovo Capitolo"
-                  >
-                    <FolderPlus size={14} className="text-primary" />
-                    <span className="hidden sm:inline">+ Nuovo Capitolo</span>
-                  </button>
-                  <button
-                    id="btn-create-new-session"
-                    type="button"
-                    onClick={handleOpenCreateModal}
-                    className="px-2.5 sm:px-3.5 py-1.5 rounded-[2px] font-medium text-xs bg-primary text-surface-0 hover:bg-primary-hover transition-colors shadow-xs flex items-center gap-1 cursor-pointer shrink-0"
-                    title="Nuova Sessione"
-                  >
-                    <Plus size={14} className="stroke-[2.5]" />
-                    <span className="sm:hidden font-mono font-bold">+</span>
-                    <span className="hidden sm:inline">Nuova Sessione</span>
-                  </button>
-                </>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingChapter(null);
+                    setNewChapName('');
+                    setNewChapDesc('');
+                    setNewChapColor('#6366f1');
+                    setNewChapCoverUrl('');
+                    setIsChapterModalOpen(true);
+                  }}
+                  className="px-2.5 sm:px-3 py-1.5 rounded-[2px] font-medium text-xs bg-surface-2 hover:bg-surface-3 text-content-1 border border-surface-3 transition-colors flex items-center gap-1 cursor-pointer shrink-0"
+                  title="Crea un nuovo Capitolo"
+                >
+                  <FolderPlus size={14} className="text-primary" />
+                  <span className="hidden sm:inline">+ Nuovo Capitolo</span>
+                </button>
+              )}
+              {canCreateSession && (
+                <button
+                  id="btn-create-new-session"
+                  type="button"
+                  onClick={handleOpenCreateModal}
+                  className="px-2.5 sm:px-3.5 py-1.5 rounded-[2px] font-medium text-xs bg-primary text-surface-0 hover:bg-primary-hover transition-colors shadow-xs flex items-center gap-1 cursor-pointer shrink-0"
+                  title="Nuova Sessione"
+                >
+                  <Plus size={14} className="stroke-[2.5]" />
+                  <span className="sm:hidden font-mono font-bold">+</span>
+                  <span className="hidden sm:inline">Nuova Sessione</span>
+                </button>
               )}
             </div>
           </div>
@@ -858,7 +867,7 @@ export function Sessions() {
                           Azzera ricerca
                         </button>
                       )}
-                      {player?.isDm && (
+                      {canCreateSession && (
                         <button
                           type="button"
                           onClick={handleOpenCreateModal}
@@ -2530,8 +2539,8 @@ export function Sessions() {
                 </span>
               </button>
 
-              {/* Modifica Sessione (Only DM) */}
-              {player?.isDm && (
+              {/* Modifica Sessione */}
+              {canEditSession && (
                 <button
                   type="button"
                   onClick={() => {
@@ -2559,8 +2568,8 @@ export function Sessions() {
                 </button>
               )}
 
-              {/* Separatore per Elimina (Only DM) */}
-              {player?.isDm && (
+              {/* Separatore per Elimina */}
+              {canDeleteSession && (
                 <div className="pt-1 border-t border-surface-2/60">
                   <button
                     type="button"

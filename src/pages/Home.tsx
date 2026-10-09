@@ -196,7 +196,7 @@ export function Home() {
 
       // Scope Filter
       if (noteFilter === 'pinned' && !n.pinned) return false;
-      if (noteFilter === 'my' && (!isAuthor || n.visibility !== 'personal')) return false;
+      if (noteFilter === 'my' && !(n.visibility === 'personal' && isAuthor)) return false;
       if (noteFilter === 'group' && (n.visibility !== 'group' || n.dmOnly)) return false;
       if (noteFilter === 'askDm') {
         if (!n.askDm && !n.dmResponse) return false;

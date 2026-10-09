@@ -1,6 +1,7 @@
 import { ConfirmModal } from '../components/ConfirmModal';
 import { PlayerTagsModal } from '../components/PlayerTagsModal';
 import { LlmCatalogModal } from '../components/OpenRouterCatalogModal';
+import { MemberPermissionsModal } from '../components/MemberPermissionsModal';
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../components/AuthProvider';
@@ -17,6 +18,7 @@ import {
   Copy,
   Sparkles,
   Shield,
+  Key,
   Download,
   UploadCloud,
   RefreshCw,
@@ -412,6 +414,9 @@ export function Settings() {
 
   // Player Tags Modal
   const [tagsModalTargetPlayer, setTagsModalTargetPlayer] = useState<Player | null>(null);
+
+  // Member Permissions Modal
+  const [permissionsTargetPlayer, setPermissionsTargetPlayer] = useState<Player | null>(null);
 
   // Backup & Restore
   const [syncStatusMsg, setSyncStatusMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -941,6 +946,19 @@ export function Settings() {
                         </div>
 
                         <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
+
+                          {/* Granular Permissions Button (for DMs) */}
+                          {isDm && !isMainDm && (
+                            <button
+                              type="button"
+                              onClick={() => setPermissionsTargetPlayer(p)}
+                              className="px-2.5 py-1.5 rounded-lg bg-surface-2 hover:bg-surface-3 text-content-1 border border-surface-3 text-xs font-medium flex items-center gap-1.5 transition-colors cursor-pointer"
+                              title="Gestisci permessi granulari"
+                            >
+                              <Key size={12} className="text-primary" />
+                              <span>Permessi</span>
+                            </button>
+                          )}
 
                           {/* Toggle Co-Master button (for non-main DMs) */}
                           {!isMainDm && (
@@ -1579,6 +1597,14 @@ export function Settings() {
         isOpen={Boolean(tagsModalTargetPlayer)}
         onClose={() => setTagsModalTargetPlayer(null)}
         player={tagsModalTargetPlayer}
+        campaignCode={activeCampaignCode || ''}
+      />
+
+      {/* Member Permissions Modal */}
+      <MemberPermissionsModal
+        isOpen={Boolean(permissionsTargetPlayer)}
+        onClose={() => setPermissionsTargetPlayer(null)}
+        player={permissionsTargetPlayer}
         campaignCode={activeCampaignCode || ''}
       />
 

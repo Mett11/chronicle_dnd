@@ -766,7 +766,7 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
           </div>
 
           {/* User Account and Logout */}
-          <div className="flex items-center gap-2 sm:gap-3 shrink-0 min-w-0">
+          <div className="hidden sm:flex items-center gap-2 sm:gap-3 shrink-0 min-w-0">
             {/* Truncated User Email Badge */}
             <div
               className="flex items-center gap-1.5 px-2.5 py-1.5 sm:px-3.5 sm:py-1.5 rounded-xl border text-[11px] sm:text-xs font-mono shadow-xs max-w-[120px] xs:max-w-[180px] sm:max-w-xs transition-colors shrink min-w-0 overflow-hidden"
@@ -797,6 +797,30 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
 
       {/* Main Campaign Hub */}
       <main className="w-full max-w-[1440px] mx-auto px-6 sm:px-12 py-12 relative z-10 flex-1">
+        {/* Mobile User Profile & Disconnect Bar */}
+        <div 
+          className="sm:hidden flex flex-col xs:flex-row items-center justify-between gap-3 p-4 mb-6 rounded-2xl border text-xs"
+          style={{
+            backgroundColor: palette.bgCard,
+            borderColor: palette.borderCard,
+          }}
+        >
+          <div className="flex items-center gap-2 min-w-0 self-start xs:self-center">
+            <User size={14} className="shrink-0 text-amber-400/90" />
+            <div className="text-left min-w-0">
+              <p className="text-[10px] uppercase tracking-wider" style={{ color: palette.textMuted }}>Account Attivo</p>
+              <p className="font-mono truncate text-[11px]" style={{ color: palette.textSub }}>{account?.email}</p>
+            </div>
+          </div>
+          <button
+            onClick={() => logout()}
+            className="w-full xs:w-auto px-4 py-2 rounded-xl text-xs font-mono font-medium transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-sm active:scale-95 text-red-400 hover:text-red-300 hover:bg-red-950/40 bg-red-950/20 border border-red-900/50"
+          >
+            <LogOut size={13} />
+            <span>Disconnetti</span>
+          </button>
+        </div>
+
         {/* Page Title & Action Bar */}
         <div
           className="flex flex-col md:flex-row md:items-end justify-between gap-6 pb-8 mb-10 border-b"

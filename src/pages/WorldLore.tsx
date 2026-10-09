@@ -176,6 +176,29 @@ export function WorldLore() {
   const [managingBite, setManagingBite] = useState<{ article: WorldLoreArticle; bite: WorldLoreBite } | null>(null);
 
   const isDm = Boolean(player?.isDm);
+  const activeCampaignCode = CampaignManager.getActiveCampaignCode() || '';
+
+  const [canCreateLore, setCanCreateLore] = useState(() => CampaignManager.canUser('create_lore', activeCampaignCode));
+  const [canEditLore, setCanEditLore] = useState(() => CampaignManager.canUser('edit_lore', activeCampaignCode));
+  const [canDeleteLore, setCanDeleteLore] = useState(() => CampaignManager.canUser('delete_lore', activeCampaignCode));
+
+  useEffect(() => {
+    const handleSyncPerms = () => {
+      setCanCreateLore(CampaignManager.canUser('create_lore', activeCampaignCode));
+      setCanEditLore(CampaignManager.canUser('edit_lore', activeCampaignCode));
+      setCanDeleteLore(CampaignManager.canUser('delete_lore', activeCampaignCode));
+    };
+    window.addEventListener('chronicle_campaign_updated', handleSyncPerms);
+    window.addEventListener('chronicle_campaigns_updated', handleSyncPerms);
+    window.addEventListener('chronicle_data_updated', handleSyncPerms);
+    window.addEventListener('chronicle_members_updated', handleSyncPerms);
+    return () => {
+      window.removeEventListener('chronicle_campaign_updated', handleSyncPerms);
+      window.removeEventListener('chronicle_campaigns_updated', handleSyncPerms);
+      window.removeEventListener('chronicle_data_updated', handleSyncPerms);
+      window.removeEventListener('chronicle_members_updated', handleSyncPerms);
+    };
+  }, [activeCampaignCode]);
 
   // Reload store when events fire
   useEffect(() => {
@@ -333,14 +356,16 @@ export function WorldLore() {
         </div>
 
         <div className="flex items-center gap-2 ml-auto">
-          <button
-            type="button"
-            onClick={handleOpenCreateModal}
-            className="px-3.5 py-1.5 rounded-xl bg-primary text-surface-0 hover:bg-primary-hover font-sans text-xs font-semibold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
-          >
-            <Plus size={15} />
-            <span>Nuovo Articolo di Lore</span>
-          </button>
+          {canCreateLore && (
+            <button
+              type="button"
+              onClick={handleOpenCreateModal}
+              className="px-3.5 py-1.5 rounded-xl bg-primary text-surface-0 hover:bg-primary-hover font-sans text-xs font-semibold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
+            >
+              <Plus size={15} />
+              <span>Nuovo Articolo di Lore</span>
+            </button>
+          )}
         </div>
       </header>
 
@@ -571,25 +596,29 @@ export function WorldLore() {
 
                   {/* Actions (Edit / Delete) */}
                   <div className="flex items-center gap-2 ml-auto">
-                    <button
-                      type="button"
-                      onClick={() => handleOpenEditModal(selectedArticle)}
-                      className="p-2 rounded-lg bg-surface-2 hover:bg-surface-3 text-content-2 hover:text-content-1 text-xs transition-colors flex items-center gap-1.5 cursor-pointer"
-                      title="Modifica articolo e nozioni"
-                    >
-                      <Edit3 size={14} />
-                      <span className="hidden sm:inline">Modifica</span>
-                    </button>
+                    {canEditLore && (
+                      <button
+                        type="button"
+                        onClick={() => handleOpenEditModal(selectedArticle)}
+                        className="p-2 rounded-lg bg-surface-2 hover:bg-surface-3 text-content-2 hover:text-content-1 text-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+                        title="Modifica articolo e nozioni"
+                      >
+                        <Edit3 size={14} />
+                        <span className="hidden sm:inline">Modifica</span>
+                      </button>
+                    )}
 
-                    <button
-                      type="button"
-                      onClick={() => setArticleToDelete(selectedArticle)}
-                      className="p-2 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 text-xs transition-colors flex items-center gap-1.5 cursor-pointer"
-                      title="Elimina articolo di lore"
-                    >
-                      <Trash2 size={14} />
-                      <span className="hidden sm:inline">Elimina</span>
-                    </button>
+                    {canDeleteLore && (
+                      <button
+                        type="button"
+                        onClick={() => setArticleToDelete(selectedArticle)}
+                        className="p-2 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 text-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+                        title="Elimina articolo di lore"
+                      >
+                        <Trash2 size={14} />
+                        <span className="hidden sm:inline">Elimina</span>
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -764,14 +793,16 @@ export function WorldLore() {
                   Seleziona una voce dal menu a sinistra oppure incolla un estratto o documento del Master per generare il tuo archivio di World Lore.
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={handleOpenCreateModal}
-                className="px-4 py-2 rounded-xl bg-primary text-surface-0 hover:bg-primary-hover text-xs font-semibold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
-              >
-                <Plus size={15} />
-                <span>Crea o Scomponi con IA</span>
-              </button>
+              {canCreateLore && (
+                <button
+                  type="button"
+                  onClick={handleOpenCreateModal}
+                  className="px-4 py-2 rounded-xl bg-primary text-surface-0 hover:bg-primary-hover text-xs font-semibold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
+                >
+                  <Plus size={15} />
+                  <span>Crea o Scomponi con IA</span>
+                </button>
+              )}
             </div>
           )}
         </main>

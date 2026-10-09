@@ -1,10 +1,37 @@
 export type PlayerPartyStatus = 'active' | 'inactive' | 'retired' | 'dead';
 
+export interface CampaignMemberPermissions {
+  canCreateSessions?: boolean;
+  canEditSessions?: boolean;
+  canDeleteSessions?: boolean;
+  canCreateEntities?: boolean;
+  canEditEntities?: boolean;
+  canDeleteEntities?: boolean;
+  canCreateLore?: boolean;
+  canEditLore?: boolean;
+  canDeleteLore?: boolean;
+  canManageMaps?: boolean;
+}
+
+export type PermissionAction =
+  | 'create_session'
+  | 'edit_session'
+  | 'delete_session'
+  | 'create_entity'
+  | 'edit_entity'
+  | 'delete_entity'
+  | 'create_lore'
+  | 'edit_lore'
+  | 'delete_lore'
+  | 'manage_maps';
+
 export interface CampaignMemberRecord {
   campaignCode: string;
   userId: string;
   role: 'dm' | 'player' | 'co-dm' | 'comaster';
   characterName?: string;
+  status?: 'active' | 'expelled' | 'inactive';
+  permissions?: CampaignMemberPermissions;
   createdAt?: string;
 }
 

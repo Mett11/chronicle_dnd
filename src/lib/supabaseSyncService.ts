@@ -30,6 +30,7 @@ import {
   WorldMap,
   ScrapbookItem,
   AudioLog,
+  CampaignMemberPermissions,
 } from '../types';
 
 /**
@@ -499,7 +500,7 @@ export class SupabaseSyncService {
             .then(res => res, () => ({ data: [] })),
           supabase
             .from('campaign_members')
-            .select('campaign_code, user_id, role, character_name, created_at')
+            .select('campaign_code, user_id, role, character_name, status, permissions, created_at')
             .or(activeOrCampFilter)
             .then(res => res, () => ({ data: [] })),
         ]);
@@ -613,6 +614,8 @@ export class SupabaseSyncService {
         userId: row.user_id,
         role: row.role || 'player',
         characterName: row.character_name || '',
+        status: (row.status || 'active').toLowerCase(),
+        permissions: row.permissions || {},
         createdAt: row.created_at,
       }));
 
@@ -628,14 +631,31 @@ export class SupabaseSyncService {
         titleEffect: campRow.title_effect || 'default',
         calendarSystem: campRow.calendar_system || {},
         aiConfig: campRow.ai_config || {},
-        expelledAccountIds: expelledAccounts,
+        expelledAccountIds: (() => {
+          const expelledSet = new Set(
+            expelledAccounts.map((id: string) => String(id).toLowerCase())
+          );
+          campaignMembers.forEach((m) => {
+            if (m.status === 'expelled') {
+              expelledSet.add(String(m.userId).toLowerCase());
+            }
+          });
+          return Array.from(expelledSet);
+        })(),
         campaignMembers,
         activePlayers: (() => {
           const raw = Array.isArray(campRow.active_players) ? campRow.active_players : [];
           const expelled = new Set(
             expelledAccounts.map((id: string) => String(id).toLowerCase())
           );
-          return raw.filter((p: any) => {
+          campaignMembers.forEach((m) => {
+            if (m.status === 'expelled') {
+              expelled.add(String(m.userId).toLowerCase());
+            }
+          });
+
+          // Raw active_players filtered by expelled
+          const existingFiltered = raw.filter((p: any) => {
             if (!p || !p.id) return false;
             const pId = String(p.id).toLowerCase();
             const pAltId = p._id ? String(p._id).toLowerCase() : '';
@@ -644,10 +664,30 @@ export class SupabaseSyncService {
           }).map((p: any) => {
             const mem = campaignMembers.find((m) => m.userId === p.id || (p.email && m.userId === p.email));
             if (mem && mem.characterName) {
-              return { ...p, characterName: mem.characterName };
+              return { ...p, characterName: mem.characterName, role: mem.role, isDm: mem.role === 'dm', isCoDm: mem.role === 'co-dm' || mem.role === 'comaster' };
             }
             return p;
           });
+
+          // Include any members from campaign_members not in existingFiltered
+          const coveredIds = new Set(existingFiltered.map((p: any) => String(p.id || p._id || '').toLowerCase()));
+          campaignMembers.forEach((m) => {
+            const mId = String(m.userId).toLowerCase();
+            if (m.status !== 'expelled' && !coveredIds.has(mId)) {
+              existingFiltered.push({
+                id: m.userId,
+                _id: m.userId,
+                characterName: m.characterName || 'Avventuriero',
+                role: m.role || 'player',
+                isDm: m.role === 'dm',
+                isCoDm: m.role === 'co-dm' || m.role === 'comaster',
+                color: '#6366f1',
+              });
+              coveredIds.add(mId);
+            }
+          });
+
+          return existingFiltered;
         })(),
         dossier: {},
         characterBios,
@@ -1184,17 +1224,48 @@ export class SupabaseSyncService {
     if (!isSupabaseConfigured() || !campaignCode || !userId) return false;
     try {
       const cleanCode = campaignCode.trim().toUpperCase();
-      const payload = {
+      const payload: any = {
         id: `${cleanCode}_${userId}`,
         campaign_code: cleanCode,
         user_id: userId,
         role,
         character_name: characterName || null,
+        status: 'active',
         created_at: new Date().toISOString(),
       };
       const { error } = await supabase.from('campaign_members').upsert(payload, { onConflict: 'id' });
       return !error;
     } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Persists granular member permissions in campaign_members on Supabase
+   */
+  static async saveMemberPermissions(
+    campaignCode: string,
+    userId: string,
+    permissions: CampaignMemberPermissions
+  ): Promise<boolean> {
+    if (!isSupabaseConfigured() || !campaignCode || !userId) return false;
+    try {
+      const code = campaignCode.trim().toUpperCase();
+      const { error } = await supabase
+        .from('campaign_members')
+        .update({
+          permissions,
+        })
+        .eq('campaign_code', code)
+        .eq('user_id', userId);
+
+      if (error) {
+        console.error('[Supabase] Error saving member permissions:', error.message);
+        return false;
+      }
+      return true;
+    } catch (err) {
+      console.error('[Supabase] Exception saving member permissions:', err);
       return false;
     }
   }
@@ -1208,7 +1279,12 @@ export class SupabaseSyncService {
       const code = campaignCode.trim().toUpperCase();
       const cleanEmail = (email || '').toLowerCase().trim();
 
-      await supabase.from('campaign_members').delete().eq('campaign_code', code).or(`user_id.eq.${userId}${cleanEmail ? `,user_id.eq.${cleanEmail}` : ''}`);
+      // Mark status as 'expelled' in campaign_members
+      await supabase
+        .from('campaign_members')
+        .update({ status: 'expelled' })
+        .eq('campaign_code', code)
+        .or(`user_id.eq.${userId}${cleanEmail ? `,user_id.eq.${cleanEmail}` : ''}`);
 
       const { data: camp } = await supabase.from('campaigns').select('active_players, expelled_accounts').eq('code', code).maybeSingle();
       if (camp) {
@@ -1618,6 +1694,24 @@ export class SupabaseSyncService {
       }
 
       const cleanCode = code.trim().toUpperCase();
+
+      // Ensure membership in campaign_members as Single Source of Truth
+      for (const p of sanitized) {
+        if (!p || !p.id) continue;
+        const role = p.isDm ? 'dm' : (p.isCoDm || p.isCoMaster ? 'co-dm' : 'player');
+        try {
+          await supabase.from('campaign_members').upsert({
+            id: `${cleanCode}_${p.id}`,
+            campaign_code: cleanCode,
+            user_id: p.id,
+            role,
+            character_name: p.characterName || null,
+            status: 'active',
+            created_at: new Date().toISOString(),
+          }, { onConflict: 'id' });
+        } catch {}
+      }
+
       const { error } = await supabase.from('campaigns').update({
         active_players: mergedPlayers,
         updated_at: new Date().toISOString(),
@@ -1829,10 +1923,10 @@ export class SupabaseSyncService {
           const orFilter = idList.map((id) => `user_id.eq.${id}`).join(',');
           const { data: memData } = await supabase
             .from('campaign_members')
-            .select('campaign_code, role')
+            .select('campaign_code, role, status')
             .or(orFilter);
           if (Array.isArray(memData)) {
-            memberRows = memData;
+            memberRows = memData.filter((m: any) => m.status !== 'expelled' && m.status !== 'inactive');
           }
         }
 
@@ -2127,6 +2221,45 @@ export class SupabaseSyncService {
       return !error;
     } catch (err) {
       console.error('[Supabase] Failed to save campaign AI keys:', err);
+      return false;
+    }
+  }
+
+  /**
+   * Persists campaign AI configuration (provider, models, allowedPartyModels) to campaigns.ai_config in Supabase
+   */
+  static async saveCampaignAiConfig(campaignCode: string, updates: Record<string, any>): Promise<boolean> {
+    if (!isSupabaseConfigured() || !campaignCode) return false;
+    try {
+      const code = campaignCode.trim();
+      const cleanCode = code.toUpperCase();
+      const { data: camp } = await supabase
+        .from('campaigns')
+        .select('ai_config')
+        .or(`code.eq.${cleanCode},code.eq.${code}`)
+        .maybeSingle();
+
+      const current = (camp?.ai_config && typeof camp.ai_config === 'object') ? camp.ai_config : {};
+      const mergedConfig = {
+        ...current,
+        ...updates,
+      };
+
+      const { error } = await supabase
+        .from('campaigns')
+        .update({
+          ai_config: mergedConfig,
+          updated_at: new Date().toISOString(),
+        })
+        .or(`code.eq.${cleanCode},code.eq.${code}`);
+
+      if (error) {
+        console.error('[Supabase] Error saving campaign AI config:', error.message);
+        return false;
+      }
+      return true;
+    } catch (err) {
+      console.error('[Supabase] Exception saving campaign AI config:', err);
       return false;
     }
   }

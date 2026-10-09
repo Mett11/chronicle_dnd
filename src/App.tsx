@@ -68,6 +68,9 @@ function AppContent() {
       if (pendingCode) {
         const clean = pendingCode.trim().toUpperCase();
         localStorage.setItem('chronicle_pending_join_code', clean);
+        // Force deactivate the current campaign so that the Campaign Gate is shown and processes the join request!
+        CampaignManager.setActiveCampaignCode(null);
+        setCampaignCode(null);
       }
     } catch {}
   }, []);

@@ -1114,6 +1114,14 @@ export class CloudSyncService {
                 }
               }
 
+              if (supaData.aiConfig && typeof supaData.aiConfig === 'object') {
+                try {
+                  CampaignManager.updateCampaignAiConfigFromRemote(activeCode, supaData.aiConfig);
+                } catch (e) {
+                  console.warn('[CloudSync] AI config hydration warn:', e);
+                }
+              }
+
               if (supaData.aiConfig?.aiKeys) {
                 try {
                   ApiKeyManager.hydrateCampaignKeysFromRemote(activeCode, supaData.aiConfig?.aiKeys);

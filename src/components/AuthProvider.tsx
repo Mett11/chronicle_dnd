@@ -375,25 +375,44 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const loginWithGoogle = useCallback(async (): Promise<{ success: boolean; error?: string }> => {
     setError(null);
     try {
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider: 'google',
-        options: {
-          redirectTo: window.location.origin,
-        },
-      });
-      if (error) {
-        console.error('[Supabase] Google Sign-in error:', error);
-        setError(error.message);
-        return { success: false, error: error.message };
+      if (isSupabaseConfigured()) {
+        const { error } = await supabase.auth.signInWithOAuth({
+          provider: 'google',
+          options: {
+            redirectTo: window.location.origin,
+          },
+        });
+        if (error) {
+          console.error('[Supabase] Google Sign-in error:', error);
+          setError(error.message);
+          return { success: false, error: error.message };
+        }
+        return { success: true };
       }
+
+      // Local / Offline fallback mode: auto-select or create account
+      let accounts = CampaignManager.getAccounts();
+      let matched = accounts[0];
+      if (!matched) {
+        const result = CampaignManager.handleGoogleAuthSuccess({
+          uid: 'local-dm',
+          email: 'avventuriero@chronicle.it',
+          displayName: 'Dungeon Master',
+        });
+        matched = result.account;
+      } else {
+        CampaignManager.setCurrentAccount(matched.id);
+      }
+      setAccount(matched);
+      refreshPlayers();
       return { success: true };
     } catch (err: any) {
-      console.error('Supabase Google Sign-in error:', err);
-      const msg = err?.message || "Errore durante l'accesso con Google. Riprova più tardi.";
+      console.error('Google Sign-in error:', err);
+      const msg = err?.message || "Errore durante l'accesso. Riprova più tardi.";
       setError(msg);
       return { success: false, error: msg };
     }
-  }, []);
+  }, [refreshPlayers]);
 
   const changePassword = useCallback(
     async (newPassword: string): Promise<{ success: boolean; error?: string }> => {

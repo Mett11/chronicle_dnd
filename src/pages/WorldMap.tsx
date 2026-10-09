@@ -68,12 +68,32 @@ const FOLDER_COLORS = [
 
 export function WorldMap() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const activeCampaignCode = CampaignManager.getActiveCampaignCode();
+  const [canManageMaps, setCanManageMaps] = useState(() => CampaignManager.canUser('manage_maps', activeCampaignCode));
   const [maps, setMaps] = useState<WorldMapType[]>(() => CampaignManager.getMaps());
   const [folders, setFolders] = useState<MapFolder[]>(() => CampaignManager.getMapFolders());
   const [activeMapId, setActiveMapId] = useState<string>(() => maps[0]?.id || '');
   const [selectedPin, setSelectedPin] = useState<MapPin | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterCategory, setFilterCategory] = useState<string>('all');
+
+  useEffect(() => {
+    const handleCampaignSync = () => {
+      setCanManageMaps(CampaignManager.canUser('manage_maps', CampaignManager.getActiveCampaignCode()));
+    };
+    window.addEventListener('chronicle_campaign_updated', handleCampaignSync);
+    window.addEventListener('chronicle_campaigns_updated', handleCampaignSync);
+    window.addEventListener('chronicle_data_updated', handleCampaignSync);
+    window.addEventListener('chronicle_campaign_changed', handleCampaignSync);
+    window.addEventListener('chronicle_members_updated', handleCampaignSync);
+    return () => {
+      window.removeEventListener('chronicle_campaign_updated', handleCampaignSync);
+      window.removeEventListener('chronicle_campaigns_updated', handleCampaignSync);
+      window.removeEventListener('chronicle_data_updated', handleCampaignSync);
+      window.removeEventListener('chronicle_campaign_changed', handleCampaignSync);
+      window.removeEventListener('chronicle_members_updated', handleCampaignSync);
+    };
+  }, [activeCampaignCode]);
 
   const [sidebarTab, setSidebarTab] = useState<'maps' | 'pins' | 'codex'>('maps');
   const [selectedFolderFilter, setSelectedFolderFilter] = useState<string>('all');
@@ -832,21 +852,25 @@ export function WorldMap() {
           </div>
 
           <div className="flex items-center gap-2 shrink-0 flex-wrap sm:flex-nowrap">
-            <button
-              onClick={() => handleOpenNewFolderModal()}
-              className="px-3 py-1.5 rounded-xl text-xs font-medium bg-surface-2 hover:bg-surface-3 text-content-2 hover:text-content-1 border border-surface-3 transition-colors flex items-center gap-1.5 cursor-pointer"
-            >
-              <FolderPlus size={14} className="text-primary" />
-              <span className="hidden sm:inline">Nuova Cartella</span>
-            </button>
+            {canManageMaps && (
+              <>
+                <button
+                  onClick={() => handleOpenNewFolderModal()}
+                  className="px-3 py-1.5 rounded-xl text-xs font-medium bg-surface-2 hover:bg-surface-3 text-content-2 hover:text-content-1 border border-surface-3 transition-colors flex items-center gap-1.5 cursor-pointer"
+                >
+                  <FolderPlus size={14} className="text-primary" />
+                  <span className="hidden sm:inline">Nuova Cartella</span>
+                </button>
 
-            <button
-              onClick={() => handleOpenNewMapModal()}
-              className="px-3 py-1.5 rounded-xl text-xs font-medium bg-primary text-surface-0 hover:bg-primary-hover transition-colors flex items-center gap-1.5 shadow-sm cursor-pointer"
-            >
-              <Plus size={14} />
-              <span>Nuova Mappa</span>
-            </button>
+                <button
+                  onClick={() => handleOpenNewMapModal()}
+                  className="px-3 py-1.5 rounded-xl text-xs font-medium bg-primary text-surface-0 hover:bg-primary-hover transition-colors flex items-center gap-1.5 shadow-sm cursor-pointer"
+                >
+                  <Plus size={14} />
+                  <span>Nuova Mappa</span>
+                </button>
+              </>
+            )}
 
             <button
               onClick={() => setIsFullscreen(true)}
@@ -998,25 +1022,27 @@ export function WorldMap() {
           </div>
 
           {/* Place Pin Toggle */}
-          <div className="absolute top-3 sm:top-4 right-3 sm:right-4 z-30 flex items-center gap-2">
-            <button
-              onClick={() => {
-                if (isAddingPinMode) {
-                  setIsAddingPinMode(false);
-                } else {
-                  handleStartAddPin();
-                }
-              }}
-              className={`px-3 sm:px-3.5 py-1.5 rounded-xl text-xs font-medium flex items-center gap-1.5 transition-colors border shadow-md cursor-pointer ${
-                isAddingPinMode
-                  ? 'bg-rose-500 text-white border-rose-600'
-                  : 'bg-surface-2/95 text-content-1 border-surface-3 hover:bg-surface-3'
-              }`}
-            >
-              <MapPinIcon size={14} />
-              <span>{isAddingPinMode ? 'Annulla' : '+ Piazza Punto'}</span>
-            </button>
-          </div>
+          {canManageMaps && (
+            <div className="absolute top-3 sm:top-4 right-3 sm:right-4 z-30 flex items-center gap-2">
+              <button
+                onClick={() => {
+                  if (isAddingPinMode) {
+                    setIsAddingPinMode(false);
+                  } else {
+                    handleStartAddPin();
+                  }
+                }}
+                className={`px-3 sm:px-3.5 py-1.5 rounded-xl text-xs font-medium flex items-center gap-1.5 transition-colors border shadow-md cursor-pointer ${
+                  isAddingPinMode
+                    ? 'bg-rose-500 text-white border-rose-600'
+                    : 'bg-surface-2/95 text-content-1 border-surface-3 hover:bg-surface-3'
+                }`}
+              >
+                <MapPinIcon size={14} />
+                <span>{isAddingPinMode ? 'Annulla' : '+ Piazza Punto'}</span>
+              </button>
+            </div>
+          )}
 
           {/* Floating Quick Folder Selector directly on the Map Viewport */}
           {normalizedFolders.length > 0 && (
@@ -1085,7 +1111,7 @@ export function WorldMap() {
                 <span className="truncate text-content-3">{activeMap.scaleLabel}</span>
               </>
             )}
-            {activeMap && (
+            {activeMap && canManageMaps && (
               <button
                 onClick={() => handleOpenEditMapModal(activeMap)}
                 className="text-content-3 hover:text-content-1 ml-0.5 p-0.5 cursor-pointer shrink-0"
@@ -1402,29 +1428,31 @@ export function WorldMap() {
                               )}
                             </button>
 
-                            <div className="flex items-center gap-0.5 shrink-0">
-                              <button
-                                onClick={() => handleOpenNewMapModal(f.id)}
-                                className="p-1 text-content-3 hover:text-primary rounded hover:bg-surface-3 transition-colors cursor-pointer"
-                                title="Aggiungi Mappa a questa cartella"
-                              >
-                                <Plus size={13} />
-                              </button>
-                              <button
-                                onClick={() => handleOpenEditFolderModal(f)}
-                                className="p-1 text-content-3 hover:text-content-1 rounded hover:bg-surface-3 transition-colors cursor-pointer"
-                                title="Modifica Cartella"
-                              >
-                                <Edit2 size={12} />
-                              </button>
-                              <button
-                                onClick={() => setFolderToDelete(f.id)}
-                                className="p-1 text-content-3 hover:text-rose-400 rounded hover:bg-surface-3 transition-colors cursor-pointer"
-                                title="Elimina Cartella"
-                              >
-                                <Trash2 size={12} />
-                              </button>
-                            </div>
+                            {canManageMaps && (
+                              <div className="flex items-center gap-0.5 shrink-0">
+                                <button
+                                  onClick={() => handleOpenNewMapModal(f.id)}
+                                  className="p-1 text-content-3 hover:text-primary rounded hover:bg-surface-3 transition-colors cursor-pointer"
+                                  title="Aggiungi Mappa a questa cartella"
+                                >
+                                  <Plus size={13} />
+                                </button>
+                                <button
+                                  onClick={() => handleOpenEditFolderModal(f)}
+                                  className="p-1 text-content-3 hover:text-content-1 rounded hover:bg-surface-3 transition-colors cursor-pointer"
+                                  title="Modifica Cartella"
+                                >
+                                  <Edit2 size={12} />
+                                </button>
+                                <button
+                                  onClick={() => setFolderToDelete(f.id)}
+                                  className="p-1 text-content-3 hover:text-rose-400 rounded hover:bg-surface-3 transition-colors cursor-pointer"
+                                  title="Elimina Cartella"
+                                >
+                                  <Trash2 size={12} />
+                                </button>
+                              </div>
+                            )}
                           </div>
 
                           {/* Folder Maps List */}
@@ -1433,12 +1461,14 @@ export function WorldMap() {
                               {folderMaps.length === 0 ? (
                                 <div className="text-center py-3 text-content-3 text-[11px] italic">
                                   Nessuna mappa in questa cartella.
-                                  <button
-                                    onClick={() => handleOpenNewMapModal(f.id)}
-                                    className="block mx-auto mt-1 text-primary hover:underline font-medium not-italic cursor-pointer"
-                                  >
-                                    + Aggiungi mappa qui
-                                  </button>
+                                  {canManageMaps && (
+                                    <button
+                                      onClick={() => handleOpenNewMapModal(f.id)}
+                                      className="block mx-auto mt-1 text-primary hover:underline font-medium not-italic cursor-pointer"
+                                    >
+                                      + Aggiungi mappa qui
+                                    </button>
+                                  )}
                                 </div>
                               ) : (
                                 folderMaps.map((m) => {
@@ -1493,34 +1523,36 @@ export function WorldMap() {
                                         </div>
                                       </div>
 
-                                      <div
-                                        className="flex items-center gap-1 shrink-0"
-                                        onClick={(e) => e.stopPropagation()}
-                                      >
-                                        <button
-                                          onClick={() => setMapToMove(m)}
-                                          className="p-1 text-content-3 hover:text-primary rounded hover:bg-surface-3"
-                                          title="Sposta in altra cartella"
+                                      {canManageMaps && (
+                                        <div
+                                          className="flex items-center gap-1 shrink-0"
+                                          onClick={(e) => e.stopPropagation()}
                                         >
-                                          <MoveRight size={12} />
-                                        </button>
-                                        <button
-                                          onClick={() => handleOpenEditMapModal(m)}
-                                          className="p-1 text-content-3 hover:text-content-1 rounded hover:bg-surface-3"
-                                          title="Modifica Mappa"
-                                        >
-                                          <Edit2 size={12} />
-                                        </button>
-                                        {maps.length > 1 && (
                                           <button
-                                            onClick={() => handleDeleteMap(m.id)}
-                                            className="p-1 text-content-3 hover:text-rose-400 rounded hover:bg-surface-3"
-                                            title="Elimina Mappa"
+                                            onClick={() => setMapToMove(m)}
+                                            className="p-1 text-content-3 hover:text-primary rounded hover:bg-surface-3"
+                                            title="Sposta in altra cartella"
                                           >
-                                            <Trash2 size={12} />
+                                            <MoveRight size={12} />
                                           </button>
-                                        )}
-                                      </div>
+                                          <button
+                                            onClick={() => handleOpenEditMapModal(m)}
+                                            className="p-1 text-content-3 hover:text-content-1 rounded hover:bg-surface-3"
+                                            title="Modifica Mappa"
+                                          >
+                                            <Edit2 size={12} />
+                                          </button>
+                                          {maps.length > 1 && (
+                                            <button
+                                              onClick={() => handleDeleteMap(m.id)}
+                                              className="p-1 text-content-3 hover:text-rose-400 rounded hover:bg-surface-3"
+                                              title="Elimina Mappa"
+                                            >
+                                              <Trash2 size={12} />
+                                            </button>
+                                          )}
+                                        </div>
+                                      )}
                                     </div>
                                   );
                                 })
@@ -1593,34 +1625,36 @@ export function WorldMap() {
                                   </div>
                                 </div>
 
-                                <div
-                                  className="flex items-center gap-1 shrink-0"
-                                  onClick={(e) => e.stopPropagation()}
-                                >
-                                  <button
-                                    onClick={() => setMapToMove(m)}
-                                    className="p-1 text-content-3 hover:text-primary rounded hover:bg-surface-3"
-                                    title="Organizza in cartella"
+                                {canManageMaps && (
+                                  <div
+                                    className="flex items-center gap-1 shrink-0"
+                                    onClick={(e) => e.stopPropagation()}
                                   >
-                                    <FolderPlus size={12} />
-                                  </button>
-                                  <button
-                                    onClick={() => handleOpenEditMapModal(m)}
-                                    className="p-1 text-content-3 hover:text-content-1 rounded hover:bg-surface-3"
-                                    title="Modifica Mappa"
-                                  >
-                                    <Edit2 size={12} />
-                                  </button>
-                                  {maps.length > 1 && (
                                     <button
-                                      onClick={() => handleDeleteMap(m.id)}
-                                      className="p-1 text-content-3 hover:text-rose-400 rounded hover:bg-surface-3"
-                                      title="Elimina Mappa"
+                                      onClick={() => setMapToMove(m)}
+                                      className="p-1 text-content-3 hover:text-primary rounded hover:bg-surface-3"
+                                      title="Organizza in cartella"
                                     >
-                                      <Trash2 size={12} />
+                                      <FolderPlus size={12} />
                                     </button>
-                                  )}
-                                </div>
+                                    <button
+                                      onClick={() => handleOpenEditMapModal(m)}
+                                      className="p-1 text-content-3 hover:text-content-1 rounded hover:bg-surface-3"
+                                      title="Modifica Mappa"
+                                    >
+                                      <Edit2 size={12} />
+                                    </button>
+                                    {maps.length > 1 && (
+                                      <button
+                                        onClick={() => handleDeleteMap(m.id)}
+                                        className="p-1 text-content-3 hover:text-rose-400 rounded hover:bg-surface-3"
+                                        title="Elimina Mappa"
+                                      >
+                                        <Trash2 size={12} />
+                                      </button>
+                                    )}
+                                  </div>
+                                )}
                               </div>
                             );
                           })}
@@ -1635,20 +1669,22 @@ export function WorldMap() {
                 </div>
 
                 {/* Quick Add Actions */}
-                <div className="pt-2 border-t border-surface-2 flex items-center gap-2">
-                  <button
-                    onClick={() => handleOpenNewFolderModal()}
-                    className="flex-1 py-2 rounded-xl bg-surface-2 hover:bg-surface-3 text-content-1 text-xs font-medium transition-colors flex items-center justify-center gap-1.5 border border-surface-3 cursor-pointer"
-                  >
-                    <FolderPlus size={13} className="text-primary" /> + Cartella
-                  </button>
-                  <button
-                    onClick={() => handleOpenNewMapModal()}
-                    className="flex-1 py-2 rounded-xl bg-primary text-surface-0 hover:bg-primary-hover text-xs font-medium transition-colors flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
-                  >
-                    <Plus size={13} /> + Mappa
-                  </button>
-                </div>
+                {canManageMaps && (
+                  <div className="pt-2 border-t border-surface-2 flex items-center gap-2">
+                    <button
+                      onClick={() => handleOpenNewFolderModal()}
+                      className="flex-1 py-2 rounded-xl bg-surface-2 hover:bg-surface-3 text-content-1 text-xs font-medium transition-colors flex items-center justify-center gap-1.5 border border-surface-3 cursor-pointer"
+                    >
+                      <FolderPlus size={13} className="text-primary" /> + Cartella
+                    </button>
+                    <button
+                      onClick={() => handleOpenNewMapModal()}
+                      className="flex-1 py-2 rounded-xl bg-primary text-surface-0 hover:bg-primary-hover text-xs font-medium transition-colors flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
+                    >
+                      <Plus size={13} /> + Mappa
+                    </button>
+                  </div>
+                )}
               </div>
             )}
 
@@ -1673,30 +1709,34 @@ export function WorldMap() {
                       </div>
 
                       <div className="flex items-center gap-1 shrink-0">
-                        <button
-                          onClick={() => handleOpenEditPinModal(selectedPin)}
-                          className="p-1.5 text-content-3 hover:text-content-1 rounded-md hover:bg-surface-2 transition-colors cursor-pointer"
-                          title="Modifica Punto"
-                        >
-                          <Edit2 size={13} />
-                        </button>
-                        <button
-                          onClick={() => {
-                            setIsRepositioningPinId(selectedPin.id);
-                            showToast(`Clicca sulla mappa per spostare "${selectedPin.title}".`);
-                          }}
-                          className="p-1.5 text-content-3 hover:text-primary rounded-md hover:bg-surface-2 transition-colors cursor-pointer"
-                          title="Riposiziona Punto sulla Mappa"
-                        >
-                          <Crosshair size={13} />
-                        </button>
-                        <button
-                          onClick={() => handleDeletePin(selectedPin.id)}
-                          className="p-1.5 text-content-3 hover:text-rose-400 rounded-md hover:bg-surface-2 transition-colors cursor-pointer"
-                          title="Elimina Punto"
-                        >
-                          <Trash2 size={13} />
-                        </button>
+                        {canManageMaps && (
+                          <>
+                            <button
+                              onClick={() => handleOpenEditPinModal(selectedPin)}
+                              className="p-1.5 text-content-3 hover:text-content-1 rounded-md hover:bg-surface-2 transition-colors cursor-pointer"
+                              title="Modifica Punto"
+                            >
+                              <Edit2 size={13} />
+                            </button>
+                            <button
+                              onClick={() => {
+                                setIsRepositioningPinId(selectedPin.id);
+                                showToast(`Clicca sulla mappa per spostare "${selectedPin.title}".`);
+                              }}
+                              className="p-1.5 text-content-3 hover:text-primary rounded-md hover:bg-surface-2 transition-colors cursor-pointer"
+                              title="Riposiziona Punto sulla Mappa"
+                            >
+                              <Crosshair size={13} />
+                            </button>
+                            <button
+                              onClick={() => handleDeletePin(selectedPin.id)}
+                              className="p-1.5 text-content-3 hover:text-rose-400 rounded-md hover:bg-surface-2 transition-colors cursor-pointer"
+                              title="Elimina Punto"
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          </>
+                        )}
                         <button
                           onClick={() => setSelectedPin(null)}
                           className="p-1.5 text-content-3 hover:text-content-1 rounded-md hover:bg-surface-2 transition-colors cursor-pointer"
@@ -1876,12 +1916,14 @@ export function WorldMap() {
                         <div className="text-center py-8 text-content-3">
                           <MapPinIcon size={24} className="mx-auto mb-2 opacity-30" />
                           <p className="text-xs">Nessun punto d'interesse trovato.</p>
-                          <button
-                            onClick={handleStartAddPin}
-                            className="mt-2 text-xs text-primary hover:underline font-medium cursor-pointer"
-                          >
-                            + Aggiungi un punto ora
-                          </button>
+                          {canManageMaps && (
+                            <button
+                              onClick={handleStartAddPin}
+                              className="mt-2 text-xs text-primary hover:underline font-medium cursor-pointer"
+                            >
+                              + Aggiungi un punto ora
+                            </button>
+                          )}
                         </div>
                       ) : (
                         filteredPins.map((pin) => {
@@ -1914,12 +1956,14 @@ export function WorldMap() {
                     </div>
 
                     {/* Add pin button */}
-                    <button
-                      onClick={handleStartAddPin}
-                      className="w-full py-2 rounded-xl border border-dashed border-surface-3 hover:border-primary text-xs font-medium text-content-2 hover:text-primary transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
-                    >
-                      <Plus size={14} /> Piazza Nuovo Punto
-                    </button>
+                    {canManageMaps && (
+                      <button
+                        onClick={handleStartAddPin}
+                        className="w-full py-2 rounded-xl border border-dashed border-surface-3 hover:border-primary text-xs font-medium text-content-2 hover:text-primary transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        <Plus size={14} /> Piazza Nuovo Punto
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
