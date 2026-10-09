@@ -177,14 +177,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         ApiKeyManager.preloadAllKeys(uid);
 
         let activeCode = CampaignManager.getActiveCampaignCode();
+        const allCampaigns = CampaignManager.getCampaigns();
+        const isExpelledFrom = (cCode: string) => {
+          const clean = cCode.trim().toUpperCase();
+          const targetCamp = allCampaigns.find((c) => c.code.toUpperCase() === clean);
+          return Boolean(
+            targetCamp?.expelledAccountIds?.includes(userAccount.id) ||
+            (userAccount.email && targetCamp?.expelledAccountIds?.some((id) => id.toLowerCase() === userAccount.email!.toLowerCase()))
+          );
+        };
+
+        if (activeCode && isExpelledFrom(activeCode)) {
+          CampaignManager.setActiveCampaignCode(null as any);
+          activeCode = null;
+        }
+
         if (!activeCode) {
-          const defaultCode =
-            userAccount.lastCampaignCode ||
-            (userAccount.joinedCampaigns && userAccount.joinedCampaigns[0]) ||
-            (userAccount.dmCampaigns && userAccount.dmCampaigns[0]) ||
-            null;
-          if (defaultCode) {
-            CampaignManager.setActiveCampaignCode(defaultCode);
+          const candidates = [
+            userAccount.lastCampaignCode,
+            ...(userAccount.joinedCampaigns || []),
+            ...(userAccount.dmCampaigns || []),
+          ].filter(Boolean) as string[];
+
+          const safeDefaultCode = candidates.find((cCode) => !isExpelledFrom(cCode)) || null;
+          if (safeDefaultCode) {
+            CampaignManager.setActiveCampaignCode(safeDefaultCode);
           }
         }
         CloudSyncService.init();
@@ -375,44 +392,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const loginWithGoogle = useCallback(async (): Promise<{ success: boolean; error?: string }> => {
     setError(null);
     try {
-      if (isSupabaseConfigured()) {
-        const { error } = await supabase.auth.signInWithOAuth({
-          provider: 'google',
-          options: {
-            redirectTo: window.location.origin,
-          },
-        });
-        if (error) {
-          console.error('[Supabase] Google Sign-in error:', error);
-          setError(error.message);
-          return { success: false, error: error.message };
-        }
-        return { success: true };
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: window.location.origin,
+        },
+      });
+      if (error) {
+        console.error('[Supabase] Google Sign-in error:', error);
+        setError(error.message);
+        return { success: false, error: error.message };
       }
-
-      // Local / Offline fallback mode: auto-select or create account
-      let accounts = CampaignManager.getAccounts();
-      let matched = accounts[0];
-      if (!matched) {
-        const result = CampaignManager.handleGoogleAuthSuccess({
-          uid: 'local-dm',
-          email: 'avventuriero@chronicle.it',
-          displayName: 'Dungeon Master',
-        });
-        matched = result.account;
-      } else {
-        CampaignManager.setCurrentAccount(matched.id);
-      }
-      setAccount(matched);
-      refreshPlayers();
       return { success: true };
     } catch (err: any) {
-      console.error('Google Sign-in error:', err);
-      const msg = err?.message || "Errore durante l'accesso. Riprova più tardi.";
+      console.error('Supabase Google Sign-in error:', err);
+      const msg = err?.message || "Errore durante l'accesso con Google. Riprova più tardi.";
       setError(msg);
       return { success: false, error: msg };
     }
-  }, [refreshPlayers]);
+  }, []);
 
   const changePassword = useCallback(
     async (newPassword: string): Promise<{ success: boolean; error?: string }> => {

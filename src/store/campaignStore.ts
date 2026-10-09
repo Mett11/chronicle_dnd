@@ -876,26 +876,36 @@ export class CampaignManager {
     const code = (campaignCode || this.getActiveCampaignCode() || '').trim().toUpperCase();
     const campaign = this.getCampaigns().find((c) => c.code.toUpperCase() === code);
     const conf = campaign?.aiConfig;
-    const pref = this.getUserPreferences();
 
     let localFallback: any = {};
-    if (typeof window !== 'undefined') {
+    if (typeof window !== 'undefined' && code) {
       try {
-        localFallback = JSON.parse(localStorage.getItem('chronicle_campaign_ai_config') || '{}');
+        localFallback = JSON.parse(
+          localStorage.getItem(`chronicle_${code}_campaign_ai_config`) ||
+          localStorage.getItem('chronicle_campaign_ai_config') ||
+          '{}'
+        );
       } catch {}
     }
 
-    const prov: 'gemini' | 'openrouter' = (conf?.provider === 'openrouter' || localFallback.provider === 'openrouter' || pref.aiProvider === 'openrouter') ? 'openrouter' : 'gemini';
-    const fallbackModel = prov === 'openrouter' ? 'openrouter/free' : 'gemini-flash-latest';
+    // Campaign-specific config takes precedence
+    const prov: 'gemini' | 'openrouter' = (conf?.provider === 'openrouter' || conf?.provider === 'gemini')
+      ? conf.provider
+      : (localFallback?.provider === 'openrouter' || localFallback?.provider === 'gemini')
+        ? localFallback.provider
+        : 'gemini';
 
-    const mergedParty = conf?.allowedPartyModels || localFallback.allowedPartyModels || [];
+    const fallbackModel = prov === 'openrouter' ? 'openrouter/free' : 'gemini-flash-latest';
+    const allowed = (Array.isArray(conf?.allowedPartyModels) && conf!.allowedPartyModels.length > 0)
+      ? conf!.allowedPartyModels
+      : (Array.isArray(localFallback?.allowedPartyModels) ? localFallback.allowedPartyModels : []);
 
     return {
       provider: prov,
-      modelId: conf?.modelId || conf?.oracleModel || localFallback.modelId || localFallback.oracleModel || (prov === 'openrouter' ? pref.oracleOpenrouterModel : pref.oracleGeminiModel) || fallbackModel,
-      oracleModel: conf?.oracleModel || conf?.modelId || localFallback.oracleModel || localFallback.modelId || (prov === 'openrouter' ? pref.oracleOpenrouterModel : pref.oracleGeminiModel) || fallbackModel,
-      extractionModel: conf?.extractionModel || conf?.modelId || localFallback.extractionModel || (prov === 'openrouter' ? pref.extractionOpenrouterModel : pref.extractionGeminiModel) || fallbackModel,
-      allowedPartyModels: Array.isArray(mergedParty) ? mergedParty : [],
+      modelId: conf?.modelId || conf?.oracleModel || localFallback?.modelId || fallbackModel,
+      oracleModel: conf?.oracleModel || conf?.modelId || localFallback?.oracleModel || fallbackModel,
+      extractionModel: conf?.extractionModel || conf?.modelId || localFallback?.extractionModel || fallbackModel,
+      allowedPartyModels: allowed,
     };
   }
 
@@ -909,14 +919,16 @@ export class CampaignManager {
     }>,
     campaignCode?: string
   ) {
-    if (typeof window !== 'undefined') {
+    const code = (campaignCode || this.getActiveCampaignCode() || '').trim().toUpperCase();
+    if (typeof window !== 'undefined' && code) {
       try {
-        const prev = JSON.parse(localStorage.getItem('chronicle_campaign_ai_config') || '{}');
-        localStorage.setItem('chronicle_campaign_ai_config', JSON.stringify({ ...prev, ...updates }));
+        const prev = JSON.parse(localStorage.getItem(`chronicle_${code}_campaign_ai_config`) || localStorage.getItem('chronicle_campaign_ai_config') || '{}');
+        const next = JSON.stringify({ ...prev, ...updates });
+        localStorage.setItem(`chronicle_${code}_campaign_ai_config`, next);
+        localStorage.setItem('chronicle_campaign_ai_config', next);
       } catch {}
     }
 
-    const code = (campaignCode || this.getActiveCampaignCode() || '').trim().toUpperCase();
     const campaigns = this.getCampaigns();
     const idx = campaigns.findIndex((c) => c.code.toUpperCase() === code);
     if (idx !== -1) {
@@ -960,8 +972,10 @@ export class CampaignManager {
     }
     if (typeof window !== 'undefined') {
       try {
-        const prev = JSON.parse(localStorage.getItem('chronicle_campaign_ai_config') || '{}');
-        localStorage.setItem('chronicle_campaign_ai_config', JSON.stringify({ ...prev, ...remoteConfig }));
+        const prev = JSON.parse(localStorage.getItem(`chronicle_${cleanCode}_campaign_ai_config`) || localStorage.getItem('chronicle_campaign_ai_config') || '{}');
+        const next = JSON.stringify({ ...prev, ...remoteConfig });
+        localStorage.setItem(`chronicle_${cleanCode}_campaign_ai_config`, next);
+        localStorage.setItem('chronicle_campaign_ai_config', next);
       } catch {}
       window.dispatchEvent(new CustomEvent('chronicle_campaigns_updated'));
       window.dispatchEvent(new CustomEvent('chronicle_ai_config_updated'));
@@ -1467,7 +1481,35 @@ export class CampaignManager {
       }
     });
 
+    const campaigns = this.getCampaigns();
     const result = Array.from(emailMap.values());
+    result.forEach((acc) => {
+      const accId = String(acc.id || '').toLowerCase();
+      const accEmail = (acc.email || '').toLowerCase().trim();
+      campaigns.forEach((camp) => {
+        if (!camp || !camp.code) return;
+        const cCode = camp.code.toUpperCase();
+        const exp = (camp.expelledAccountIds || []).map((id) => String(id).toLowerCase());
+        if (exp.includes(accId) || (accEmail && exp.includes(accEmail))) {
+          if (acc.joinedCampaigns?.some((c) => c.toUpperCase() === cCode)) {
+            acc.joinedCampaigns = acc.joinedCampaigns.filter((c) => c.toUpperCase() !== cCode);
+            modified = true;
+          }
+          if (acc.dmCampaigns?.some((c) => c.toUpperCase() === cCode)) {
+            acc.dmCampaigns = acc.dmCampaigns.filter((c) => c.toUpperCase() !== cCode);
+            modified = true;
+          }
+          if (acc.campaignProfiles && acc.campaignProfiles[cCode]) {
+            delete acc.campaignProfiles[cCode];
+            modified = true;
+          }
+          if (acc.lastCampaignCode?.toUpperCase() === cCode) {
+            acc.lastCampaignCode = undefined;
+            modified = true;
+          }
+        }
+      });
+    });
     return { accounts: result, modified };
   }
 
@@ -2789,14 +2831,15 @@ export class CampaignManager {
 
         const isMember = memberMap.has(lowId) || (lowEmail && memberMap.has(lowEmail));
         const memRec = memberMap.get(lowId) || (lowEmail ? memberMap.get(lowEmail) : undefined);
-        const isJoined = (isMember && memRec?.status !== 'expelled') || a.joinedCampaigns?.some((c) => c.toUpperCase() === cleanActiveCode);
         const isDm = a.dmCampaigns?.some((c) => c.toUpperCase() === cleanActiveCode) || campaign?.dmId === a.id || memRec?.role === 'dm';
-        const hasProfile = Boolean(
-          a.campaignProfiles &&
-          (a.campaignProfiles[cleanActiveCode] ||
-           Object.keys(a.campaignProfiles).some((k) => k.toUpperCase() === cleanActiveCode))
-        );
-        return Boolean(isJoined || isDm || hasProfile);
+
+        if (memberMap.size > 0) {
+          // Relational single source of truth: strictly filter to verified campaign members and DM
+          return Boolean((isMember && memRec?.status !== 'expelled') || isDm);
+        }
+
+        const isJoined = a.joinedCampaigns?.some((c) => c.toUpperCase() === cleanActiveCode);
+        return Boolean(isJoined || isDm);
       })
       .map((a) => {
         const p = this.accountToPlayer(a);

@@ -650,10 +650,6 @@ export class CloudSyncService {
         const joined = (acc.joinedCampaigns || []).filter(
           (code) => !isExpelledFromCode(code)
         );
-        // If restored from campaign active_players and joined is empty or missing current campaign, ensure it's joined ONLY if not expelled
-        if (cleanActiveCode && !isExpelledFromCode(cleanActiveCode) && !joined.some((c) => c.toUpperCase() === cleanActiveCode)) {
-          joined.push(cleanActiveCode);
-        }
 
         const dm = (acc.dmCampaigns || []).filter(
           (code) => !isExpelledFromCode(code)
@@ -666,16 +662,6 @@ export class CloudSyncService {
             delete profiles[pCode];
           }
         });
-
-        if (cleanActiveCode && !isExpelledFromCode(cleanActiveCode) && !profiles[cleanActiveCode] && acc.characterName) {
-          profiles[cleanActiveCode] = {
-            characterName: acc.characterName,
-            avatarUrl: acc.avatarUrl || '',
-            color: acc.color || '#6366f1',
-            status: 'active',
-            tags: [],
-          };
-        }
 
         mergedMap.set(acc.id, {
           ...acc,
@@ -1028,6 +1014,9 @@ export class CloudSyncService {
                       dmId: supaData.dmId || allCamps[idx].dmId,
                       dmIsPlayer: remoteDmIsPlayer !== undefined ? remoteDmIsPlayer : allCamps[idx].dmIsPlayer,
                       expelledAccountIds: supaData.expelledAccountIds || allCamps[idx].expelledAccountIds,
+                      aiConfig: (supaData.aiConfig && typeof supaData.aiConfig === 'object' && Object.keys(supaData.aiConfig).length > 0)
+                        ? supaData.aiConfig
+                        : allCamps[idx].aiConfig,
                     };
                     CampaignManager.saveCampaignsLocalOnly(allCamps);
                   } else {
@@ -1039,6 +1028,7 @@ export class CloudSyncService {
                       dmId: supaData.dmId || '',
                       dmIsPlayer: remoteDmIsPlayer,
                       expelledAccountIds: supaData.expelledAccountIds || [],
+                      aiConfig: supaData.aiConfig || {},
                       createdAt: new Date().toISOString(),
                     });
                     CampaignManager.saveCampaignsLocalOnly(allCamps);
@@ -1442,12 +1432,16 @@ export class CloudSyncService {
             if (row.calendar_system && typeof row.calendar_system === 'object') {
               CampaignManager.saveCalendarLocalOnly(row.calendar_system);
             }
+            if (row.ai_config && typeof row.ai_config === 'object') {
+              CampaignManager.updateCampaignAiConfigFromRemote(activeCode, row.ai_config);
+            }
             const dmIsPlayer = row.dm_is_player !== undefined ? Boolean(row.dm_is_player) : undefined;
-            if (row.title || row.dm_id || dmIsPlayer !== undefined) {
+            if (row.title || row.dm_id || dmIsPlayer !== undefined || row.ai_config) {
               CampaignManager.updateCampaignMetaLocalOnly(activeCode, {
                 name: row.title || undefined,
                 dmId: row.dm_id || undefined,
                 dmIsPlayer: dmIsPlayer,
+                aiConfig: row.ai_config && typeof row.ai_config === 'object' ? row.ai_config : undefined,
               });
               if (dmIsPlayer !== undefined && typeof window !== 'undefined') {
                 const cleanCode = activeCode.trim().toUpperCase();

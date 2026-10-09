@@ -143,6 +143,10 @@ export function Settings() {
       };
 
       if (supaData) {
+        if (supaData.aiConfig && typeof supaData.aiConfig === 'object') {
+          CampaignManager.updateCampaignAiConfigFromRemote(activeCampaignCode, supaData.aiConfig);
+          setCampaignAiConfig(CampaignManager.getCampaignAiConfig(activeCampaignCode));
+        }
         setSupabaseStats({
           local,
           remote: {
@@ -282,9 +286,13 @@ export function Settings() {
     };
     window.addEventListener('chronicle_ai_config_updated', handleAiConfigUpdated);
     window.addEventListener('chronicle_campaigns_updated', handleAiConfigUpdated);
+    window.addEventListener('chronicle_campaign_updated', handleAiConfigUpdated);
+    window.addEventListener('chronicle_data_updated', handleAiConfigUpdated);
     return () => {
       window.removeEventListener('chronicle_ai_config_updated', handleAiConfigUpdated);
       window.removeEventListener('chronicle_campaigns_updated', handleAiConfigUpdated);
+      window.removeEventListener('chronicle_campaign_updated', handleAiConfigUpdated);
+      window.removeEventListener('chronicle_data_updated', handleAiConfigUpdated);
     };
   }, []);
 
@@ -1220,8 +1228,11 @@ export function Settings() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <button
                 type="button"
-                onClick={() => handleSetAiProvider('gemini')}
-                className={`p-4 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between space-y-2 ${
+                disabled={!isDm}
+                onClick={() => isDm && handleSetAiProvider('gemini')}
+                className={`p-4 rounded-xl border text-left transition-all flex flex-col justify-between space-y-2 ${
+                  !isDm ? 'cursor-default opacity-85' : 'cursor-pointer'
+                } ${
                   campaignAiConfig.provider === 'gemini' || !campaignAiConfig.provider
                     ? 'bg-primary/10 border-primary ring-1 ring-primary'
                     : 'bg-surface-2/40 border-surface-3 hover:border-surface-3/80'
@@ -1242,8 +1253,11 @@ export function Settings() {
 
               <button
                 type="button"
-                onClick={() => handleSetAiProvider('openrouter')}
-                className={`p-4 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between space-y-2 ${
+                disabled={!isDm}
+                onClick={() => isDm && handleSetAiProvider('openrouter')}
+                className={`p-4 rounded-xl border text-left transition-all flex flex-col justify-between space-y-2 ${
+                  !isDm ? 'cursor-default opacity-85' : 'cursor-pointer'
+                } ${
                   campaignAiConfig.provider === 'openrouter'
                     ? 'bg-primary/10 border-primary ring-1 ring-primary'
                     : 'bg-surface-2/40 border-surface-3 hover:border-surface-3/80'
@@ -1262,6 +1276,11 @@ export function Settings() {
                 </p>
               </button>
             </div>
+            {!isDm && (
+              <p className="text-[11px] text-content-3 italic">
+                * Il provider AI principale e i modelli consentiti sono impostati dal Dungeon Master.
+              </p>
+            )}
           </div>
 
           {/* Configurazione Modelli per Party & Oracolo */}
@@ -1274,17 +1293,19 @@ export function Settings() {
                 </p>
               </div>
 
-              <button
-                type="button"
-                onClick={() => {
-                  setCatalogTarget('oracle');
-                  setIsAiCatalogOpen(true);
-                }}
-                className="bg-surface-2 hover:bg-surface-3 border border-surface-3 text-content-1 px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
-              >
-                <Cpu size={14} />
-                <span>Catalogo Modelli</span>
-              </button>
+              {isDm && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCatalogTarget('oracle');
+                    setIsAiCatalogOpen(true);
+                  }}
+                  className="bg-surface-2 hover:bg-surface-3 border border-surface-3 text-content-1 px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
+                >
+                  <Cpu size={14} />
+                  <span>Catalogo Modelli</span>
+                </button>
+              )}
             </div>
 
             <div className="space-y-3">

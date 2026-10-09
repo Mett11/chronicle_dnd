@@ -84,11 +84,9 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
     );
     const joined = (acc.joinedCampaigns || []).filter((c) => !expelledCodes.has(c.toUpperCase()));
     const dmList = (acc.dmCampaigns || []).filter((c) => !expelledCodes.has(c.toUpperCase()));
-    const profileCodes = Object.keys(acc.campaignProfiles || {}).filter((c) => !expelledCodes.has(c.toUpperCase()));
     const validCodesSet = new Set([
       ...joined.map((c) => c.toUpperCase()),
       ...dmList.map((c) => c.toUpperCase()),
-      ...profileCodes.map((c) => c.toUpperCase()),
     ]);
     const campMap = new Map<string, CampaignMeta>();
     const userEmail = (acc.email || '').toLowerCase().trim();
@@ -273,7 +271,6 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
       const validCodesSet = new Set([
         ...(account.joinedCampaigns || []).map((c) => c.toUpperCase()),
         ...(account.dmCampaigns || []).map((c) => c.toUpperCase()),
-        ...Object.keys(account.campaignProfiles || {}).map((c) => c.toUpperCase()),
       ]);
 
       const campMap = new Map<string, CampaignMeta>();
@@ -460,7 +457,47 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
         return;
       }
 
-      if (account && existing.expelledAccountIds?.includes(account.id)) {
+      const isExpelled = Boolean(
+        account && (
+          existing.expelledAccountIds?.includes(account.id) ||
+          (account.email && existing.expelledAccountIds?.some((id) => id.toLowerCase() === account.email.toLowerCase()))
+        )
+      );
+
+      if (isExpelled) {
+        try {
+          localStorage.removeItem('chronicle_pending_join_code');
+          if (typeof window !== 'undefined' && window.history?.replaceState) {
+            const cleanUrl = window.location.pathname;
+            window.history.replaceState({}, document.title, cleanUrl);
+          }
+        } catch {}
+
+        if (account) {
+          let modified = false;
+          if (account.joinedCampaigns?.some((c) => c.toUpperCase() === cleanCode)) {
+            account.joinedCampaigns = (account.joinedCampaigns || []).filter((c) => c.toUpperCase() !== cleanCode);
+            modified = true;
+          }
+          if (account.campaignProfiles && account.campaignProfiles[cleanCode]) {
+            delete account.campaignProfiles[cleanCode];
+            modified = true;
+          }
+          if (account.lastCampaignCode?.toUpperCase() === cleanCode) {
+            account.lastCampaignCode = undefined;
+            modified = true;
+          }
+          if (modified) {
+            CampaignManager.saveAccountLocalOnly(account);
+            refreshAccount();
+          }
+        }
+
+        const currentActive = CampaignManager.getActiveCampaignCode();
+        if (currentActive && currentActive.toUpperCase() === cleanCode) {
+          CampaignManager.setActiveCampaignCode(null as any);
+        }
+
         setJoinError(
           `Non hai i permessi per accedere alla campagna "${cleanCode}". Contatta il Dungeon Master.`
         );
@@ -766,7 +803,7 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
           </div>
 
           {/* User Account and Logout */}
-          <div className="hidden sm:flex items-center gap-2 sm:gap-3 shrink-0 min-w-0">
+          <div className="flex items-center gap-2 sm:gap-3 shrink-0 min-w-0">
             {/* Truncated User Email Badge */}
             <div
               className="flex items-center gap-1.5 px-2.5 py-1.5 sm:px-3.5 sm:py-1.5 rounded-xl border text-[11px] sm:text-xs font-mono shadow-xs max-w-[120px] xs:max-w-[180px] sm:max-w-xs transition-colors shrink min-w-0 overflow-hidden"
@@ -797,30 +834,6 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
 
       {/* Main Campaign Hub */}
       <main className="w-full max-w-[1440px] mx-auto px-6 sm:px-12 py-12 relative z-10 flex-1">
-        {/* Mobile User Profile & Disconnect Bar */}
-        <div 
-          className="sm:hidden flex flex-col xs:flex-row items-center justify-between gap-3 p-4 mb-6 rounded-2xl border text-xs"
-          style={{
-            backgroundColor: palette.bgCard,
-            borderColor: palette.borderCard,
-          }}
-        >
-          <div className="flex items-center gap-2 min-w-0 self-start xs:self-center">
-            <User size={14} className="shrink-0 text-amber-400/90" />
-            <div className="text-left min-w-0">
-              <p className="text-[10px] uppercase tracking-wider" style={{ color: palette.textMuted }}>Account Attivo</p>
-              <p className="font-mono truncate text-[11px]" style={{ color: palette.textSub }}>{account?.email}</p>
-            </div>
-          </div>
-          <button
-            onClick={() => logout()}
-            className="w-full xs:w-auto px-4 py-2 rounded-xl text-xs font-mono font-medium transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-sm active:scale-95 text-red-400 hover:text-red-300 hover:bg-red-950/40 bg-red-950/20 border border-red-900/50"
-          >
-            <LogOut size={13} />
-            <span>Disconnetti</span>
-          </button>
-        </div>
-
         {/* Page Title & Action Bar */}
         <div
           className="flex flex-col md:flex-row md:items-end justify-between gap-6 pb-8 mb-10 border-b"
