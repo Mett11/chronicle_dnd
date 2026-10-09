@@ -988,66 +988,23 @@ export class CampaignManager {
     for (let i = 0; i < 100; i++) {
       let part1 = "";
       let part2 = "";
+      let part3 = "";
+      let part4 = "";
       for (let j = 0; j < 4; j++) part1 += chars.charAt(Math.floor(Math.random() * chars.length));
       for (let j = 0; j < 4; j++) part2 += chars.charAt(Math.floor(Math.random() * chars.length));
-      const code = `CHR-${part1}-${part2}`;
+      for (let j = 0; j < 4; j++) part3 += chars.charAt(Math.floor(Math.random() * chars.length));
+      for (let j = 0; j < 4; j++) part4 += chars.charAt(Math.floor(Math.random() * chars.length));
+      const code = `CHR-${part1}-${part2}-${part3}-${part4}`;
       if (!existing.includes(code)) {
         return code;
       }
     }
-    return `CHR-${Date.now().toString(36).toUpperCase()}`;
+    return `CHR-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
   }
 
-  static regenerateCampaignCode(currentCode: string): string | null {
-    if (!currentCode) return null;
-    const cleanCurrent = currentCode.trim().toUpperCase();
-    const campaigns = this.getCampaigns();
-    const idx = campaigns.findIndex((c) => c.code.toUpperCase() === cleanCurrent);
-    if (idx === -1) return null;
-
-    const newCode = this.generateCampaignCode();
-    const oldCode = campaigns[idx].code;
-    campaigns[idx].code = newCode;
-    this.saveCampaigns(campaigns);
-
-    if (this.getActiveCampaignCode()?.toUpperCase() === oldCode.toUpperCase()) {
-      this.setActiveCampaignCode(newCode);
-    }
-
-    const accounts = this.getAccounts();
-    let updated = false;
-    accounts.forEach((acc) => {
-      if (acc.dmCampaigns && acc.dmCampaigns.includes(oldCode)) {
-        acc.dmCampaigns = acc.dmCampaigns.map((c) => (c === oldCode ? newCode : c));
-        updated = true;
-      }
-      if (acc.joinedCampaigns && acc.joinedCampaigns.includes(oldCode)) {
-        acc.joinedCampaigns = acc.joinedCampaigns.map((c) => (c === oldCode ? newCode : c));
-        updated = true;
-      }
-      if (acc.campaignProfiles && acc.campaignProfiles[oldCode]) {
-        acc.campaignProfiles[newCode] = acc.campaignProfiles[oldCode];
-        delete acc.campaignProfiles[oldCode];
-        updated = true;
-      }
-    });
-
-    if (updated) {
-      this.saveAccounts(accounts);
-    }
-
-    if (isSupabaseConfigured()) {
-      SupabaseSyncService.updateCampaignCode(oldCode, newCode).catch((err) => {
-        console.warn('Supabase code update warning:', err);
-      });
-    }
-
-    if (typeof window !== "undefined") {
-      window.dispatchEvent(new CustomEvent("chronicle_campaigns_updated"));
-      window.dispatchEvent(new CustomEvent("chronicle_campaign_changed"));
-    }
-
-    return newCode;
+  static regenerateCampaignCode(_currentCode: string): string | null {
+    console.warn('[CampaignStore] Campaign code regeneration is disabled as campaign codes are permanent and non-changeable.');
+    return null;
   }
 
   static toggleCoMaster(accountId: string, campaignCode: string): boolean {

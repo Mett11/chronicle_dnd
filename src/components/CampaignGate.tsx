@@ -1687,31 +1687,24 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
                       color: palette.textSub,
                     }}
                   >
-                    Codice Campagna Generato
+                    Codice Campagna Assegnato (Permanente)
                   </label>
-                  <button
-                    type="button"
-                    onClick={handleRegenerateCode}
-                    className="text-[10px] hover:underline flex items-center gap-1 cursor-pointer font-mono"
-                    style={{ color: palette.accent }}
-                  >
-                    <RefreshCw size={10} /> Rigenera
-                  </button>
                 </div>
                 <input
                   id="create-camp-code-input"
                   type="text"
-                  required
-                  placeholder="Es. STRAHD-4821"
+                  readOnly
                   value={newCampCode}
-                  onChange={(e) => setNewCampCode(e.target.value.toUpperCase().replace(/\s/g, ''))}
-                  className="w-full rounded-xl px-4 py-2.5 text-xs font-mono uppercase tracking-wider outline-none border"
+                  className="w-full rounded-xl px-4 py-2.5 text-xs font-mono font-bold uppercase tracking-wider outline-none border cursor-not-allowed select-all"
                   style={{
                     backgroundColor: palette.bgInput,
                     borderColor: palette.borderCard,
-                    color: palette.textMain,
+                    color: palette.accent,
                   }}
                 />
+                <p className="text-[10px] mt-1 italic" style={{ color: palette.textSub }}>
+                  Codice univoco generato automaticamente dal sistema. Non modificabile.
+                </p>
               </div>
 
               {/* Checkbox / Toggle: Ruolo Master vs Player */}

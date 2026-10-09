@@ -762,7 +762,7 @@ export function Settings() {
         <div className="space-y-6 animate-fade-in">
           {isDm ? (
             <>
-              {/* Rinomina & Rigenerazione Codice (DM) */}
+              {/* Rinomina & Codice Permante Campagna (DM) */}
               <div className="bg-surface-1 border border-surface-2 rounded-2xl p-6 space-y-5">
                 <div className="border-b border-surface-2 pb-3">
                   <h2 className="text-base font-semibold text-content-1 flex items-center gap-2">
@@ -770,7 +770,7 @@ export function Settings() {
                     <span>Impostazioni Campagna (Riservato al Master)</span>
                   </h2>
                   <p className="text-xs text-content-3 mt-0.5">
-                    Modifica il titolo o rigenera il codice di accesso univoco per impedire ingressi non autorizzati.
+                    Gestisci il titolo ufficiale del tavolo. Il codice di accesso univoco è permanente e non modificabile.
                   </p>
                 </div>
 
@@ -778,13 +778,6 @@ export function Settings() {
                   <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-emerald-400 text-xs font-medium flex items-center gap-2">
                     <CheckCircle2 size={16} />
                     <span>{campaignNameSavedMsg}</span>
-                  </div>
-                )}
-
-                {codeRegeneratedMsg && (
-                  <div className="p-3 bg-primary/15 border border-primary/30 rounded-xl text-primary text-xs font-mono font-medium flex items-center gap-2">
-                    <CheckCircle2 size={16} />
-                    <span>{codeRegeneratedMsg}</span>
                   </div>
                 )}
 
@@ -812,10 +805,10 @@ export function Settings() {
                     </div>
                   </div>
 
-                  {/* Access code & regeneration */}
+                  {/* Access code (Permanent) */}
                   <div className="space-y-2">
                     <label className="text-xs font-mono font-medium text-content-2">
-                      Codice Accesso Univoco
+                      Codice Accesso Univoco (Permanente)
                     </label>
                     <div className="flex gap-2">
                       <div className="flex-1 bg-surface-2 border border-surface-3 rounded-xl px-3.5 py-2 text-xs font-mono font-bold text-primary flex items-center justify-between">
@@ -829,16 +822,10 @@ export function Settings() {
                           <Copy size={13} />
                         </button>
                       </div>
-                      <button
-                        type="button"
-                        onClick={handleRegenerateAccessCode}
-                        className="bg-surface-2 hover:bg-surface-3 text-content-1 border border-surface-3 px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors shrink-0"
-                        title="Genera un nuovo codice casuale per questo tavolo"
-                      >
-                        <RefreshCw size={13} />
-                        <span>Rigenera Codice</span>
-                      </button>
                     </div>
+                    <p className="text-[11px] text-content-3 italic">
+                      Il codice di accesso è generato in modo permanente e non è modificabile.
+                    </p>
                   </div>
                 </div>
 
