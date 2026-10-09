@@ -93,14 +93,22 @@ export function LlmCatalogModal({
 
   // Sync campaign AI config updates
   useEffect(() => {
+    if (isOpen) {
+      setCampaignAiConfig(CampaignManager.getCampaignAiConfig());
+    }
+  }, [isOpen]);
+
+  useEffect(() => {
     const handleAiConfigUpdated = () => {
       setCampaignAiConfig(CampaignManager.getCampaignAiConfig());
     };
     window.addEventListener('chronicle_ai_config_updated', handleAiConfigUpdated);
     window.addEventListener('chronicle_campaigns_updated', handleAiConfigUpdated);
+    window.addEventListener('chronicle_campaign_updated', handleAiConfigUpdated);
     return () => {
       window.removeEventListener('chronicle_ai_config_updated', handleAiConfigUpdated);
       window.removeEventListener('chronicle_campaigns_updated', handleAiConfigUpdated);
+      window.removeEventListener('chronicle_campaign_updated', handleAiConfigUpdated);
     };
   }, []);
 
@@ -386,23 +394,42 @@ export function LlmCatalogModal({
   const filteredModels = useMemo(() => {
     const q = searchQuery.toLowerCase().trim();
 
-    // Default allowed models fallback if DM hasn't customized allowedPartyModels
+    // Check if DM has explicitly customized allowed party models
+    const hasCustomPartyModels = allowedPartyModels.length > 0;
     const defaultAllowedForProv = selectedProvider === 'gemini'
       ? ['gemini-flash-latest', 'gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-3.7-flash', 'gemini-3.1-pro-preview']
       : ['openrouter/free', 'meta-llama/llama-3.3-70b-instruct:free', 'qwen/qwen-2.5-72b-instruct:free', 'google/gemini-2.0-flash-lite-001:free'];
 
     const activeAllowedSet = new Set<string>([
       ...allowedPartyModels,
-      ...defaultAllowedForProv,
-      currentModelId,
-      campaignAiConfig.oracleModel,
-      campaignAiConfig.modelId,
-      campaignAiConfig.extractionModel,
+      ...(hasCustomPartyModels ? [] : defaultAllowedForProv),
+      ...(campaignAiConfig.oracleModel ? [campaignAiConfig.oracleModel] : []),
+      ...(campaignAiConfig.modelId ? [campaignAiConfig.modelId] : []),
     ].filter(Boolean));
 
     // If player is NOT DM: ONLY show models allowed by the DM for the selected provider!
     if (!userIsDm) {
       const allowedList = allKnownModels.filter((m) => activeAllowedSet.has(m.id) && m.provider === selectedProvider);
+
+      // Ensure any explicitly allowed model ID not present in known models is included
+      const knownIds = new Set(allowedList.map((m) => m.id));
+      activeAllowedSet.forEach((modelId) => {
+        if (!knownIds.has(modelId)) {
+          const isProbablyOpenRouter = modelId.includes('/') || modelId.includes(':');
+          const itemProvider: LlmProviderType = isProbablyOpenRouter ? 'openrouter' : 'gemini';
+          if (itemProvider === selectedProvider) {
+            allowedList.push({
+              id: modelId,
+              name: modelId,
+              description: 'Modello abilitato dal Dungeon Master per il tavolo',
+              isFree: modelId.endsWith(':free') || itemProvider === 'gemini',
+              provider: itemProvider,
+            });
+            knownIds.add(modelId);
+          }
+        }
+      });
+
       return allowedList.filter((m) => {
         if (!q) return true;
         return (

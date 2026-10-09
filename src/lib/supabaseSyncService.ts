@@ -1248,6 +1248,19 @@ export class SupabaseSyncService {
         created_at: new Date().toISOString(),
       };
       const { error } = await supabase.from('campaign_members').upsert(payload, { onConflict: 'id' });
+
+      // Clean user from expelled_accounts in campaigns table if present
+      try {
+        const { data: camp } = await supabase.from('campaigns').select('expelled_accounts').eq('code', cleanCode).maybeSingle();
+        if (camp && Array.isArray(camp.expelled_accounts) && camp.expelled_accounts.includes(userId)) {
+          const updatedExpelled = camp.expelled_accounts.filter((id: string) => id !== userId);
+          await supabase.from('campaigns').update({
+            expelled_accounts: updatedExpelled,
+            updated_at: new Date().toISOString(),
+          }).eq('code', cleanCode);
+        }
+      } catch {}
+
       return !error;
     } catch {
       return false;
@@ -1683,21 +1696,30 @@ export class SupabaseSyncService {
       const code = campaignCode.trim();
       const sanitized = Array.isArray(accounts) ? accounts.filter((a) => a && a.id) : [];
 
-      // Fetch existing active_players from campaigns to avoid wiping out fellow party members
-      const { data: camp } = await supabase.from('campaigns').select('active_players').eq('code', code).maybeSingle();
+      // Fetch existing active_players and expelled_accounts from campaigns
+      const { data: camp } = await supabase.from('campaigns').select('active_players, expelled_accounts').eq('code', code).maybeSingle();
       const existingPlayers: any[] = Array.isArray(camp?.active_players) ? camp.active_players : [];
+      const expelledSet = new Set<string>((camp?.expelled_accounts || []).map((id: string) => String(id).toLowerCase()));
 
-      // Non-destructive merge
+      // Non-destructive merge, strictly excluding expelled accounts
       const playerMap = new Map<string, any>();
       existingPlayers.forEach((p) => {
         if (p && p.id) {
-          playerMap.set(p.id, p);
+          const pId = String(p.id).toLowerCase();
+          const pEmail = p.email ? String(p.email).toLowerCase() : '';
+          if (!expelledSet.has(pId) && (!pEmail || !expelledSet.has(pEmail))) {
+            playerMap.set(p.id, p);
+          }
         }
       });
       sanitized.forEach((p) => {
         if (p && p.id) {
-          const current = playerMap.get(p.id) || {};
-          playerMap.set(p.id, { ...current, ...p });
+          const pId = String(p.id).toLowerCase();
+          const pEmail = p.email ? String(p.email).toLowerCase() : '';
+          if (!expelledSet.has(pId) && (!pEmail || !expelledSet.has(pEmail))) {
+            const current = playerMap.get(p.id) || {};
+            playerMap.set(p.id, { ...current, ...p });
+          }
         }
       });
       const mergedPlayers = Array.from(playerMap.values());

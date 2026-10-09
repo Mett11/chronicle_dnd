@@ -182,15 +182,13 @@ export function Settings() {
       const allAccounts = CampaignManager.getAccounts();
       if (allAccounts && allAccounts.length > 0) {
         await SupabaseSyncService.saveAllUserAccounts(allAccounts);
-        await SupabaseSyncService.saveActivePlayers(activeCampaignCode, allAccounts);
       }
 
-      const allPlayersList = CampaignManager.getPlayers();
-      const combinedPlayers = [
-        ...allAccounts,
-        ...allPlayersList.filter((p) => !allAccounts.some((a) => a.id === p._id || a.email === p.email)),
-      ];
-      await SupabaseSyncService.saveActivePlayers(activeCampaignCode, combinedPlayers);
+      // Strictly only sync players belonging to THIS campaign
+      const campaignPlayers = CampaignManager.getPlayers();
+      if (campaignPlayers && campaignPlayers.length > 0) {
+        await SupabaseSyncService.saveActivePlayers(activeCampaignCode, campaignPlayers);
+      }
 
       const payload = {
         sessions: CampaignManager.getSessions(),
@@ -281,8 +279,12 @@ export function Settings() {
   };
 
   useEffect(() => {
+    setCampaignAiConfig(CampaignManager.getCampaignAiConfig(activeCampaignCode));
+  }, [activeCampaignCode]);
+
+  useEffect(() => {
     const handleAiConfigUpdated = () => {
-      setCampaignAiConfig(CampaignManager.getCampaignAiConfig());
+      setCampaignAiConfig(CampaignManager.getCampaignAiConfig(activeCampaignCode));
     };
     window.addEventListener('chronicle_ai_config_updated', handleAiConfigUpdated);
     window.addEventListener('chronicle_campaigns_updated', handleAiConfigUpdated);
@@ -294,7 +296,7 @@ export function Settings() {
       window.removeEventListener('chronicle_campaign_updated', handleAiConfigUpdated);
       window.removeEventListener('chronicle_data_updated', handleAiConfigUpdated);
     };
-  }, []);
+  }, [activeCampaignCode]);
 
   const prevKeyModeRef = React.useRef(keyMode);
   const isUserTypingRef = React.useRef(false);
@@ -1321,23 +1323,31 @@ export function Settings() {
                   Modelli Consentiti al Party
                 </label>
                 <div className="flex flex-wrap gap-1.5">
-                  {allowedPartyModels.map((m) => (
-                    <span
-                      key={m}
-                      className="px-2.5 py-1 bg-surface-2 border border-surface-3 rounded-lg text-xs font-mono text-content-1 flex items-center gap-1.5"
-                    >
-                      <span>{m}</span>
-                      {isDm && (
-                        <button
-                          type="button"
-                          onClick={() => handleRemovePartyModel(m)}
-                          className="hover:text-error text-content-3 transition-colors cursor-pointer"
-                        >
-                          <X size={12} />
-                        </button>
-                      )}
+                  {allowedPartyModels.length === 0 ? (
+                    <span className="text-xs text-content-3 italic">
+                      {isDm
+                        ? 'Nessun modello specifico limitato. I giocatori possono usare i modelli gratuiti standard.'
+                        : 'Nessun modello limitato dal Master. Sono disponibili i modelli gratuiti standard.'}
                     </span>
-                  ))}
+                  ) : (
+                    allowedPartyModels.map((m) => (
+                      <span
+                        key={m}
+                        className="px-2.5 py-1 bg-surface-2 border border-surface-3 rounded-lg text-xs font-mono text-content-1 flex items-center gap-1.5"
+                      >
+                        <span>{m}</span>
+                        {isDm && (
+                          <button
+                            type="button"
+                            onClick={() => handleRemovePartyModel(m)}
+                            className="hover:text-error text-content-3 transition-colors cursor-pointer"
+                          >
+                            <X size={12} />
+                          </button>
+                        )}
+                      </span>
+                    ))
+                  )}
                 </div>
 
                 {isDm && (

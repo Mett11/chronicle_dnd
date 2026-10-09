@@ -2061,8 +2061,12 @@ export class CampaignManager {
     }
     const campaigns = this.getCampaigns();
     const campIdx = campaigns.findIndex((c) => c.code.toUpperCase() === cleanCode);
-    if (campIdx !== -1 && campaigns[campIdx].expelledAccountIds?.includes(accountId)) {
-      campaigns[campIdx].expelledAccountIds = campaigns[campIdx].expelledAccountIds!.filter((id) => id !== accountId);
+    if (campIdx !== -1 && campaigns[campIdx].expelledAccountIds?.length) {
+      const acc = idx !== -1 ? accounts[idx] : null;
+      const accEmail = acc?.email?.toLowerCase();
+      campaigns[campIdx].expelledAccountIds = campaigns[campIdx].expelledAccountIds!.filter(
+        (id) => id !== accountId && (!accEmail || id.toLowerCase() !== accEmail)
+      );
       this.saveCampaigns(campaigns);
       CloudSyncService.syncCampaignsToCloud(campaigns);
     }

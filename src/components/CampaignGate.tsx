@@ -464,45 +464,11 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
         )
       );
 
-      if (isExpelled) {
-        try {
-          localStorage.removeItem('chronicle_pending_join_code');
-          if (typeof window !== 'undefined' && window.history?.replaceState) {
-            const cleanUrl = window.location.pathname;
-            window.history.replaceState({}, document.title, cleanUrl);
-          }
-        } catch {}
-
-        if (account) {
-          let modified = false;
-          if (account.joinedCampaigns?.some((c) => c.toUpperCase() === cleanCode)) {
-            account.joinedCampaigns = (account.joinedCampaigns || []).filter((c) => c.toUpperCase() !== cleanCode);
-            modified = true;
-          }
-          if (account.campaignProfiles && account.campaignProfiles[cleanCode]) {
-            delete account.campaignProfiles[cleanCode];
-            modified = true;
-          }
-          if (account.lastCampaignCode?.toUpperCase() === cleanCode) {
-            account.lastCampaignCode = undefined;
-            modified = true;
-          }
-          if (modified) {
-            CampaignManager.saveAccountLocalOnly(account);
-            refreshAccount();
-          }
-        }
-
-        const currentActive = CampaignManager.getActiveCampaignCode();
-        if (currentActive && currentActive.toUpperCase() === cleanCode) {
-          CampaignManager.setActiveCampaignCode(null as any);
-        }
-
-        setJoinError(
-          `Non hai i permessi per accedere alla campagna "${cleanCode}". Contatta il Dungeon Master.`
+      // If user was previously expelled, entering the valid campaign code clears the expulsion and allows rejoining
+      if (isExpelled && existing.expelledAccountIds) {
+        existing.expelledAccountIds = existing.expelledAccountIds.filter(
+          (id) => id !== account?.id && (!account?.email || id.toLowerCase() !== account.email.toLowerCase())
         );
-        setIsSearching(false);
-        return;
       }
 
       // Clear pending code from localStorage & clean URL query params once verified
