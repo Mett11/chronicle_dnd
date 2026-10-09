@@ -295,18 +295,23 @@ export function ImageGalleryUploader({
                         `gallery_${Date.now()}_${idx}.webp`,
                         b64
                       );
-                      return cdnUrl || b64;
+                      if (cdnUrl && (cdnUrl.startsWith('http://') || cdnUrl.startsWith('https://'))) {
+                        return cdnUrl;
+                      }
+                      return '';
                     } catch {
-                      return b64;
+                      return '';
                     }
                   }
-                  return b64;
+                  return b64.startsWith('http') ? b64 : '';
                 })
               );
-              onChange([...images, ...uploadedUrls]);
+              const validUrls = uploadedUrls.filter((u): u is string => Boolean(u && (u.startsWith('http://') || u.startsWith('https://'))));
+              if (validUrls.length > 0) {
+                onChange([...images, ...validUrls]);
+              }
             } catch (err) {
               console.warn('Errore upload galleria:', err);
-              onChange([...images, ...optimizedB64s]);
             } finally {
               setIsUploading(false);
               setPendingFiles([]);

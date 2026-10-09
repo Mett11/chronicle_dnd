@@ -25,17 +25,39 @@ export class SupabaseStorageService {
   /**
    * Helper to parse a public URL or relative path and extract the storage path within the bucket
    */
-  static extractStoragePath(urlOrPath: string): string | null {
+  static extractStoragePath(urlOrPath: string): { bucket: string; path: string } | null {
     if (!urlOrPath || typeof urlOrPath !== 'string') return null;
     const trimmed = urlOrPath.trim();
-    if (trimmed.startsWith('campaigns/')) return trimmed;
+    if (!trimmed || trimmed.startsWith('data:') || trimmed.startsWith('blob:')) return null;
 
-    // Check Supabase public URL pattern
-    const supaMarker = `/${CHRONICLE_MEDIA_BUCKET}/`;
-    const supaIdx = trimmed.indexOf(supaMarker);
-    if (supaIdx !== -1) {
-      const rawPath = trimmed.slice(supaIdx + supaMarker.length);
-      return rawPath.split('?')[0];
+    if (trimmed.startsWith('campaigns/')) {
+      return { bucket: CHRONICLE_MEDIA_BUCKET, path: trimmed };
+    }
+
+    const knownBuckets = [CHRONICLE_MEDIA_BUCKET, 'campaign-assets', 'user-avatars', 'audio-logs'];
+    for (const b of knownBuckets) {
+      const marker = `/${b}/`;
+      const idx = trimmed.indexOf(marker);
+      if (idx !== -1) {
+        const rawPath = trimmed.slice(idx + marker.length);
+        const pathClean = rawPath.split('?')[0];
+        try {
+          return { bucket: b, path: decodeURIComponent(pathClean) };
+        } catch {
+          return { bucket: b, path: pathClean };
+        }
+      }
+    }
+
+    const match = trimmed.match(/\/storage\/v1\/object\/(?:public|authenticated|sign)\/([^/?#]+)\/([^?#]+)/);
+    if (match) {
+      const bucket = match[1];
+      const rawPath = match[2];
+      try {
+        return { bucket, path: decodeURIComponent(rawPath) };
+      } catch {
+        return { bucket, path: rawPath };
+      }
     }
 
     return null;
@@ -46,21 +68,21 @@ export class SupabaseStorageService {
    */
   static async deleteMedia(urlOrPath: string): Promise<boolean> {
     if (!urlOrPath) return false;
-    const path = this.extractStoragePath(urlOrPath);
-    if (!path) return false;
+    const parsed = this.extractStoragePath(urlOrPath);
+    if (!parsed) return false;
 
     if (isSupabaseConfigured()) {
       try {
         const { error } = await supabase.storage
-          .from(CHRONICLE_MEDIA_BUCKET)
-          .remove([path]);
+          .from(parsed.bucket)
+          .remove([parsed.path]);
         if (error) {
-          console.warn(`[Supabase Storage] Failed to delete ${path}:`, error.message);
+          console.warn(`[Supabase Storage] Failed to delete ${parsed.path} from ${parsed.bucket}:`, error.message);
           return false;
         }
         return true;
       } catch (err) {
-        console.warn(`[Supabase Storage] Delete exception for ${path}:`, err);
+        console.warn(`[Supabase Storage] Delete exception for ${parsed.path}:`, err);
         return false;
       }
     }
@@ -71,23 +93,33 @@ export class SupabaseStorageService {
    * Batch deletes multiple media files from the storage bucket
    */
   static async deleteMultipleMedia(urlsOrPaths: (string | undefined | null)[]): Promise<boolean> {
-    const validPaths = (urlsOrPaths || [])
+    const parsedList = (urlsOrPaths || [])
       .filter((u): u is string => Boolean(u && typeof u === 'string'))
       .map((u) => this.extractStoragePath(u))
-      .filter((p): p is string => Boolean(p));
+      .filter((p): p is { bucket: string; path: string } => Boolean(p));
 
-    if (validPaths.length === 0) return true;
+    if (parsedList.length === 0) return true;
 
     if (isSupabaseConfigured()) {
       try {
-        const { error } = await supabase.storage
-          .from(CHRONICLE_MEDIA_BUCKET)
-          .remove(validPaths);
-        if (error) {
-          console.warn('[Supabase Storage] Batch remove error:', error.message);
-          return false;
+        const bucketMap = new Map<string, string[]>();
+        for (const item of parsedList) {
+          const list = bucketMap.get(item.bucket) || [];
+          if (!list.includes(item.path)) {
+            list.push(item.path);
+          }
+          bucketMap.set(item.bucket, list);
         }
-        return true;
+
+        let allOk = true;
+        for (const [bucket, paths] of bucketMap.entries()) {
+          const { error } = await supabase.storage.from(bucket).remove(paths);
+          if (error) {
+            console.warn(`[Supabase Storage] Batch remove error in ${bucket}:`, error.message);
+            allOk = false;
+          }
+        }
+        return allOk;
       } catch (err) {
         console.warn('[Supabase Storage] Batch delete exception:', err);
         return false;
@@ -156,7 +188,8 @@ export class SupabaseStorageService {
       }
     }
 
-    return fallbackValue;
+    // If upload was not successful or not HTTP, do NOT return base64
+    return '';
   }
 
   /**
@@ -216,5 +249,5 @@ export async function ensureMediaUploaded(
       console.error('[ensureMediaUploaded] Failed uploading base64 media:', err);
     }
   }
-  return trimmed;
+  return trimmed.startsWith('data:') ? '' : trimmed;
 }

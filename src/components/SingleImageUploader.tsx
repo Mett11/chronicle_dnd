@@ -48,8 +48,12 @@ export function SingleImageUploader({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const handleApplyUrl = () => {
-    if (urlDraft.trim()) {
-      onChange(urlDraft.trim());
+    const trimmed = urlDraft.trim();
+    if (trimmed) {
+      if (value && value !== trimmed) {
+        FirebaseStorageService.deleteMedia(value).catch(() => {});
+      }
+      onChange(trimmed);
     }
   };
 
@@ -81,10 +85,12 @@ export function SingleImageUploader({
             raw
           );
           if (cdnUrl && (cdnUrl.startsWith('http://') || cdnUrl.startsWith('https://'))) {
+            if (value && value !== cdnUrl) {
+              FirebaseStorageService.deleteMedia(value).catch(() => {});
+            }
             onChange(cdnUrl);
           } else {
-            console.warn('[SingleImageUploader] Storage returned empty/non-http URL:', cdnUrl);
-            onChange(cdnUrl || raw);
+            console.warn('[SingleImageUploader] Upload fallito o URL storage non valido.');
           }
         } catch (err) {
           console.error('Errore upload immagine su Storage:', err);
@@ -92,6 +98,9 @@ export function SingleImageUploader({
           setIsUploadingImage(false);
         }
       } else {
+        if (value && value !== raw) {
+          FirebaseStorageService.deleteMedia(value).catch(() => {});
+        }
         onChange(raw);
       }
     }

@@ -39,17 +39,23 @@ export function resolveStorageUrl(
   if (
     trimmed.startsWith('http://') ||
     trimmed.startsWith('https://') ||
-    trimmed.startsWith('data:') ||
     trimmed.startsWith('blob:')
   ) {
     return trimmed;
+  }
+
+  // Reject legacy heavy base64 strings
+  if (trimmed.startsWith('data:')) {
+    return '';
   }
 
   try {
     let cleanPath = trimmed.startsWith('/') ? trimmed.slice(1) : trimmed;
     let targetBucket = defaultBucket;
 
-    if (cleanPath.startsWith('chronicle-media/')) {
+    if (cleanPath.startsWith('campaigns/')) {
+      targetBucket = 'chronicle-media';
+    } else if (cleanPath.startsWith('chronicle-media/')) {
       targetBucket = 'chronicle-media';
       cleanPath = cleanPath.slice('chronicle-media/'.length);
     } else if (cleanPath.startsWith('campaign-assets/')) {
@@ -674,7 +680,7 @@ export function characterBioRowToModel(row: any): CharacterBio {
     campaignCode: row.campaign_code || undefined,
     characterName: row.character_name || row.name || extra.characterName || extra.name || 'Personaggio',
     name: row.name || row.character_name || extra.name || extra.characterName || 'Personaggio',
-    avatarUrl: resolveStorageUrl(row.avatar_url || extra.avatarUrl, 'user-avatars'),
+    avatarUrl: resolveStorageUrl(row.avatar_url || extra.avatarUrl, 'chronicle-media'),
     color: row.color || extra.color || '#6366f1',
     bio: row.bio || extra.bio || '',
     notes: row.background || row.notes || extra.notes || '',

@@ -6,7 +6,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../components/AuthProvider';
 import { CampaignManager } from '../store/campaignStore';
-import { Player, PlayerPartyStatus, CampaignMeta } from '../types';
+import { Player, PlayerPartyStatus, CampaignMeta, CharacterBio } from '../types';
 import {
   Database,
   User,
@@ -91,11 +91,37 @@ export function Settings() {
   const handleSaveCharacterProfile = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!account) return;
+    const cleanName = charNameInput.trim();
+    const cleanAvatar = charAvatarInput.trim();
+    const cleanColor = charColorInput;
+
     const ok = updateAccountProfile({
-      characterName: charNameInput.trim(),
-      avatarUrl: charAvatarInput.trim(),
-      color: charColorInput,
+      characterName: cleanName,
+      avatarUrl: cleanAvatar,
+      color: cleanColor,
     });
+    if (activeCampaignCode) {
+      CampaignManager.setCampaignProfile(account.id, activeCampaignCode, {
+        characterName: cleanName,
+        avatarUrl: cleanAvatar,
+        color: cleanColor,
+      });
+      const existingBio = CampaignManager.getCharacterBio(account.id);
+      const updatedBio: CharacterBio = {
+        ...(existingBio || { playerId: account.id }),
+        playerId: account.id,
+        campaignCode: activeCampaignCode,
+        characterName: cleanName || account.characterName || 'Personaggio',
+        name: cleanName || account.characterName || 'Personaggio',
+        avatarUrl: cleanAvatar,
+        color: cleanColor,
+      };
+      CampaignManager.saveCharacterBio(updatedBio);
+    }
+    const currentAcc = CampaignManager.getCurrentAccount();
+    if (currentAcc && isSupabaseConfigured()) {
+      SupabaseSyncService.saveUserAccount(currentAcc).catch(() => {});
+    }
     if (ok) {
       setCharSavedMsg('Profilo del personaggio aggiornato e sincronizzato sul Database Cloud!');
       setTimeout(() => setCharSavedMsg(null), 3500);

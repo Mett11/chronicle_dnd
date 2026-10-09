@@ -3966,6 +3966,9 @@ export class CampaignManager {
     const index = chapters.findIndex((c) => c.id === id);
     if (index === -1) return null;
     const oldName = chapters[index].name;
+    if (chapters[index].coverImageUrl && updates.coverImageUrl !== undefined && updates.coverImageUrl !== chapters[index].coverImageUrl) {
+      FirebaseStorageService.deleteMedia(chapters[index].coverImageUrl).catch(() => {});
+    }
     const updated = { ...chapters[index], ...updates };
     chapters[index] = updated;
     this.saveChaptersLocalOnly(chapters);
@@ -4002,6 +4005,10 @@ export class CampaignManager {
   }
 
   static deleteChapter(id: string) {
+    const target = this.getChapters().find((c) => c.id === id);
+    if (target?.coverImageUrl) {
+      FirebaseStorageService.deleteMedia(target.coverImageUrl).catch(() => {});
+    }
     const chapters = this.getChapters().filter((c) => c.id !== id);
     this.saveChaptersLocalOnly(chapters);
     if (isSupabaseConfigured()) {
@@ -4641,8 +4648,8 @@ export class CampaignManager {
       deleteOk = await SupabaseSyncService.deleteEntity(id);
     }
 
-    // Only clean up media attachments after confirmed record deletion
-    if (deleteOk && entity) {
+    // Clean up media attachments on deletion
+    if (entity) {
       if (entity.images && entity.images.length > 0) {
         FirebaseStorageService.deleteMultipleMedia(entity.images).catch(() => {});
       } else if ((entity as any)?.imageUrl) {
@@ -5021,7 +5028,7 @@ export class CampaignManager {
       const code = this.getActiveCampaignCode() || 'default';
       deleteOk = await SupabaseSyncService.deleteMap(id, code);
     }
-    if (deleteOk && map?.imageUrl) {
+    if (map?.imageUrl) {
       FirebaseStorageService.deleteMedia(map.imageUrl).catch(() => {});
     }
 
@@ -5320,7 +5327,7 @@ export class CampaignManager {
     if (isSupabaseConfigured()) {
       deleteOk = await SupabaseSyncService.deleteScrapbookItem(id);
     }
-    if (deleteOk && item?.imageUrl) {
+    if (item?.imageUrl) {
       FirebaseStorageService.deleteMedia(item.imageUrl).catch(() => {});
     }
     return deleteOk;

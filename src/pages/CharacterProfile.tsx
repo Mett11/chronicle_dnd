@@ -4,6 +4,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../components/AuthProvider';
 import { CampaignManager } from '../store/campaignStore';
 import { FirebaseStorageService } from '../lib/firebaseStorageService';
+import { SupabaseSyncService } from '../lib/supabaseSyncService';
+import { isSupabaseConfigured } from '../lib/supabase';
 import { Note, Entity, Category, ScrapbookItem, DmResponse, CharacterBio, CharacterRelationship, EntityPartyRelation, EntityAiConfig, EntityToEntityRelation, RelationAttitude } from '../types';
 import { SingleImageUploader } from '../components/SingleImageUploader';
 import { ConfirmModal } from '../components/ConfirmModal';
@@ -531,19 +533,45 @@ export function CharacterProfile() {
 
   const handleSaveProfile = (e: React.FormEvent) => {
     e.preventDefault();
+    const cleanName = editName.trim();
+    const cleanAvatar = editAvatar.trim();
+    const cleanColor = editColor || '#6366f1';
+
     const updates: any = {};
-    if (editName.trim()) updates.characterName = editName.trim();
-    if (editColor) updates.color = editColor;
-    updates.avatarUrl = editAvatar.trim();
+    if (cleanName) updates.characterName = cleanName;
+    if (cleanColor) updates.color = cleanColor;
+    updates.avatarUrl = cleanAvatar;
 
     const ok = updateAccountProfile(updates);
     const activeCode = CampaignManager.getActiveCampaignCode();
-    if (activeCode && account) {
-      CampaignManager.setCampaignProfile(account.id, activeCode, {
-        characterName: editName.trim() || undefined,
-        color: editColor || undefined,
-        avatarUrl: editAvatar.trim(),
-      });
+    if (account) {
+      if (activeCode) {
+        CampaignManager.setCampaignProfile(account.id, activeCode, {
+          characterName: cleanName || undefined,
+          color: cleanColor,
+          avatarUrl: cleanAvatar,
+        });
+
+        // Also synchronize CharacterBio for this player in this campaign
+        const existingBio = CampaignManager.getCharacterBio(account.id);
+        const updatedBio: CharacterBio = {
+          ...(existingBio || { playerId: account.id }),
+          playerId: account.id,
+          campaignCode: activeCode,
+          characterName: cleanName || existingBio?.characterName || account.characterName || 'Personaggio',
+          name: cleanName || existingBio?.characterName || account.characterName || 'Personaggio',
+          avatarUrl: cleanAvatar,
+          color: cleanColor,
+        };
+        CampaignManager.saveCharacterBio(updatedBio);
+        setCharacterBio(updatedBio);
+      }
+
+      // Force immediate cloud sync to Supabase user_accounts table
+      const currentAcc = CampaignManager.getCurrentAccount();
+      if (currentAcc && isSupabaseConfigured()) {
+        SupabaseSyncService.saveUserAccount(currentAcc).catch(() => {});
+      }
     }
 
     if (ok) {
@@ -576,6 +604,12 @@ export function CharacterProfile() {
       console.warn('Errore upload memoria su Firebase Storage:', err);
     } finally {
       setIsUploadingMemoryImage(false);
+    }
+
+    // Do NOT store raw base64 in scrapbook items
+    if (!finalImageUrl || (!finalImageUrl.startsWith('http://') && !finalImageUrl.startsWith('https://'))) {
+      console.warn('[handleCreateMemory] Immagine non valida o upload fallito su Supabase Storage.');
+      return;
     }
 
     const newItem = CampaignManager.addScrapbookItem({

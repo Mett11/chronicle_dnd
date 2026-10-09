@@ -1793,10 +1793,12 @@ export class SupabaseSyncService {
 
       const { error } = await supabase.from('user_accounts').upsert(payload, { onConflict: 'id' });
       if (error) {
+        console.warn('[Supabase] Warning upserting user_accounts:', error.message);
         return false;
       }
       return true;
     } catch (err) {
+      console.warn('[Supabase] Exception upserting user_accounts:', err);
       return false;
     }
   }
@@ -1843,37 +1845,10 @@ export class SupabaseSyncService {
         // Also get memberships from campaign_members (verified against real campaigns)
         const memberRes = await this.getUserCampaigns(effectiveUserId, cleanEmail || data.email);
 
-        // Verify campaign_profiles and joined/dm campaigns against active campaigns
-        const { data: realCampaigns } = await supabase.from('campaigns').select('code');
-        const realCodes = new Set((realCampaigns || []).map((rc: any) => (rc.code || '').trim().toUpperCase()));
-
+        // Campaign profiles and memberships
         const dmCampaigns = Array.from(new Set([...(Array.isArray(data.dm_campaigns) ? data.dm_campaigns : []), ...memberRes.dmCampaigns]));
         const joinedCampaigns = Array.from(new Set([...(Array.isArray(data.joined_campaigns) ? data.joined_campaigns : []), ...memberRes.joinedCampaigns]));
-
-        const rawProfiles = data.campaign_profiles || {};
-        const cleanProfiles: Record<string, any> = {};
-        let profilesNeedClean = false;
-        for (const [key, val] of Object.entries(rawProfiles)) {
-          if (realCodes.has(key.toUpperCase())) {
-            cleanProfiles[key] = val;
-          } else {
-            profilesNeedClean = true;
-          }
-        }
-
-        if (profilesNeedClean) {
-          (async () => {
-            try {
-              await supabase
-                .from('user_accounts')
-                .update({
-                  campaign_profiles: cleanProfiles,
-                  updated_at: new Date().toISOString(),
-                })
-                .eq('id', data.id);
-            } catch {}
-          })();
-        }
+        const cleanProfiles: Record<string, any> = { ...(data.campaign_profiles || {}) };
 
         const result = {
           ...data,
@@ -2157,16 +2132,11 @@ export class SupabaseSyncService {
         const result = data.map((row) => {
           const rawDm = Array.isArray(row.dm_campaigns) ? row.dm_campaigns : [];
           const rawJoined = Array.isArray(row.joined_campaigns) ? row.joined_campaigns : [];
-          const rawProfiles = row.campaign_profiles || {};
+          const campaignProfiles = { ...(row.campaign_profiles || {}) };
 
-          const dmCampaigns = rawDm.filter((c: string) => realCodes.has(c.toUpperCase()));
-          const joinedCampaigns = rawJoined.filter((c: string) => realCodes.has(c.toUpperCase()));
-          const campaignProfiles = { ...rawProfiles };
-          Object.keys(campaignProfiles).forEach((pCode) => {
-            if (!realCodes.has(pCode.toUpperCase())) {
-              delete campaignProfiles[pCode];
-            }
-          });
+          // Only filter campaign memberships if realCodes returned active campaigns
+          const dmCampaigns = realCodes.size > 0 ? rawDm.filter((c: string) => realCodes.has(c.toUpperCase())) : rawDm;
+          const joinedCampaigns = realCodes.size > 0 ? rawJoined.filter((c: string) => realCodes.has(c.toUpperCase())) : rawJoined;
 
           return {
             id: row.id,
