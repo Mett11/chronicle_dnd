@@ -874,7 +874,7 @@ export function characterBioRowToModel(row: any): CharacterBio {
 export function characterBioModelToRow(bio: CharacterBio, campaignCode?: string): Record<string, any> {
   const code = campaignCode || bio.campaignCode || '';
   const cleanCode = code ? code.trim().toUpperCase() : '';
-  const charName = bio.characterName || (bio as any).name || 'Personaggio';
+  const charName = bio.characterName || (bio as any).name || '';
   const personalityTraitsArray = Array.isArray(bio.personalityTraits)
     ? bio.personalityTraits
     : (typeof (bio as any).personality === 'string' && (bio as any).personality.trim()
