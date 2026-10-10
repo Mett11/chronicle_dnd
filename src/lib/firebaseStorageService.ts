@@ -234,6 +234,14 @@ export class SupabaseStorageService {
           const mimeMatch = input.match(/:(.*?);/);
           if (mimeMatch) mimeType = mimeMatch[1];
           fileBlob = this.dataURLtoBlob(input);
+        } else if (input.startsWith('blob:')) {
+          try {
+            const resp = await fetch(input);
+            fileBlob = await resp.blob();
+            mimeType = fileBlob.type || 'image/png';
+          } catch (e) {
+            console.warn('[Supabase Storage] Failed fetching blob URL:', e);
+          }
         }
       }
 
@@ -305,7 +313,7 @@ export async function ensureMediaUploaded(
   if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
     return trimmed;
   }
-  if (trimmed.startsWith('data:')) {
+  if (trimmed.startsWith('data:') || trimmed.startsWith('blob:')) {
     try {
       const code = campaignCode || 'DEFAULT';
       const cdnUrl = await SupabaseStorageService.uploadMedia(
@@ -318,8 +326,8 @@ export async function ensureMediaUploaded(
         return cdnUrl;
       }
     } catch (err) {
-      console.error('[ensureMediaUploaded] Failed uploading base64 media:', err);
+      console.error('[ensureMediaUploaded] Failed uploading media:', err);
     }
   }
-  return trimmed.startsWith('data:') ? '' : trimmed;
+  return (trimmed.startsWith('data:') || trimmed.startsWith('blob:')) ? '' : trimmed;
 }

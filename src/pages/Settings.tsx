@@ -173,13 +173,15 @@ export function Settings() {
         if (Array.isArray(supaData.sessions) && supaData.sessions.length > 0) {
           const localSessCount = CampaignManager.getSessions().length;
           if (localSessCount === 0 || localSessCount < supaData.sessions.length) {
-            CampaignManager.saveSessionsLocalOnly(supaData.sessions);
+            const key = CampaignManager.getStorageKey('sessions');
+            try { localStorage.setItem(key, JSON.stringify(supaData.sessions)); } catch {}
           }
         }
         if (Array.isArray(supaData.worldLoreArticles) && supaData.worldLoreArticles.length > 0) {
           const localLoreCount = CampaignManager.getWorldLoreArticles().length;
           if (localLoreCount === 0 || localLoreCount < supaData.worldLoreArticles.length) {
-            CampaignManager.saveAllWorldLoreArticlesLocalOnly(supaData.worldLoreArticles);
+            const key = CampaignManager.getStorageKey('world_lore_articles');
+            try { localStorage.setItem(key, JSON.stringify(supaData.worldLoreArticles)); } catch {}
           }
         }
 
