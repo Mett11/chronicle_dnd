@@ -1581,6 +1581,12 @@ export function Storyline() {
   );
 
   useEffect(() => {
+    CampaignManager.loadSessionsAsync().then((loaded) => {
+      if (loaded && loaded.length > 0) {
+        setSessions(loaded);
+      }
+    }).catch(() => {});
+
     const handleDataUpdate = () => {
       setSessions(CampaignManager.getSessions());
       setChapters(CampaignManager.getChapters());

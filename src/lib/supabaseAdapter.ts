@@ -831,11 +831,13 @@ export function characterBioRowToModel(row: any): CharacterBio {
     interPartyRelations = extra.interPartyRelations;
   }
 
+  const resolvedCharName = row.character_name || row.name || extra.characterName || extra.name || '';
+
   return {
     playerId: row.player_id,
     campaignCode: row.campaign_code || undefined,
-    characterName: row.character_name || row.name || extra.characterName || extra.name || 'Personaggio',
-    name: row.name || row.character_name || extra.name || extra.characterName || 'Personaggio',
+    characterName: resolvedCharName,
+    name: resolvedCharName,
     avatarUrl: resolveStorageUrl(row.avatar_url || extra.avatarUrl, 'chronicle-media'),
     color: row.color || extra.color || '#6366f1',
     bio: row.bio || extra.bio || '',

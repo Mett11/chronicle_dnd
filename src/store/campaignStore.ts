@@ -354,15 +354,14 @@ export class CampaignManager {
     const globalStored = localStorage.getItem("chronicle_current_campaign");
     if (globalStored !== null) {
       const trimmed = globalStored.trim();
-      if (!trimmed || trimmed === '__NONE__') {
-        return null;
+      if (trimmed && trimmed !== '__NONE__') {
+        return trimmed.toUpperCase();
       }
-      return trimmed.toUpperCase();
     }
 
     // Fallback: check campaigns stored locally to avoid null active campaign
     try {
-      const key = "chronicle_campaigns";
+      const key = "chronicle_global_campaigns";
       const saved = localStorage.getItem(key);
       if (saved) {
         const camps = JSON.parse(saved);
@@ -2671,15 +2670,19 @@ export class CampaignManager {
     const profName = profile?.characterName?.trim();
     const emailPrefix = account.email ? account.email.split('@')[0].toLowerCase() : '';
 
-    const validProfName = profName && profName.toLowerCase() !== emailPrefix ? profName : null;
-    const validAccName = accName && accName !== 'Avventuriero' && accName !== 'Dungeon Master' && accName.toLowerCase() !== emailPrefix ? accName : null;
+    const validBioName = (bioName && bioName !== 'Personaggio' && bioName !== 'Avventuriero' && bioName.toLowerCase() !== emailPrefix) ? bioName : null;
+    const validMemName = (memName && memName !== 'Personaggio' && memName !== 'Avventuriero') ? memName : null;
+    const validProfName = profName && profName !== 'Personaggio' && profName.toLowerCase() !== emailPrefix ? profName : null;
+    const validAccName = accName && accName !== 'Personaggio' && accName !== 'Avventuriero' && accName !== 'Dungeon Master' && accName.toLowerCase() !== emailPrefix ? accName : null;
 
     // 1. Authoritative Character Name (character_bios as SSOT)
     const resolvedCharName =
-      bioName ||
-      memName ||
+      validBioName ||
+      validMemName ||
       validProfName ||
       validAccName ||
+      bioName ||
+      memName ||
       profName ||
       accName ||
       'Avventuriero';

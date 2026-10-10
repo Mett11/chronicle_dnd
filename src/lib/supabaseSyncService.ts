@@ -477,6 +477,7 @@ export class SupabaseSyncService {
           familyRelationsRes,
           membersRes,
           audioLogsRes,
+          worldLoreArticlesRes,
         ] = await Promise.all([
           supabase
             .from('chapters')
@@ -513,6 +514,11 @@ export class SupabaseSyncService {
           supabase
             .from('audio_logs')
             .select('id, campaign_code, title, audio_url, duration, recorded_by, lore_date, associated_type, associated_id, created_at, updated_at')
+            .or(activeOrCampFilter)
+            .then(res => res, () => ({ data: [] })),
+          supabase
+            .from('world_lore_articles')
+            .select('id, campaign_code, title, subtitle, summary, content, category_id, images, is_draft, bites, author_player_id, author_name, tags, related_entity_ids, order_index, updated_at')
             .or(activeOrCampFilter)
             .then(res => res, () => ({ data: [] })),
         ]);
@@ -581,10 +587,12 @@ export class SupabaseSyncService {
         noteRowToModel(row)
       );
 
-      // Heavy media/articles are lazy loaded on demand
+      // Heavy media are lazy loaded on demand
       const maps: WorldMap[] | undefined = undefined;
       const scrapbookItems: ScrapbookItem[] | undefined = undefined;
-      const worldLoreArticles: any[] | undefined = undefined;
+      const worldLoreArticles: any[] = (worldLoreArticlesRes?.data || []).map((row: any) =>
+        worldLoreArticleRowToModel(row)
+      ).filter(Boolean);
 
       const audioLogsRows = audioLogsRes?.data || [];
       const relationalAudioLogs: AudioLog[] = (audioLogsRows || []).map((row: any) =>

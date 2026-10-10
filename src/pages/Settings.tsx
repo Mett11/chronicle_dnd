@@ -170,12 +170,40 @@ export function Settings() {
       };
 
       if (supaData) {
+        if (Array.isArray(supaData.sessions) && supaData.sessions.length > 0) {
+          const localSessCount = CampaignManager.getSessions().length;
+          if (localSessCount === 0 || localSessCount < supaData.sessions.length) {
+            CampaignManager.saveSessionsLocalOnly(supaData.sessions);
+          }
+        }
+        if (Array.isArray(supaData.worldLoreArticles) && supaData.worldLoreArticles.length > 0) {
+          const localLoreCount = CampaignManager.getWorldLoreArticles().length;
+          if (localLoreCount === 0 || localLoreCount < supaData.worldLoreArticles.length) {
+            CampaignManager.saveAllWorldLoreArticlesLocalOnly(supaData.worldLoreArticles);
+          }
+        }
+
         if (supaData.aiConfig && typeof supaData.aiConfig === 'object') {
           CampaignManager.updateCampaignAiConfigFromRemote(activeCampaignCode, supaData.aiConfig);
           setCampaignAiConfig(CampaignManager.getCampaignAiConfig(activeCampaignCode));
         }
+
+        const updatedLocal = {
+          accounts: CampaignManager.getAccounts().length,
+          sessions: CampaignManager.getSessions().length,
+          chapters: CampaignManager.getChapters().length,
+          notes: CampaignManager.getNotes().length,
+          entities: CampaignManager.getEntities().length,
+          maps: CampaignManager.getMaps().length,
+          scrapbookItems: CampaignManager.getScrapbookItems().length,
+          audioLogs: CampaignManager.getAudioLogs().length,
+          characterBios: CampaignManager.getAllCharacterBios().length,
+          familyRelations: CampaignManager.getAllFamilyRelations().length,
+          worldLoreArticles: CampaignManager.getWorldLoreArticles().length,
+        };
+
         setSupabaseStats({
-          local,
+          local: updatedLocal,
           remote: {
             accounts: Array.isArray(remoteAccounts) ? remoteAccounts.length : 0,
             sessions: Array.isArray(supaData.sessions) ? supaData.sessions.length : 0,

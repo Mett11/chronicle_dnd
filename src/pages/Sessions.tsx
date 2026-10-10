@@ -342,7 +342,12 @@ export function Sessions() {
 
   useEffect(() => {
     refreshSessions();
-  }, [player]);
+    CampaignManager.loadSessionsAsync(activeCampaignCode).then((loaded) => {
+      if (loaded && loaded.length > 0) {
+        refreshSessions();
+      }
+    }).catch(() => {});
+  }, [player, activeCampaignCode]);
 
   useEffect(() => {
     const handleUpdate = () => {
@@ -729,7 +734,7 @@ export function Sessions() {
                 <button
                   id="btn-create-new-session"
                   type="button"
-                  onClick={handleOpenCreateModal}
+                  onClick={() => handleOpenCreateModal()}
                   className="px-2.5 sm:px-3.5 py-1.5 rounded-[2px] font-medium text-xs bg-primary text-surface-0 hover:bg-primary-hover transition-colors shadow-xs flex items-center gap-1 cursor-pointer shrink-0"
                   title="Nuova Sessione"
                 >
@@ -876,7 +881,7 @@ export function Sessions() {
                       {canCreateSession && (
                         <button
                           type="button"
-                          onClick={handleOpenCreateModal}
+                          onClick={() => handleOpenCreateModal()}
                           className="px-3 py-1.5 rounded bg-primary text-surface-0 text-xs font-mono font-semibold cursor-pointer hover:bg-primary-hover transition-colors"
                         >
                           + Registra Nuova Sessione
