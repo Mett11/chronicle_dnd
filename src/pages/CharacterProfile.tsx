@@ -531,7 +531,7 @@ export function CharacterProfile() {
     setIsEditProfileOpen(true);
   };
 
-  const handleSaveProfile = (e: React.FormEvent) => {
+  const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     const cleanName = editName.trim();
     const cleanAvatar = editAvatar.trim();
@@ -552,7 +552,7 @@ export function CharacterProfile() {
           avatarUrl: cleanAvatar,
         });
 
-        // Also synchronize CharacterBio for this player in this campaign
+        // Authoritative synchronization to CharacterBio for this player in this campaign (SSOT)
         const existingBio = CampaignManager.getCharacterBio(account.id);
         const updatedBio: CharacterBio = {
           ...(existingBio || { playerId: account.id }),
@@ -562,8 +562,9 @@ export function CharacterProfile() {
           name: cleanName || existingBio?.characterName || account.characterName || 'Personaggio',
           avatarUrl: cleanAvatar,
           color: cleanColor,
+          updatedAt: new Date().toISOString(),
         };
-        CampaignManager.saveCharacterBio(updatedBio);
+        await CampaignManager.saveCharacterBio(updatedBio);
         setCharacterBio(updatedBio);
       }
 
@@ -1111,39 +1112,47 @@ export function CharacterProfile() {
       <div className="bg-surface-1 border border-surface-2 rounded-xl p-5 sm:p-6 shadow-xs">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-5">
           <div className="flex items-center gap-4 sm:gap-5">
-            <div className="relative group shrink-0">
-              {targetPlayer.avatarUrl && targetPlayer.avatarUrl.trim() ? (
-                <img
-                  src={targetPlayer.avatarUrl}
-                  alt={targetPlayer.characterName}
-                  className="w-16 h-16 sm:w-20 sm:h-20 rounded-lg object-cover border-2 shadow-xs shrink-0 transition-colors"
-                  style={{ borderColor: targetPlayer.color || '#6366f1' }}
-                />
-              ) : (
-                <div
-                  className="w-16 h-16 sm:w-20 sm:h-20 rounded-lg flex items-center justify-center font-heading font-bold text-2xl sm:text-3xl text-surface-0 shadow-xs shrink-0 transition-colors"
-                  style={{ backgroundColor: targetPlayer.color || '#6366f1' }}
-                >
-                  {targetPlayer.characterName?.charAt(0).toUpperCase()}
+            {(() => {
+              const displayAvatar = characterBio?.avatarUrl?.trim() || targetPlayer.avatarUrl?.trim() || '';
+              const displayName = characterBio?.characterName?.trim() || characterBio?.name?.trim() || targetPlayer.characterName || 'Personaggio';
+              const displayColor = characterBio?.color || targetPlayer.color || '#6366f1';
+
+              return (
+                <div className="relative group shrink-0">
+                  {displayAvatar ? (
+                    <img
+                      src={displayAvatar}
+                      alt={displayName}
+                      className="w-16 h-16 sm:w-20 sm:h-20 rounded-lg object-cover border-2 shadow-xs shrink-0 transition-colors"
+                      style={{ borderColor: displayColor }}
+                    />
+                  ) : (
+                    <div
+                      className="w-16 h-16 sm:w-20 sm:h-20 rounded-lg flex items-center justify-center font-heading font-bold text-2xl sm:text-3xl text-surface-0 shadow-xs shrink-0 transition-colors"
+                      style={{ backgroundColor: displayColor }}
+                    >
+                      {displayName.charAt(0).toUpperCase()}
+                    </div>
+                  )}
+                  {isOwnProfile && (
+                    <button
+                      type="button"
+                      id="edit-profile-btn"
+                      onClick={handleOpenEditProfile}
+                      className="absolute -bottom-1 -right-1 p-1.5 bg-surface-2 hover:bg-surface-3 text-content-1 rounded-md border border-surface-3 shadow-xs transition-colors cursor-pointer"
+                      title="Modifica Identità & Colore Personaggio"
+                    >
+                      <Edit3 size={13} />
+                    </button>
+                  )}
                 </div>
-              )}
-              {isOwnProfile && (
-                <button
-                  type="button"
-                  id="edit-profile-btn"
-                  onClick={handleOpenEditProfile}
-                  className="absolute -bottom-1 -right-1 p-1.5 bg-surface-2 hover:bg-surface-3 text-content-1 rounded-md border border-surface-3 shadow-xs transition-colors cursor-pointer"
-                  title="Modifica Identità & Colore Personaggio"
-                >
-                  <Edit3 size={13} />
-                </button>
-              )}
-            </div>
+              );
+            })()}
 
             <div className="space-y-1 min-w-0">
               <div className="flex flex-wrap items-center gap-2">
                 <h1 className="text-xl sm:text-2xl font-heading font-bold text-content-1 truncate">
-                  {targetPlayer.characterName}
+                  {characterBio?.characterName?.trim() || characterBio?.name?.trim() || targetPlayer.characterName}
                 </h1>
                 {targetPlayer.isDm ? (
                   <span className="px-2 py-0.5 bg-primary/10 text-primary text-xs font-semibold rounded-md border border-primary/20 flex items-center gap-1">
@@ -1187,7 +1196,7 @@ export function CharacterProfile() {
                     id="view-mode-edit-btn"
                     onClick={() => {
                       setViewMode('edit');
-                      CampaignManager.saveUserPreferences({ viewMode: 'edit' });
+                      CampaignManager.saveUserPreferences({ reading: { dossierViewMode: 'edit' } });
                     }}
                     className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors flex items-center gap-1.5 cursor-pointer ${
                       viewMode === 'edit'
@@ -1204,7 +1213,7 @@ export function CharacterProfile() {
                     id="view-mode-read-btn"
                     onClick={() => {
                       setViewMode('read');
-                      CampaignManager.saveUserPreferences({ viewMode: 'read' });
+                      CampaignManager.saveUserPreferences({ reading: { dossierViewMode: 'read' } });
                     }}
                     className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors flex items-center gap-1.5 cursor-pointer ${
                       viewMode === 'read'

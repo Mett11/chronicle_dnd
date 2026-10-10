@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useCallback, useEffect } fr
 import { Player, UserAccount, UserPreferences } from '../types';
 import { CampaignManager } from '../store/campaignStore';
 import { CloudSyncService } from '../lib/cloudSync';
-import { UserPreferencesService, DEFAULT_USER_PREFERENCES } from '../lib/userPreferencesService';
+import { UserPreferencesService, DEFAULT_USER_PREFERENCES, normalizeUserPreferences } from '../lib/userPreferencesService';
 import { UserProfileSyncService } from '../lib/userProfileSync';
 import { ApiKeyManager } from '../lib/apiKeyManager';
 import { SupabaseSyncService } from '../lib/supabaseSyncService';
@@ -122,6 +122,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         let userAccount: UserAccount;
 
         if (existingSupa) {
+          const authPreferences = existingSupa.preferences
+            ? normalizeUserPreferences(existingSupa.preferences, DEFAULT_USER_PREFERENCES)
+            : DEFAULT_USER_PREFERENCES;
+
           userAccount = {
             id: existingSupa.id || uid,
             email: existingSupa.email || userEmail,
@@ -132,9 +136,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             dmCampaigns: Array.isArray(existingSupa.dmCampaigns) ? existingSupa.dmCampaigns : [],
             joinedCampaigns: Array.isArray(existingSupa.joinedCampaigns) ? existingSupa.joinedCampaigns : [],
             campaignProfiles: existingSupa.campaignProfiles || existingSupa.campaign_profiles || {},
-            preferences: (existingSupa.preferences && existingSupa.preferences.theme) ? existingSupa.preferences : DEFAULT_USER_PREFERENCES,
+            preferences: authPreferences,
             createdAt: existingSupa.createdAt || existingSupa.created_at || new Date().toISOString(),
           };
+
+          // Trigger one-time safe backfill from user_accounts.preferences into user_preferences
+          if (existingSupa.preferences) {
+            UserPreferencesService.backfillFromUserAccount(uid, existingSupa.preferences).catch(() => {});
+          }
         } else {
           let accounts = CampaignManager.getAccounts();
           let matched = accounts.find((a) => a.id === uid || (userEmail && a.email && a.email.toLowerCase() === userEmail));
@@ -396,6 +405,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         provider: 'google',
         options: {
           redirectTo: window.location.origin,
+          queryParams: {
+            prompt: 'select_account',
+            access_type: 'offline',
+          },
         },
       });
       if (error) {

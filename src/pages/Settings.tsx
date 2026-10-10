@@ -88,7 +88,7 @@ export function Settings() {
     }
   }, [player?.characterName, player?.avatarUrl, player?.color, account?.characterName, account?.avatarUrl, account?.color]);
 
-  const handleSaveCharacterProfile = (e?: React.FormEvent) => {
+  const handleSaveCharacterProfile = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!account) return;
     const cleanName = charNameInput.trim();
@@ -115,8 +115,9 @@ export function Settings() {
         name: cleanName || account.characterName || 'Personaggio',
         avatarUrl: cleanAvatar,
         color: cleanColor,
+        updatedAt: new Date().toISOString(),
       };
-      CampaignManager.saveCharacterBio(updatedBio);
+      await CampaignManager.saveCharacterBio(updatedBio);
     }
     const currentAcc = CampaignManager.getCurrentAccount();
     if (currentAcc && isSupabaseConfigured()) {

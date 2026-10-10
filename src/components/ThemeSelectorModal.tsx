@@ -32,7 +32,12 @@ export function ThemeSelectorModal({ isOpen, onClose }: ThemeSelectorModalProps)
   const handleSelectTheme = (theme: ClassTheme) => {
     applyTheme(theme.id);
     setCurrentTheme(theme);
-    CampaignManager.saveUserPreferences({ themeId: theme.id });
+    CampaignManager.saveUserPreferences({
+      theme: {
+        colorPalette: theme.mainColor,
+        darkMode: !theme.isLight,
+      },
+    });
   };
 
   const filteredThemes = useMemo(() => {

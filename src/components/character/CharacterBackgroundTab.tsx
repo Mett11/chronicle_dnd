@@ -178,8 +178,7 @@ export function CharacterBackgroundTab({
 
   useEffect(() => {
     const loaded = CampaignManager.getCharacterBio(player._id);
-    const resolvedBio: CharacterBio = loaded || {
-      playerId: player._id,
+    const resolvedBio: CharacterBio = {
       characterTitle: '',
       characterClass: '',
       characterRace: '',
@@ -197,11 +196,17 @@ export function CharacterBackgroundTab({
       timelineMemories: [],
       evolvingBeliefs: [],
       interPartyRelations: {},
+      ...(loaded || {}),
+      playerId: player._id,
+      characterName: loaded?.characterName || loaded?.name || player.characterName || 'Personaggio',
+      name: loaded?.name || loaded?.characterName || player.characterName || 'Personaggio',
+      avatarUrl: loaded?.avatarUrl || player.avatarUrl || '',
+      color: loaded?.color || player.color || '#6366f1',
     };
     setBio(resolvedBio);
     setDraft(resolvedBio);
     setIsEditing(false);
-  }, [player._id]);
+  }, [player._id, player.avatarUrl, player.characterName, player.color]);
 
   const handleStartEdit = () => {
     setDraft({ ...bio });
@@ -219,6 +224,10 @@ export function CharacterBackgroundTab({
     const toSave: CharacterBio = {
       ...draft,
       playerId: player._id,
+      characterName: draft.characterName || draft.name || player.characterName || 'Personaggio',
+      name: draft.name || draft.characterName || player.characterName || 'Personaggio',
+      avatarUrl: draft.avatarUrl || bio.avatarUrl || player.avatarUrl || '',
+      color: draft.color || bio.color || player.color || '#6366f1',
       updatedAt: new Date().toISOString(),
     };
     try {

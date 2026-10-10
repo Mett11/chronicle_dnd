@@ -3,6 +3,9 @@ import {
   Session,
   Entity,
   Player,
+  CampaignPlayer,
+  CampaignRole,
+  normalizeCampaignRole,
   PlayerPartyStatus,
   Category,
   UserAccount,
@@ -46,7 +49,7 @@ import {
 import { HARPTOS_CALENDAR } from "../lib/calendarPresets";
 import { parseLoreDateString, formatLoreDate } from "../lib/loreDateUtils";
 import { CloudSyncService, markLocalWrite } from "../lib/cloudSync";
-import { UserPreferencesService } from "../lib/userPreferencesService";
+import { UserPreferencesService, normalizeUserPreferences, DEFAULT_USER_PREFERENCES, normalizeUserId } from "../lib/userPreferencesService";
 import { IndexedDbStorage } from "../lib/indexedDbStorage";
 import { SupabaseSyncService } from "../lib/supabaseSyncService";
 import { FirebaseStorageService, pickBestImageUrl, ensureMediaUploaded } from "../lib/firebaseStorageService";
@@ -348,19 +351,6 @@ export class CampaignManager {
   }
 
   static getActiveCampaignCode(): string | null {
-    const activeAccount = this.getCurrentAccount();
-    if (activeAccount) {
-      const userKey = `chronicle_user_${activeAccount.id}_active_campaign`;
-      const stored = localStorage.getItem(userKey);
-      if (stored !== null) {
-        const trimmed = stored.trim();
-        if (!trimmed || trimmed === '__NONE__') {
-          return null;
-        }
-        return trimmed.toUpperCase();
-      }
-    }
-
     const globalStored = localStorage.getItem("chronicle_current_campaign");
     if (globalStored !== null) {
       const trimmed = globalStored.trim();
@@ -369,6 +359,20 @@ export class CampaignManager {
       }
       return trimmed.toUpperCase();
     }
+
+    // Fallback: check campaigns stored locally to avoid null active campaign
+    try {
+      const key = "chronicle_campaigns";
+      const saved = localStorage.getItem(key);
+      if (saved) {
+        const camps = JSON.parse(saved);
+        if (Array.isArray(camps) && camps.length > 0 && camps[0]?.code) {
+          const fallbackCode = String(camps[0].code).trim().toUpperCase();
+          localStorage.setItem("chronicle_current_campaign", fallbackCode);
+          return fallbackCode;
+        }
+      }
+    } catch {}
 
     return null;
   }
@@ -380,26 +384,11 @@ export class CampaignManager {
       localStorage.setItem("chronicle_current_campaign", cleanCode);
       setCached("chronicle_current_campaign", cleanCode);
       if (activeAccount) {
-        localStorage.setItem(
-          `chronicle_user_${activeAccount.id}_active_campaign`,
-          cleanCode,
-        );
-        setCached(
-          `chronicle_user_${activeAccount.id}_active_campaign`,
-          cleanCode,
-        );
         this.joinCampaign(activeAccount.id, cleanCode);
       }
     } else {
       localStorage.setItem("chronicle_current_campaign", "__NONE__");
       setCached("chronicle_current_campaign", "__NONE__");
-      if (activeAccount) {
-        localStorage.setItem(
-          `chronicle_user_${activeAccount.id}_active_campaign`,
-          "__NONE__",
-        );
-        setCached(`chronicle_user_${activeAccount.id}_active_campaign`, "__NONE__");
-      }
     }
     // Invalidate campaign-specific caches
     memoryCache.clear();
@@ -719,7 +708,8 @@ export class CampaignManager {
       const saved = localStorage.getItem("chronicle_global_campaigns");
       if (saved) {
         try {
-          return JSON.parse(saved);
+          const list: CampaignMeta[] = JSON.parse(saved);
+          return list.map((c) => ({ ...c, id: c.id || c.code }));
         } catch {}
       }
       return [];
@@ -731,10 +721,11 @@ export class CampaignManager {
   }
 
   static saveCampaignsLocalOnly(campaigns: CampaignMeta[]) {
-    setCached("chronicle_global_campaigns", campaigns);
+    const canonical = campaigns.map((c) => ({ ...c, id: c.id || c.code }));
+    setCached("chronicle_global_campaigns", canonical);
     localStorage.setItem(
       "chronicle_global_campaigns",
-      JSON.stringify(campaigns),
+      JSON.stringify(canonical),
     );
   }
 
@@ -881,9 +872,7 @@ export class CampaignManager {
     if (typeof window !== 'undefined' && code) {
       try {
         localFallback = JSON.parse(
-          localStorage.getItem(`chronicle_${code}_campaign_ai_config`) ||
-          localStorage.getItem('chronicle_campaign_ai_config') ||
-          '{}'
+          localStorage.getItem(`chronicle_${code}_campaign_ai_config`) || '{}'
         );
       } catch {}
     }
@@ -922,10 +911,9 @@ export class CampaignManager {
     const code = (campaignCode || this.getActiveCampaignCode() || '').trim().toUpperCase();
     if (typeof window !== 'undefined' && code) {
       try {
-        const prev = JSON.parse(localStorage.getItem(`chronicle_${code}_campaign_ai_config`) || localStorage.getItem('chronicle_campaign_ai_config') || '{}');
+        const prev = JSON.parse(localStorage.getItem(`chronicle_${code}_campaign_ai_config`) || '{}');
         const next = JSON.stringify({ ...prev, ...updates });
         localStorage.setItem(`chronicle_${code}_campaign_ai_config`, next);
-        localStorage.setItem('chronicle_campaign_ai_config', next);
       } catch {}
     }
 
@@ -942,7 +930,7 @@ export class CampaignManager {
     }
 
     if (updates.provider) {
-      this.saveUserPreferences({ aiProvider: updates.provider });
+      this.saveUserPreferences({ ai: { preferredProvider: updates.provider } });
     }
 
     if (isSupabaseConfigured() && code) {
@@ -972,10 +960,9 @@ export class CampaignManager {
     }
     if (typeof window !== 'undefined') {
       try {
-        const prev = JSON.parse(localStorage.getItem(`chronicle_${cleanCode}_campaign_ai_config`) || localStorage.getItem('chronicle_campaign_ai_config') || '{}');
+        const prev = JSON.parse(localStorage.getItem(`chronicle_${cleanCode}_campaign_ai_config`) || '{}');
         const next = JSON.stringify({ ...prev, ...remoteConfig });
         localStorage.setItem(`chronicle_${cleanCode}_campaign_ai_config`, next);
-        localStorage.setItem('chronicle_campaign_ai_config', next);
       } catch {}
       window.dispatchEvent(new CustomEvent('chronicle_campaigns_updated'));
       window.dispatchEvent(new CustomEvent('chronicle_ai_config_updated'));
@@ -1067,12 +1054,7 @@ export class CampaignManager {
     this.saveCampaignMembersLocalOnly(cleanCode, localMembers);
 
     if (isSupabaseConfigured()) {
-      Promise.resolve(
-        supabase.from('campaign_members')
-          .update({ role: newRole })
-          .eq('campaign_code', cleanCode)
-          .eq('user_id', account.id)
-      ).catch(() => {});
+      SupabaseSyncService.updateMemberRole(cleanCode, account.id, newRole).catch(() => {});
     }
 
     if (typeof window !== "undefined") {
@@ -2027,11 +2009,6 @@ export class CampaignManager {
       this.saveCampaigns(campaigns);
       CloudSyncService.syncCampaignsToCloud(campaigns);
     }
-    localStorage.setItem(
-      `chronicle_user_${accountId}_active_campaign`,
-      cleanCode,
-    );
-    setCached(`chronicle_user_${accountId}_active_campaign`, cleanCode);
     localStorage.setItem("chronicle_current_campaign", cleanCode);
     setCached("chronicle_current_campaign", cleanCode);
 
@@ -2233,7 +2210,7 @@ export class CampaignManager {
     this.saveCampaignMembersLocalOnly(cleanCode, localMembers);
 
     if (isSupabaseConfigured() && accountId && cleanCode) {
-      SupabaseSyncService.removeCampaignMember(cleanCode, accountId).catch(() => {});
+      SupabaseSyncService.removeCampaignMember(cleanCode, accountId, undefined, false).catch(() => {});
     }
 
     // If active campaign was this one, reset it
@@ -2258,9 +2235,7 @@ export class CampaignManager {
       this.saveCampaigns(campaigns);
     }
 
-    // Clean user's active campaign storage keys and purge campaign IndexedDB cache
-    localStorage.removeItem(`chronicle_user_${accountId}_active_campaign`);
-    setCached(`chronicle_user_${accountId}_active_campaign`, null);
+    // Clean active campaign storage and purge campaign IndexedDB cache
     IndexedDbStorage.clearCampaignKeys(cleanCode).catch(() => {});
 
     if (typeof window !== "undefined") {
@@ -2436,8 +2411,6 @@ export class CampaignManager {
     this.setCurrentAccount(match.id);
 
     // On login, reset active campaign selection so user always lands on the Campaign Selector list
-    localStorage.removeItem(`chronicle_user_${match.id}_active_campaign`);
-    setCached(`chronicle_user_${match.id}_active_campaign`, null);
     localStorage.removeItem("chronicle_current_campaign");
     setCached("chronicle_current_campaign", null);
 
@@ -2469,97 +2442,96 @@ export class CampaignManager {
   }
 
   static getUserPreferences(accountId?: string): UserPreferences {
-    const targetId = accountId || localStorage.getItem("chronicle_global_active_user_id");
-    const defaultPrefs: UserPreferences = {
-      theme: {
-        colorPalette: localStorage.getItem("chronicle_color_palette") || "indigo",
-        darkMode: localStorage.getItem("chronicle_dark_mode") !== "false",
-        campaignTitleFont: (localStorage.getItem("chronicle_campaign_title_font") as any) || "cinzel",
-        campaignTitleEffect: (localStorage.getItem("chronicle_campaign_title_effect") as any) || "glow",
-        titleUppercase: localStorage.getItem("chronicle_campaign_title_uppercase") !== "false",
-        titleTracking: (localStorage.getItem("chronicle_campaign_title_tracking") as any) || "normal",
-      },
-      ai: {
-        preferredProvider: (localStorage.getItem("chronicle_oracle_provider") as any) || "gemini",
-        oracleModel: localStorage.getItem("chronicle_oracle_gemini_model") || "gemini-3.8-flash",
-        extractorModel: localStorage.getItem("chronicle_extraction_gemini_model") || "gemini-3.8-flash",
-        temperature: 0.7,
-      },
-      reading: {
-        pillTagsEnabled: localStorage.getItem("chronicle_show_mention_tags") !== "false",
-        dossierViewMode: (localStorage.getItem("chronicle_profile_view_mode") as any) || "edit",
-        includeDmAsPlayer: localStorage.getItem("chronicle_reading_include_dm") !== "false",
-      },
-      themeId: localStorage.getItem("chronicle_theme_class") || "warlock",
-      aiProvider: (localStorage.getItem("chronicle_oracle_provider") as any) || "gemini",
-      oracleGeminiModel: localStorage.getItem("chronicle_oracle_gemini_model") || "gemini-3.8-flash",
-      oracleCloudflareModel: localStorage.getItem("chronicle_oracle_cloudflare_model") || "@cf/meta/llama-3.3-70b-instruct-fp8",
-      oracleOpenrouterModel: localStorage.getItem("chronicle_oracle_openrouter_model") || "openrouter/free",
-      extractionGeminiModel: localStorage.getItem("chronicle_extraction_gemini_model") || "gemini-3.8-flash",
-      extractionCloudflareModel: localStorage.getItem("chronicle_extraction_cloudflare_model") || "@cf/meta/llama-3.3-70b-instruct-fp8",
-      extractionOpenrouterModel: localStorage.getItem("chronicle_extraction_openrouter_model") || "openrouter/free",
-      showMentionTags: localStorage.getItem("chronicle_show_mention_tags") !== "false",
-      viewMode: (localStorage.getItem("chronicle_profile_view_mode") as any) || "edit",
-    };
+    const targetId = accountId || localStorage.getItem("chronicle_global_active_user_id") || undefined;
+    const norm = normalizeUserId(targetId);
 
-    if (!targetId) return defaultPrefs;
-    const accounts = this.getAccounts();
-    const match = accounts.find((a) => a.id === targetId);
-    if (!match?.preferences) return defaultPrefs;
+    // Prefer UserPreferencesService as the single source of truth
+    const userPrefs = UserPreferencesService.getLocalPreferences(norm);
 
-    return {
-      ...defaultPrefs,
-      ...match.preferences,
-    };
+    if (targetId) {
+      const accounts = this.getAccounts();
+      const match = accounts.find((a) => a.id === targetId);
+      if (match?.preferences) {
+        return normalizeUserPreferences(match.preferences, userPrefs);
+      }
+    }
+
+    return userPrefs;
   }
 
   static saveUserPreferences(
-    updates: Partial<UserPreferences>,
+    updates: {
+      theme?: Partial<UserPreferences['theme']>;
+      ai?: Partial<UserPreferences['ai']>;
+      reading?: Partial<UserPreferences['reading']>;
+      notifications?: Partial<UserPreferences['notifications']>;
+      // Backwards-compatible inputs for legacy components
+      [key: string]: any;
+    },
     accountId?: string
   ): UserPreferences {
-    const targetId = accountId || localStorage.getItem("chronicle_global_active_user_id");
-    const currentPrefs = this.getUserPreferences(targetId || undefined);
+    const targetId = accountId || localStorage.getItem("chronicle_global_active_user_id") || undefined;
+    const norm = normalizeUserId(targetId);
+
+    // Normalize input to nested structure
+    const nestedUpdates: {
+      theme?: Partial<UserPreferences['theme']>;
+      ai?: Partial<UserPreferences['ai']>;
+      reading?: Partial<UserPreferences['reading']>;
+      notifications?: Partial<UserPreferences['notifications']>;
+    } = {
+      theme: { ...(updates.theme || {}) },
+      ai: { ...(updates.ai || {}) },
+      reading: { ...(updates.reading || {}) },
+      notifications: { ...(updates.notifications || {}) },
+    };
+
+    // Map legacy flat properties if passed
+    if (updates.themeId) {
+      import("../lib/theme").then(({ applyTheme }) => applyTheme(updates.themeId));
+    }
+    if (updates.aiProvider) {
+      nestedUpdates.ai!.preferredProvider = updates.aiProvider;
+    }
+    if (updates.oracleGeminiModel) {
+      nestedUpdates.ai!.oracleGeminiModel = updates.oracleGeminiModel;
+      nestedUpdates.ai!.oracleModel = updates.oracleGeminiModel;
+    }
+    if (updates.oracleOpenrouterModel) {
+      nestedUpdates.ai!.oracleOpenrouterModel = updates.oracleOpenrouterModel;
+    }
+    if (updates.extractionGeminiModel) {
+      nestedUpdates.ai!.extractorGeminiModel = updates.extractionGeminiModel;
+      nestedUpdates.ai!.extractorModel = updates.extractionGeminiModel;
+    }
+    if (updates.extractionOpenrouterModel) {
+      nestedUpdates.ai!.extractorOpenrouterModel = updates.extractionOpenrouterModel;
+    }
+    if (updates.showMentionTags !== undefined) {
+      nestedUpdates.reading!.pillTagsEnabled = Boolean(updates.showMentionTags);
+    }
+    if (updates.viewMode) {
+      nestedUpdates.reading!.dossierViewMode = updates.viewMode;
+    }
+
+    // Persist via UserPreferencesService (local + remote public.user_preferences)
+    const current = UserPreferencesService.getLocalPreferences(norm);
     const updatedPrefs: UserPreferences = {
-      ...currentPrefs,
-      ...updates,
+      theme: { ...current.theme, ...(nestedUpdates.theme || {}) },
+      ai: { ...current.ai, ...(nestedUpdates.ai || {}) },
+      reading: { ...current.reading, ...(nestedUpdates.reading || {}) },
+      notifications: {
+        dismissedByCampaign: {
+          ...(current.notifications?.dismissedByCampaign || {}),
+          ...(nestedUpdates.notifications?.dismissedByCampaign || {}),
+        },
+      },
       updatedAt: new Date().toISOString(),
     };
 
-    // Keep localStorage in sync immediately for fast offline & synchronous access
-    try {
-      if (updatedPrefs.themeId) {
-        localStorage.setItem("chronicle_theme_class", updatedPrefs.themeId);
-      }
-      if (updatedPrefs.aiProvider) {
-        localStorage.setItem("chronicle_oracle_provider", updatedPrefs.aiProvider);
-        localStorage.setItem("chronicle_extraction_provider", updatedPrefs.aiProvider);
-      }
-      if (updatedPrefs.oracleGeminiModel) {
-        localStorage.setItem("chronicle_oracle_gemini_model", updatedPrefs.oracleGeminiModel);
-      }
-      if (updatedPrefs.oracleCloudflareModel) {
-        localStorage.setItem("chronicle_oracle_cloudflare_model", updatedPrefs.oracleCloudflareModel);
-      }
-      if (updatedPrefs.oracleOpenrouterModel) {
-        localStorage.setItem("chronicle_oracle_openrouter_model", updatedPrefs.oracleOpenrouterModel);
-      }
-      if (updatedPrefs.extractionGeminiModel) {
-        localStorage.setItem("chronicle_extraction_gemini_model", updatedPrefs.extractionGeminiModel);
-      }
-      if (updatedPrefs.extractionCloudflareModel) {
-        localStorage.setItem("chronicle_extraction_cloudflare_model", updatedPrefs.extractionCloudflareModel);
-      }
-      if (updatedPrefs.extractionOpenrouterModel) {
-        localStorage.setItem("chronicle_extraction_openrouter_model", updatedPrefs.extractionOpenrouterModel);
-      }
-      if (updatedPrefs.showMentionTags !== undefined) {
-        localStorage.setItem("chronicle_show_mention_tags", String(updatedPrefs.showMentionTags));
-      }
-      if (updatedPrefs.viewMode) {
-        localStorage.setItem("chronicle_profile_view_mode", updatedPrefs.viewMode);
-      }
-    } catch {}
+    UserPreferencesService.saveUserPreferences(norm, nestedUpdates);
 
+    // Update memory account record
     if (targetId) {
       const accounts = this.getAccounts();
       const idx = accounts.findIndex((a) => a.id === targetId);
@@ -2587,49 +2559,15 @@ export class CampaignManager {
 
   static hydrateUserPreferences(account: UserAccount) {
     if (!account?.preferences) return;
-    const p = account.preferences;
-    try {
-      if (p.themeId) {
-        localStorage.setItem("chronicle_theme_class", p.themeId);
-        import("../lib/theme").then(({ applyTheme }) => applyTheme(p.themeId!));
-      }
-      if (p.aiProvider) {
-        localStorage.setItem("chronicle_oracle_provider", p.aiProvider);
-        localStorage.setItem("chronicle_extraction_provider", p.aiProvider);
-      }
-      if (p.oracleGeminiModel) {
-        localStorage.setItem("chronicle_oracle_gemini_model", p.oracleGeminiModel);
-      }
-      if (p.oracleCloudflareModel) {
-        localStorage.setItem("chronicle_oracle_cloudflare_model", p.oracleCloudflareModel);
-      }
-      if (p.oracleOpenrouterModel) {
-        localStorage.setItem("chronicle_oracle_openrouter_model", p.oracleOpenrouterModel);
-      }
-      if (p.extractionGeminiModel) {
-        localStorage.setItem("chronicle_extraction_gemini_model", p.extractionGeminiModel);
-      }
-      if (p.extractionCloudflareModel) {
-        localStorage.setItem("chronicle_extraction_cloudflare_model", p.extractionCloudflareModel);
-      }
-      if (p.extractionOpenrouterModel) {
-        localStorage.setItem("chronicle_extraction_openrouter_model", p.extractionOpenrouterModel);
-      }
-      if (p.showMentionTags !== undefined) {
-        localStorage.setItem("chronicle_show_mention_tags", String(p.showMentionTags));
-      }
-      if (p.viewMode) {
-        localStorage.setItem("chronicle_profile_view_mode", p.viewMode);
-      }
-    } catch {}
+    const norm = normalizeUserId(account.id);
+    const normalized = normalizeUserPreferences(account.preferences, DEFAULT_USER_PREFERENCES);
+    UserPreferencesService.applyThemeToDOM(normalized.theme);
+
+    // Backfill to authoritative user_preferences table in background
+    UserPreferencesService.backfillFromUserAccount(norm, account.preferences).catch(() => {});
   }
 
   static clearCurrentAccount() {
-    const current = this.getCurrentAccount();
-    if (current) {
-      localStorage.removeItem(`chronicle_user_${current.id}_active_campaign`);
-      setCached(`chronicle_user_${current.id}_active_campaign`, null);
-    }
     localStorage.removeItem("chronicle_global_active_user_id");
     localStorage.removeItem("chronicle_current_campaign");
     setCached("chronicle_current_campaign", null);
@@ -2727,8 +2665,8 @@ export class CampaignManager {
       return (cleanId && bPid === cleanId) || (cleanEmail && bEmail && bEmail === cleanEmail);
     });
 
-    const memName = campaignMember?.characterName?.trim();
     const bioName = charBio?.characterName?.trim() || charBio?.name?.trim();
+    const memName = campaignMember?.characterName?.trim();
     const accName = account.characterName?.trim();
     const profName = profile?.characterName?.trim();
     const emailPrefix = account.email ? account.email.split('@')[0].toLowerCase() : '';
@@ -2736,20 +2674,41 @@ export class CampaignManager {
     const validProfName = profName && profName.toLowerCase() !== emailPrefix ? profName : null;
     const validAccName = accName && accName !== 'Avventuriero' && accName !== 'Dungeon Master' && accName.toLowerCase() !== emailPrefix ? accName : null;
 
+    // 1. Authoritative Character Name (character_bios as SSOT)
     const resolvedCharName =
-      memName ||
-      validAccName ||
-      validProfName ||
       bioName ||
+      memName ||
+      validProfName ||
+      validAccName ||
       profName ||
       accName ||
       'Avventuriero';
-    const resolvedAvatar = profile?.avatarUrl !== undefined ? profile.avatarUrl : (charBio?.avatarUrl || account.avatarUrl);
-    const resolvedColorFinal = profile?.color || charBio?.color || resolvedColor;
+
+    // 2. Authoritative Avatar (character_bios as SSOT, with automatic backfill from profile/account)
+    const bioAvatar = charBio?.avatarUrl?.trim() || '';
+    const profAvatar = profile?.avatarUrl?.trim() || '';
+    const accAvatar = account.avatarUrl?.trim() || '';
+    const resolvedAvatar = bioAvatar || profAvatar || accAvatar || '';
+
+    // Automatic backfill: If charBio exists but was missing avatar, populate it so character_bios stays up-to-date
+    if (charBio && !bioAvatar && (profAvatar || accAvatar)) {
+      charBio.avatarUrl = profAvatar || accAvatar;
+      if (!charBio.characterName) charBio.characterName = resolvedCharName;
+      if (!charBio.name) charBio.name = resolvedCharName;
+      this.saveCharacterBio(charBio).catch(() => {});
+    }
+
+    const resolvedColorFinal = charBio?.color || profile?.color || resolvedColor;
+    const role: CampaignRole = isDm ? 'dm' : (isCoDm ? 'co_dm' : 'player');
 
     return {
+      id: account.id,
       _id: account.id,
+      userId: account.id,
+      campaignCode: activeCode || undefined,
+      role,
       characterName: resolvedCharName,
+      name: resolvedCharName,
       email: account.email,
       isDm,
       isCoDm,
@@ -2757,8 +2716,12 @@ export class CampaignManager {
       color: resolvedColorFinal,
       avatarUrl: resolvedAvatar,
       status,
+      partyStatus: status,
       tags: resolvedTags,
       aliases: resolvedAliases,
+      permissions: campaignMember?.permissions,
+      bio: charBio || undefined,
+      characterBio: charBio || undefined,
     };
   }
 
@@ -2782,6 +2745,44 @@ export class CampaignManager {
     });
 
     const accounts = this.getAccounts();
+
+    // Auto-backfill: ensure all accounts marked as joined or DM in this campaign are registered in campaign_members
+    let membersModified = false;
+    const currentMembersList = [...members];
+    accounts.forEach((a) => {
+      if (!a || !a.id) return;
+      const lowId = String(a.id).toLowerCase();
+      const lowEmail = a.email ? String(a.email).toLowerCase() : '';
+      if (deletedAccounts.has(lowId) || (lowEmail && deletedAccounts.has(lowEmail))) return;
+      if (expelledSet.has(lowId) || (lowEmail && expelledSet.has(lowEmail))) return;
+
+      const isMember = memberMap.has(lowId) || (lowEmail && memberMap.has(lowEmail));
+      const isJoined = a.joinedCampaigns?.some((c) => c.toUpperCase() === cleanActiveCode);
+      const isDm = a.dmCampaigns?.some((c) => c.toUpperCase() === cleanActiveCode) || (campaign?.dmId && (campaign.dmId === a.id || (campaign.dmEmail && a.email && campaign.dmEmail.toLowerCase() === a.email.toLowerCase())));
+
+      if (!isMember && (isJoined || isDm)) {
+        const newRecord: CampaignMemberRecord = {
+          campaignCode: cleanActiveCode,
+          userId: a.id,
+          role: isDm ? 'dm' : 'player',
+          characterName: a.characterName || 'Avventuriero',
+          status: 'active',
+          createdAt: new Date().toISOString(),
+        };
+        currentMembersList.push(newRecord);
+        memberMap.set(lowId, newRecord);
+        if (lowEmail) memberMap.set(lowEmail, newRecord);
+        membersModified = true;
+        if (isSupabaseConfigured()) {
+          SupabaseSyncService.joinCampaignMember(cleanActiveCode, a.id, newRecord.role, newRecord.characterName).catch(() => {});
+        }
+      }
+    });
+
+    if (membersModified) {
+      this.saveCampaignMembersLocalOnly(cleanActiveCode, currentMembersList);
+    }
+
     const resultPlayers = accounts
       .filter((a) => {
         if (!a || !a.id) return false;
@@ -2794,13 +2795,8 @@ export class CampaignManager {
         const memRec = memberMap.get(lowId) || (lowEmail ? memberMap.get(lowEmail) : undefined);
         const isDm = a.dmCampaigns?.some((c) => c.toUpperCase() === cleanActiveCode) || campaign?.dmId === a.id || memRec?.role === 'dm';
 
-        if (memberMap.size > 0) {
-          // Relational single source of truth: strictly filter to verified campaign members and DM
-          return Boolean((isMember && memRec?.status !== 'expelled') || isDm);
-        }
-
-        const isJoined = a.joinedCampaigns?.some((c) => c.toUpperCase() === cleanActiveCode);
-        return Boolean(isJoined || isDm);
+        // Relational single source of truth: strictly filter to verified campaign members and DM
+        return Boolean((isMember && memRec?.status !== 'expelled') || isDm);
       })
       .map((a) => {
         const p = this.accountToPlayer(a);
@@ -2819,20 +2815,37 @@ export class CampaignManager {
 
     // Also include any members from campaign_members that are not in local accounts array
     const coveredIds = new Set(resultPlayers.map((p) => String(p._id).toLowerCase()));
+    const allBios = this.getAllCharacterBios();
     members.forEach((m) => {
       const mId = String(m.userId || '').toLowerCase();
       if (!mId) return;
       if (m.status !== 'expelled' && !coveredIds.has(mId)) {
+        const mBio = allBios.find(
+          (b) => b && (String(b.playerId || (b as any).player_id || '').toLowerCase() === mId)
+        );
+        const normRole = normalizeCampaignRole(m.role);
+        const isDm = normRole === 'dm';
+        const isCoDm = normRole === 'co_dm';
+        const charName = mBio?.characterName || mBio?.name || m.characterName || 'Avventuriero';
+
         resultPlayers.push({
+          id: m.userId,
           _id: m.userId,
-          name: m.characterName || 'Avventuriero',
-          characterName: m.characterName || 'Avventuriero',
-          isDm: m.role === 'dm',
-          isCoDm: m.role === 'co-dm' || m.role === 'comaster',
-          isCoMaster: m.role === 'co-dm' || m.role === 'comaster',
-          color: '#6366f1',
-          role: m.role,
-        } as any);
+          userId: m.userId,
+          campaignCode: cleanActiveCode,
+          name: charName,
+          characterName: charName,
+          role: normRole,
+          isDm,
+          isCoDm,
+          isCoMaster: isCoDm,
+          color: mBio?.color || '#6366f1',
+          avatarUrl: mBio?.avatarUrl || '',
+          status: m.status || 'active',
+          permissions: m.permissions,
+          bio: mBio || undefined,
+          characterBio: mBio || undefined,
+        } as Player);
         coveredIds.add(mId);
       }
     });
@@ -3722,34 +3735,48 @@ export class CampaignManager {
       }
     }
 
+    const sessId = "sess_" + Date.now();
+    const realDate = session.date || session.date_str || new Date().toISOString().split("T")[0];
+    const fantasyDate = loreDate || session.calendar_date || "";
+    const sessionSummary = typeof session.summary === 'string' && session.summary.trim()
+      ? session.summary.trim()
+      : (typeof (session as any).recap === 'string' ? (session as any).recap.trim() : '');
+    const sessionPlotEvents = session.plot_events || session.events || [];
+
     const newSession: Session = {
-      _id: "sess_" + Date.now(),
+      id: sessId,
+      _id: sessId,
       number:
         session.number ||
         (sessions.length > 0
           ? Math.max(...sessions.map((s) => s.number)) + 1
           : 1),
-      date: session.date || new Date().toISOString().split("T")[0],
+      date: realDate,
+      date_str: realDate,
       title: session.title || "Nuova Sessione",
       sessionType: session.sessionType || "mixed",
       chapterId: session.chapterId,
       chapterName: session.chapterName,
-      loreDate: loreDate || "",
+      loreDate: fantasyDate,
+      calendar_date: fantasyDate,
       loreStartDay,
       loreEndDay,
       loreMonth,
       loreEndMonth,
       loreYear,
       loreEndYear,
+      summary: sessionSummary,
       recap: session.recap || [
         {
           _type: "block",
-          children: [{ _type: "span", text: "Nessun riassunto inserito." }],
+          children: [{ _type: "span", text: sessionSummary || "Nessun riassunto inserito." }],
         },
       ],
-      events: session.events || [],
+      plot_events: sessionPlotEvents,
+      events: sessionPlotEvents,
       images: session.images || [],
       attendees: session.attendees || players,
+      audioLogs: session.audioLogs || [],
     };
     const updated = [newSession, ...sessions].sort(
       (a, b) => b.number - a.number,
@@ -3792,11 +3819,24 @@ export class CampaignManager {
 
   static updateSession(id: string, updates: Partial<Session>): Session | null {
     const sessions = this.getSessions();
-    const index = sessions.findIndex((s) => s._id === id);
+    const index = sessions.findIndex((s) => s._id === id || s.id === id);
     if (index === -1) return null;
 
     const cal = this.getCalendar();
     let updatedSession = { ...sessions[index], ...updates };
+
+    if (!updatedSession.id) updatedSession.id = updatedSession._id || id;
+    if (!updatedSession._id) updatedSession._id = updatedSession.id;
+
+    if (updates.date_str && !updates.date) updatedSession.date = updates.date_str;
+    if (updates.date && !updates.date_str) updatedSession.date_str = updates.date;
+    if (updates.calendar_date && !updates.loreDate) updatedSession.loreDate = updates.calendar_date;
+    if (updates.loreDate && !updates.calendar_date) updatedSession.calendar_date = updates.loreDate;
+    if (updates.summary && !updates.recap) {
+      updatedSession.recap = [{ _type: 'block', children: [{ _type: 'span', text: updates.summary }] }];
+    }
+    if (updates.plot_events && !updates.events) updatedSession.events = updates.plot_events;
+    if (updates.events && !updates.plot_events) updatedSession.plot_events = updates.events;
 
     // Ensure lore metadata is synchronized
     if (
@@ -3866,22 +3906,25 @@ export class CampaignManager {
     const seenNames = new Map<string, string>();
 
     chapters.forEach((c) => {
-      if (!c || !c.name) return;
-      const rawName = String(c.name).trim();
-      const normName = rawName.toLowerCase();
-      if (!normName) return;
+      if (!c) return;
+      const rawTitle = String(c.title || c.name || '').trim();
+      if (!rawTitle) return;
+      const normName = rawTitle.toLowerCase();
 
       const rawCover = (c.coverImageUrl && typeof c.coverImageUrl === 'string' ? c.coverImageUrl.trim() : '') ||
         ((c as any).imageUrl && typeof (c as any).imageUrl === 'string' ? (c as any).imageUrl.trim() : '');
 
       const existingId = seenNames.get(normName) || (c.id && map.has(c.id) ? c.id : undefined);
+      const rawSynopsis = (c.synopsis && c.synopsis.trim()) || (c.description && c.description.trim()) || "";
+      const rawOrder = Number(c.orderIndex ?? c.order ?? 1);
+
       if (existingId && map.has(existingId)) {
         const prev = map.get(existingId)!;
         const prevCover = (prev.coverImageUrl && typeof prev.coverImageUrl === 'string' ? prev.coverImageUrl.trim() : '') ||
           ((prev as any).imageUrl && typeof (prev as any).imageUrl === 'string' ? (prev as any).imageUrl.trim() : '');
 
         const resolvedCover = pickBestImageUrl(rawCover, prevCover);
-        const resolvedDesc = (c.description && c.description.trim()) || (prev.description && prev.description.trim()) || "";
+        const resolvedDesc = rawSynopsis || (prev.synopsis && prev.synopsis.trim()) || (prev.description && prev.description.trim()) || "";
         const resolvedColor = c.color || prev.color || "#D4AF37";
         const canonicalId = (prev.id && !prev.id.startsWith('chap_0') && !prev.id.startsWith('chap_1') && !prev.id.startsWith('chap_2'))
           ? prev.id
@@ -3891,27 +3934,34 @@ export class CampaignManager {
           ...prev,
           ...c,
           id: canonicalId,
-          name: rawName || prev.name,
+          title: rawTitle,
+          name: rawTitle,
+          synopsis: resolvedDesc,
           description: resolvedDesc,
           coverImageUrl: resolvedCover,
           color: resolvedColor,
-          order: c.order || prev.order || 1,
+          orderIndex: rawOrder || prev.orderIndex || prev.order || 1,
+          order: rawOrder || prev.orderIndex || prev.order || 1,
         });
       } else {
         const cleanId = c.id || "chap_" + Date.now();
         const item: CampaignChapter = {
           ...c,
           id: cleanId,
-          name: rawName,
+          title: rawTitle,
+          name: rawTitle,
+          synopsis: rawSynopsis,
+          description: rawSynopsis,
           coverImageUrl: rawCover,
-          order: Number(c.order || 1),
+          orderIndex: rawOrder,
+          order: rawOrder,
         };
         map.set(cleanId, item);
         seenNames.set(normName, cleanId);
       }
     });
 
-    return Array.from(map.values()).sort((a, b) => (a.order || 0) - (b.order || 0));
+    return Array.from(map.values()).sort((a, b) => (a.orderIndex || a.order || 0) - (b.orderIndex || b.order || 0));
   }
 
   static saveChapters(chapters: CampaignChapter[]) {
@@ -3930,17 +3980,26 @@ export class CampaignManager {
 
   static addChapter(chapter: Partial<CampaignChapter>): CampaignChapter {
     const chapters = this.getChapters();
+    const chapId = chapter.id || "chap_" + Date.now();
+    const chapTitle = (chapter.title || chapter.name || "Nuovo Capitolo").trim();
+    const chapSynopsis = (chapter.synopsis || chapter.description || "").trim();
+    const chapOrder = chapter.orderIndex !== undefined ? chapter.orderIndex : (chapter.order !== undefined ? chapter.order : chapters.length + 1);
+
     const newChapter: CampaignChapter = {
-      id: chapter.id || "chap_" + Date.now(),
-      name: chapter.name?.trim() || "Nuovo Capitolo",
-      description: chapter.description?.trim() || "",
+      id: chapId,
+      title: chapTitle,
+      name: chapTitle,
+      synopsis: chapSynopsis,
+      description: chapSynopsis,
       color: chapter.color || "#D4AF37",
       coverImageUrl: chapter.coverImageUrl || "",
-      order: chapter.order !== undefined ? chapter.order : chapters.length + 1,
+      orderIndex: chapOrder,
+      order: chapOrder,
+      status: chapter.status || "in_progress",
       createdAt: new Date().toISOString(),
     };
     const updated = [...chapters, newChapter].sort(
-      (a, b) => (a.order || 0) - (b.order || 0),
+      (a, b) => (a.orderIndex || a.order || 0) - (b.orderIndex || b.order || 0),
     );
     this.saveChaptersLocalOnly(updated);
     if (isSupabaseConfigured()) {
@@ -3969,7 +4028,21 @@ export class CampaignManager {
     if (chapters[index].coverImageUrl && updates.coverImageUrl !== undefined && updates.coverImageUrl !== chapters[index].coverImageUrl) {
       FirebaseStorageService.deleteMedia(chapters[index].coverImageUrl).catch(() => {});
     }
-    const updated = { ...chapters[index], ...updates };
+
+    const chapTitle = (updates.title || updates.name || chapters[index].title || chapters[index].name || "Capitolo").trim();
+    const chapSynopsis = updates.synopsis !== undefined ? updates.synopsis : (updates.description !== undefined ? updates.description : (chapters[index].synopsis || chapters[index].description || ""));
+    const chapOrder = updates.orderIndex !== undefined ? updates.orderIndex : (updates.order !== undefined ? updates.order : (chapters[index].orderIndex || chapters[index].order || 1));
+
+    const updated: CampaignChapter = {
+      ...chapters[index],
+      ...updates,
+      title: chapTitle,
+      name: chapTitle,
+      synopsis: chapSynopsis,
+      description: chapSynopsis,
+      orderIndex: chapOrder,
+      order: chapOrder,
+    };
     chapters[index] = updated;
     this.saveChaptersLocalOnly(chapters);
     if (isSupabaseConfigured()) {
@@ -5520,6 +5593,36 @@ export class CampaignManager {
           }
         }
       } catch {}
+    }
+
+    // Smart fallback 4 (Automatic Backfill): Synthesize from account & campaignProfiles if available
+    if (targetAccount) {
+      const activeCode = (this.getActiveCampaignCode() || '').trim().toUpperCase();
+      const profile = activeCode && targetAccount.campaignProfiles
+        ? targetAccount.campaignProfiles[activeCode]
+        : null;
+      const charName = profile?.characterName || targetAccount.characterName || 'Personaggio';
+      const avatarUrl = profile?.avatarUrl || targetAccount.avatarUrl || '';
+      const color = profile?.color || targetAccount.color || '#6366f1';
+
+      if (avatarUrl || (charName && charName !== 'Personaggio')) {
+        const syntheticBio: CharacterBio = {
+          playerId,
+          campaignCode: activeCode || undefined,
+          characterName: charName,
+          name: charName,
+          avatarUrl,
+          color,
+          updatedAt: new Date().toISOString(),
+        };
+        const allBios = this.getAllCharacterBios();
+        allBios.push(syntheticBio);
+        this.saveAllCharacterBiosLocalOnly(allBios);
+        if (isSupabaseConfigured() && activeCode) {
+          SupabaseSyncService.saveCharacterBio(activeCode, syntheticBio).catch(() => {});
+        }
+        return syntheticBio;
+      }
     }
 
     return null;

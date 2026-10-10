@@ -20,6 +20,8 @@ import {
   characterBioModelToRow,
   worldLoreArticleRowToModel,
   worldLoreArticleModelToRow,
+  campaignMemberRowToModel,
+  campaignMemberModelToRow,
   resolveStorageUrl,
 } from './supabaseAdapter';
 import {
@@ -30,7 +32,11 @@ import {
   WorldMap,
   ScrapbookItem,
   AudioLog,
+  CampaignMemberRecord,
   CampaignMemberPermissions,
+  CampaignRole,
+  CampaignPlayer,
+  normalizeCampaignRole,
 } from '../types';
 
 /**
@@ -470,6 +476,7 @@ export class SupabaseSyncService {
           characterBiosRes,
           familyRelationsRes,
           membersRes,
+          audioLogsRes,
         ] = await Promise.all([
           supabase
             .from('chapters')
@@ -501,6 +508,11 @@ export class SupabaseSyncService {
           supabase
             .from('campaign_members')
             .select('campaign_code, user_id, role, character_name, status, permissions, created_at')
+            .or(activeOrCampFilter)
+            .then(res => res, () => ({ data: [] })),
+          supabase
+            .from('audio_logs')
+            .select('id, campaign_code, title, audio_url, duration, recorded_by, lore_date, associated_type, associated_id, created_at, updated_at')
             .or(activeOrCampFilter)
             .then(res => res, () => ({ data: [] })),
         ]);
@@ -572,8 +584,56 @@ export class SupabaseSyncService {
       // Heavy media/articles are lazy loaded on demand
       const maps: WorldMap[] | undefined = undefined;
       const scrapbookItems: ScrapbookItem[] | undefined = undefined;
-      const audioLogs: AudioLog[] | undefined = undefined;
       const worldLoreArticles: any[] | undefined = undefined;
+
+      const audioLogsRows = audioLogsRes?.data || [];
+      const relationalAudioLogs: AudioLog[] = (audioLogsRows || []).map((row: any) =>
+        audioLogRowToModel(row)
+      );
+
+      // Reconcile relational audio_logs with sessions and trigger backfill for unmigrated session audio
+      const cCode = (campRow?.code || campaignCode || '').trim().toUpperCase();
+      const backfillLogs: AudioLog[] = [];
+
+      sessions.forEach((s) => {
+        const sessId = String(s.id || s._id || '');
+        const sessionAudio = relationalAudioLogs.filter((al) =>
+          al.associatedId === sessId || al.associatedId === s._id || (al.associatedType === 'session' && al.associatedId === String(s.number))
+        );
+        const existingLogs = s.audioLogs || [];
+        const mergedMap = new Map<string, AudioLog>();
+        sessionAudio.forEach((a) => mergedMap.set(a.id, a));
+
+        existingLogs.forEach((legacy) => {
+          if (!mergedMap.has(legacy.id) && !Array.from(mergedMap.values()).some((m) => m.audioUrl === legacy.audioUrl)) {
+            const canonicalLog: AudioLog = {
+              ...legacy,
+              id: legacy.id || `aud_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+              associatedType: 'session',
+              associatedId: sessId,
+              loreDate: legacy.loreDate || s.calendar_date || s.loreDate,
+              createdAt: legacy.createdAt || new Date().toISOString(),
+            };
+            mergedMap.set(canonicalLog.id, canonicalLog);
+            backfillLogs.push(canonicalLog);
+          }
+        });
+
+        s.audioLogs = Array.from(mergedMap.values());
+      });
+
+      // Background backfill unmigrated audio logs into relational public.audio_logs
+      if (backfillLogs.length > 0 && cCode) {
+        const payloads = backfillLogs.map((log) => audioLogModelToRow(log, cCode));
+        safeUpsert('audio_logs', payloads, { onConflict: 'id' }).then(() => {
+          const sIds = Array.from(new Set(backfillLogs.map((b) => b.associatedId).filter(Boolean)));
+          if (sIds.length > 0) {
+            Promise.resolve(supabase.from('sessions').update({ audio_url: null, audio_logs: [] }).in('id', sIds)).catch(() => {});
+          }
+        }).catch(() => {});
+      }
+
+      const audioLogs: AudioLog[] = Array.from(new Set([...relationalAudioLogs, ...backfillLogs]));
 
       // --- HYDRATION & RECONCILIATION FOR RELATIONAL TABLES ---
       const characterBiosRows = characterBiosRes?.data || [];
@@ -585,39 +645,42 @@ export class SupabaseSyncService {
 
       let familyRelations: any[] = [];
       if (familyRelationsRows && familyRelationsRows.length > 0) {
-        familyRelations = familyRelationsRows.map((row: any) => ({
-          id: row.id,
-          playerId: row.source_entity_id,
-          linkedEntityId: row.target_entity_id,
-          relationshipType: row.relationship_type,
-          bio: row.description || '',
-          sharedWithParty: !row.is_secret,
-          name: row.name || '',
-          avatarUrl: row.avatar_url || '',
-          customRelationshipLabel: row.custom_relationship_label || '',
-          titleOrRole: row.title_or_role || '',
-          generationCategory: row.generation_category || 'same_generation',
-          genealogyRole: row.genealogy_role || '',
-          sideOfFamily: row.side_of_family || 'unspecified',
-          status: row.status || 'alive',
-          secondParentId: row.second_parent_id || '',
-          otherParentName: row.other_parent_name || '',
-          linkedPlayerId: row.linked_player_id || '',
-          tags: Array.isArray(row.tags) ? row.tags : [],
-          order: row.order_index || 0,
-          updatedAt: row.updated_at || new Date().toISOString(),
-        }));
+        familyRelations = familyRelationsRows.map((row: any) => {
+          // Disambiguate source_entity_id vs linked_player_id
+          const rawSource = row.source_entity_id || '';
+          const rawLinkedPlayer = row.linked_player_id || '';
+          const isSourcePlayer = rawLinkedPlayer || rawSource.startsWith('player_') || rawSource.includes('@') || rawSource.startsWith('usr_') || rawSource.startsWith('user_');
+          const resolvedLinkedPlayerId = rawLinkedPlayer || (isSourcePlayer ? rawSource : '');
+
+          return {
+            id: row.id,
+            playerId: isSourcePlayer ? rawSource : (rawLinkedPlayer || rawSource),
+            sourceEntityId: rawSource,
+            linkedEntityId: row.target_entity_id || '',
+            relationshipType: row.relationship_type,
+            bio: row.description || '',
+            sharedWithParty: !row.is_secret,
+            name: row.name || '',
+            avatarUrl: row.avatar_url || '',
+            customRelationshipLabel: row.custom_relationship_label || '',
+            titleOrRole: row.title_or_role || '',
+            generationCategory: row.generation_category || 'same_generation',
+            genealogyRole: row.genealogy_role || '',
+            sideOfFamily: row.side_of_family || 'unspecified',
+            status: row.status || 'alive',
+            secondParentId: row.second_parent_id || '',
+            otherParentName: row.other_parent_name || '',
+            linkedPlayerId: resolvedLinkedPlayerId,
+            tags: Array.isArray(row.tags) ? row.tags : [],
+            order: row.order_index || 0,
+            updatedAt: row.updated_at || new Date().toISOString(),
+          };
+        });
       }
 
-      const campaignMembers: any[] = (membersRes?.data || []).map((row: any) => ({
-        campaignCode: (row.campaign_code || '').trim().toUpperCase(),
-        userId: row.user_id,
-        role: row.role || 'player',
-        characterName: row.character_name || '',
-        status: (row.status || 'active').toLowerCase(),
-        permissions: row.permissions || {},
-        createdAt: row.created_at,
-      }));
+      const campaignMembers: CampaignMemberRecord[] = (membersRes?.data || []).map((row: any) =>
+        campaignMemberRowToModel(row)
+      );
 
       const result = {
         campaignCode: campRow.code || campaignCode,
@@ -700,6 +763,45 @@ export class SupabaseSyncService {
               coveredIds.add(mId);
             }
           });
+
+          // Automatic backfill: If legacy active_players has players not in campaignMembers, persist to campaign_members
+          const missingInMembers = existingFiltered.filter((p: any) => {
+            const pId = String(p.id || p._id || '').toLowerCase();
+            return pId && !activeMemberMap.has(pId);
+          });
+          const cCode = (campRow?.code || campaignCode || '').trim().toUpperCase();
+          if (cCode) {
+            const backfills: any[] = [];
+            if (missingInMembers.length > 0) {
+              missingInMembers.forEach((p: any) => {
+                const pId = p.id || p._id;
+                const isDm = p.isDm || (dmId && String(pId).toLowerCase() === dmId);
+                backfills.push({
+                  id: `${cCode}_${pId}`,
+                  campaign_code: cCode,
+                  user_id: pId,
+                  role: isDm ? 'dm' : (p.role || 'player'),
+                  character_name: p.characterName || null,
+                  status: 'active',
+                  created_at: new Date().toISOString(),
+                });
+              });
+            }
+            if (campRow?.dm_id && !activeMemberMap.has(String(campRow.dm_id).toLowerCase())) {
+              backfills.push({
+                id: `${cCode}_${campRow.dm_id}`,
+                campaign_code: cCode,
+                user_id: campRow.dm_id,
+                role: 'dm',
+                character_name: null,
+                status: 'active',
+                created_at: new Date().toISOString(),
+              });
+            }
+            if (backfills.length > 0) {
+              safeUpsert('campaign_members', backfills, { onConflict: 'id' }).catch(() => {});
+            }
+          }
 
           return existingFiltered;
         })(),
@@ -798,9 +900,10 @@ export class SupabaseSyncService {
 
     const fetchPromise = (async () => {
       try {
-        const [sessionsRes, chaptersRes] = await Promise.all([
+        const [sessionsRes, chaptersRes, audioLogsRes] = await Promise.all([
           supabase.from('sessions').select('id, campaign_code, number, title, date_str, chapter_id, calendar_date, plot_events, recap, summary, images, cover_image_url, audio_url, session_type, quotes, audio_logs, excluded_player_ids, attendees, tags, entities_extracted, entities_extracted_at, memory_synced, memory_synced_at, created_at, updated_at').eq('campaign_code', cleanCode).order('number', { ascending: true }),
           supabase.from('chapters').select('id, campaign_code, number, title, synopsis, status, order_index, cover_image_url, color, created_at, updated_at').eq('campaign_code', cleanCode).order('order_index', { ascending: true }),
+          supabase.from('audio_logs').select('id, campaign_code, title, audio_url, duration, recorded_by, lore_date, associated_type, associated_id, created_at, updated_at').eq('campaign_code', cleanCode).then(res => res, () => ({ data: [] })),
         ]);
 
         if (sessionsRes.error || chaptersRes.error) {
@@ -814,6 +917,43 @@ export class SupabaseSyncService {
         const sessions: Session[] = (sessionsRes.data || []).map((row: any) =>
           sessionRowToModel(row)
         );
+
+        const relationalAudioLogs: AudioLog[] = (audioLogsRes.data || []).map(audioLogRowToModel);
+        const backfillLogs: AudioLog[] = [];
+        sessions.forEach((s) => {
+          const sessId = String(s.id || s._id || '');
+          const matched = relationalAudioLogs.filter((al) =>
+            al.associatedId === sessId || al.associatedId === s._id || (al.associatedType === 'session' && al.associatedId === String(s.number))
+          );
+          const current = s.audioLogs || [];
+          const mergedMap = new Map<string, AudioLog>();
+          matched.forEach((m) => mergedMap.set(m.id, m));
+          current.forEach((c) => {
+            if (!mergedMap.has(c.id) && !Array.from(mergedMap.values()).some((m) => m.audioUrl === c.audioUrl)) {
+              const canonicalLog: AudioLog = {
+                ...c,
+                id: c.id || `aud_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+                associatedType: 'session',
+                associatedId: sessId,
+                loreDate: c.loreDate || s.calendar_date || s.loreDate,
+                createdAt: c.createdAt || new Date().toISOString(),
+              };
+              mergedMap.set(canonicalLog.id, canonicalLog);
+              backfillLogs.push(canonicalLog);
+            }
+          });
+          s.audioLogs = Array.from(mergedMap.values());
+        });
+
+        if (backfillLogs.length > 0) {
+          const payloads = backfillLogs.map((log) => audioLogModelToRow(log, cleanCode));
+          safeUpsert('audio_logs', payloads, { onConflict: 'id' }).then(() => {
+            const sIds = Array.from(new Set(backfillLogs.map((b) => b.associatedId).filter(Boolean)));
+            if (sIds.length > 0) {
+              Promise.resolve(supabase.from('sessions').update({ audio_url: null, audio_logs: [] }).in('id', sIds)).catch(() => {});
+            }
+          }).catch(() => {});
+        }
 
         const result = { sessions, chapters };
         this.sessionsOnlyCache.set(cleanCode, { data: result, timestamp: Date.now() });
@@ -1127,8 +1267,9 @@ export class SupabaseSyncService {
           campaign_code: cleanCode,
           user_id: payload.dm_id,
           role: 'dm',
+          status: 'active',
           created_at: new Date().toISOString(),
-        }, { onConflict: 'campaign_code,user_id' });
+        }, { onConflict: 'id' });
       }
 
       return true;
@@ -1234,15 +1375,16 @@ export class SupabaseSyncService {
       return false;
     }
   }
-  static async joinCampaignMember(campaignCode: string, userId: string, role: 'player' | 'dm' = 'player', characterName?: string): Promise<boolean> {
+  static async joinCampaignMember(campaignCode: string, userId: string, role: CampaignRole | 'co-dm' | 'comaster' | string = 'player', characterName?: string): Promise<boolean> {
     if (!isSupabaseConfigured() || !campaignCode || !userId) return false;
     try {
       const cleanCode = campaignCode.trim().toUpperCase();
+      const normRole = normalizeCampaignRole(role);
       const payload: any = {
         id: `${cleanCode}_${userId}`,
         campaign_code: cleanCode,
         user_id: userId,
-        role,
+        role: normRole,
         character_name: characterName || null,
         status: 'active',
         created_at: new Date().toISOString(),
@@ -1278,10 +1420,32 @@ export class SupabaseSyncService {
     if (!isSupabaseConfigured() || !campaignCode || !userId) return false;
     try {
       const code = campaignCode.trim().toUpperCase();
+      const formattedPermissions = {
+        can_create_sessions: permissions.canCreateSessions ?? true,
+        can_edit_sessions: permissions.canEditSessions ?? false,
+        can_delete_sessions: permissions.canDeleteSessions ?? false,
+        can_create_entities: permissions.canCreateEntities ?? false,
+        can_edit_entities: permissions.canEditEntities ?? false,
+        can_delete_entities: permissions.canDeleteEntities ?? false,
+        can_create_lore: permissions.canCreateLore ?? false,
+        can_edit_lore: permissions.canEditLore ?? false,
+        can_delete_lore: permissions.canDeleteLore ?? false,
+        can_manage_maps: permissions.canManageMaps ?? false,
+        canCreateSessions: permissions.canCreateSessions ?? true,
+        canEditSessions: permissions.canEditSessions ?? false,
+        canDeleteSessions: permissions.canDeleteSessions ?? false,
+        canCreateEntities: permissions.canCreateEntities ?? false,
+        canEditEntities: permissions.canEditEntities ?? false,
+        canDeleteEntities: permissions.canDeleteEntities ?? false,
+        canCreateLore: permissions.canCreateLore ?? false,
+        canEditLore: permissions.canEditLore ?? false,
+        canDeleteLore: permissions.canDeleteLore ?? false,
+        canManageMaps: permissions.canManageMaps ?? false,
+      };
       const { error } = await supabase
         .from('campaign_members')
         .update({
-          permissions,
+          permissions: formattedPermissions,
         })
         .eq('campaign_code', code)
         .eq('user_id', userId);
@@ -1298,41 +1462,99 @@ export class SupabaseSyncService {
   }
 
   /**
-   * Leaves or removes a member from campaign_members and campaign dossier on Supabase
+   * Updates member role in campaign_members on Supabase
    */
-  static async removeCampaignMember(campaignCode: string, userId: string, email?: string): Promise<boolean> {
+  static async updateMemberRole(
+    campaignCode: string,
+    userId: string,
+    role: 'player' | 'dm' | 'co-dm' | 'comaster' | string
+  ): Promise<boolean> {
+    if (!isSupabaseConfigured() || !campaignCode || !userId) return false;
+    try {
+      const code = campaignCode.trim().toUpperCase();
+      const rawRole = String(role || 'player').toLowerCase();
+      const normalizedRole = (rawRole === 'comaster' || rawRole === 'co-dm') ? 'co-dm' : (rawRole === 'dm' ? 'dm' : 'player');
+      const { error } = await supabase
+        .from('campaign_members')
+        .update({ role: normalizedRole })
+        .eq('campaign_code', code)
+        .eq('user_id', userId);
+      return !error;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Leaves or removes a member from campaign_members and campaign metadata on Supabase
+   */
+  static async removeCampaignMember(
+    campaignCode: string,
+    userId: string,
+    email?: string,
+    isExpulsion = true
+  ): Promise<boolean> {
     if (!isSupabaseConfigured() || !campaignCode || !userId) return false;
     try {
       const code = campaignCode.trim().toUpperCase();
       const cleanEmail = (email || '').toLowerCase().trim();
 
-      // Mark status as 'expelled' in campaign_members
-      await supabase
-        .from('campaign_members')
-        .update({ status: 'expelled' })
-        .eq('campaign_code', code)
-        .or(`user_id.eq.${userId}${cleanEmail ? `,user_id.eq.${cleanEmail}` : ''}`);
+      if (isExpulsion) {
+        // Mark status as 'expelled' in campaign_members
+        await supabase
+          .from('campaign_members')
+          .update({ status: 'expelled' })
+          .eq('campaign_code', code)
+          .or(`user_id.eq.${userId}${cleanEmail ? `,user_id.eq.${cleanEmail}` : ''}`);
 
-      const { data: camp } = await supabase.from('campaigns').select('active_players, expelled_accounts').eq('code', code).maybeSingle();
-      if (camp) {
-        const activePlayers = (camp.active_players || []).filter(
-          (p: any) => p.id !== userId && p._id !== userId && (!cleanEmail || p.email !== cleanEmail)
-        );
-        const currentExpelled: string[] = Array.isArray(camp.expelled_accounts) ? camp.expelled_accounts : [];
-        const updatedExpelled = currentExpelled.includes(userId) ? currentExpelled : [...currentExpelled, userId];
+        const { data: camp } = await supabase.from('campaigns').select('active_players, expelled_accounts').eq('code', code).maybeSingle();
+        if (camp) {
+          const activePlayers = (camp.active_players || []).filter(
+            (p: any) => p.id !== userId && p._id !== userId && (!cleanEmail || p.email !== cleanEmail)
+          );
+          const currentExpelled: string[] = Array.isArray(camp.expelled_accounts) ? camp.expelled_accounts : [];
+          const updatedExpelled = currentExpelled.includes(userId) ? currentExpelled : [...currentExpelled, userId];
 
-        await supabase.from('campaigns').update({
-          active_players: activePlayers,
-          expelled_accounts: updatedExpelled,
-          updated_at: new Date().toISOString(),
-        }).eq('code', code);
+          await supabase.from('campaigns').update({
+            active_players: activePlayers,
+            expelled_accounts: updatedExpelled,
+            updated_at: new Date().toISOString(),
+          }).eq('code', code);
+        }
+      } else {
+        // Voluntary leave: remove record from campaign_members
+        await supabase
+          .from('campaign_members')
+          .delete()
+          .eq('campaign_code', code)
+          .or(`user_id.eq.${userId}${cleanEmail ? `,user_id.eq.${cleanEmail}` : ''}`);
+
+        const { data: camp } = await supabase.from('campaigns').select('active_players').eq('code', code).maybeSingle();
+        if (camp) {
+          const activePlayers = (camp.active_players || []).filter(
+            (p: any) => p.id !== userId && p._id !== userId && (!cleanEmail || p.email !== cleanEmail)
+          );
+          await supabase.from('campaigns').update({
+            active_players: activePlayers,
+            updated_at: new Date().toISOString(),
+          }).eq('code', code);
+        }
       }
 
-      // Also clean standalone tables
+      // Also clean user_accounts.joined_campaigns / dm_campaigns mirror for this user
       try {
-        await supabase.from('character_bios').delete().eq('campaign_code', code).eq('player_id', userId);
-        await supabase.from('family_relations').delete().eq('campaign_code', code).eq('source_entity_id', userId);
+        const { data: userRow } = await supabase.from('user_accounts').select('id, joined_campaigns, dm_campaigns').eq('id', userId).maybeSingle();
+        if (userRow) {
+          const newJoined = (userRow.joined_campaigns || []).filter((c: string) => c.toUpperCase() !== code);
+          const newDm = (userRow.dm_campaigns || []).filter((c: string) => c.toUpperCase() !== code);
+          await supabase.from('user_accounts').update({
+            joined_campaigns: newJoined,
+            dm_campaigns: newDm,
+            updated_at: new Date().toISOString(),
+          }).eq('id', userId);
+        }
       } catch {}
+
       return true;
     } catch (err) {
       console.warn('[Supabase] removeCampaignMember exception:', err);
@@ -1477,6 +1699,52 @@ export class SupabaseSyncService {
 
       const { error } = await safeUpsert('sessions', payload, { onConflict: 'id' });
       if (error) return handleSupabaseError('Error saving session', error);
+
+      // Persist associated audio logs to public.audio_logs as relational single source of truth
+      const sessId = String(session.id || session._id || payload.id);
+      const sessionAudioLogs = Array.isArray(session.audioLogs) ? session.audioLogs : [];
+      if (sessionAudioLogs.length > 0) {
+        const audioPayloads = sessionAudioLogs.map((log) =>
+          audioLogModelToRow(
+            {
+              ...log,
+              associatedType: 'session',
+              associatedId: sessId,
+              loreDate: log.loreDate || session.calendar_date || session.loreDate,
+            },
+            code
+          )
+        );
+        try {
+          const { error: audioErr } = await safeUpsert('audio_logs', audioPayloads, { onConflict: 'id' });
+          if (audioErr) {
+            console.warn('[Supabase] Warning syncing session audio logs:', audioErr);
+          }
+        } catch (err) {
+          console.warn('[Supabase] Warning syncing session audio logs:', err);
+        }
+      }
+
+      const directAudioUrl = (session as any).audioUrl || (session as any).audio_url;
+      if (directAudioUrl && typeof directAudioUrl === 'string' && directAudioUrl.trim()) {
+        const directLog = audioLogModelToRow(
+          {
+            id: `aud_sess_${sessId}`,
+            title: `Audio Sessione #${session.number || 1}`,
+            audioUrl: directAudioUrl.trim(),
+            associatedType: 'session',
+            associatedId: sessId,
+            loreDate: session.calendar_date || session.loreDate,
+            createdAt: (session as any).createdAt || (session as any)._createdAt || new Date().toISOString(),
+          },
+          code
+        );
+        try {
+          await safeUpsert('audio_logs', directLog, { onConflict: 'id' });
+        } catch (err) {
+          console.warn('[Supabase] Warning syncing direct session audio log:', err);
+        }
+      }
 
       this.updateCachedItem(code, 'sessions', session);
       return true;
@@ -1724,11 +1992,6 @@ export class SupabaseSyncService {
       });
       const mergedPlayers = Array.from(playerMap.values());
 
-      // If active players have not changed at all, skip database mutation entirely
-      if (JSON.stringify(mergedPlayers) === JSON.stringify(existingPlayers)) {
-        return true;
-      }
-
       const cleanCode = code.trim().toUpperCase();
 
       // Ensure membership in campaign_members as Single Source of Truth
@@ -1746,6 +2009,11 @@ export class SupabaseSyncService {
             created_at: new Date().toISOString(),
           }, { onConflict: 'id' });
         } catch {}
+      }
+
+      // If active players in campaigns table have not changed at all, skip campaigns row update
+      if (JSON.stringify(mergedPlayers) === JSON.stringify(existingPlayers)) {
+        return true;
       }
 
       const { error } = await supabase.from('campaigns').update({
@@ -1796,6 +2064,30 @@ export class SupabaseSyncService {
         console.warn('[Supabase] Warning upserting user_accounts:', error.message);
         return false;
       }
+
+      // Ensure all joined/dm campaigns are registered in campaign_members as Single Source of Truth
+      if (account.id) {
+        const joined = Array.isArray(account.joinedCampaigns) ? account.joinedCampaigns : [];
+        const dm = Array.isArray(account.dmCampaigns) ? account.dmCampaigns : [];
+        const allCampCodes = Array.from(new Set([...joined, ...dm]));
+        if (allCampCodes.length > 0) {
+          const memberPayloads = allCampCodes.map((cCode) => {
+            const clean = String(cCode).trim().toUpperCase();
+            const isDm = dm.map((x: string) => String(x).trim().toUpperCase()).includes(clean);
+            return {
+              id: `${clean}_${account.id}`,
+              campaign_code: clean,
+              user_id: account.id,
+              role: isDm ? 'dm' : 'player',
+              character_name: account.characterName || 'Avventuriero',
+              status: 'active',
+              created_at: new Date().toISOString(),
+            };
+          });
+          safeUpsert('campaign_members', memberPayloads, { onConflict: 'id' }).catch(() => {});
+        }
+      }
+
       return true;
     } catch (err) {
       console.warn('[Supabase] Exception upserting user_accounts:', err);
@@ -2021,9 +2313,28 @@ export class SupabaseSyncService {
           }
         });
 
+        const finalDm = Array.from(new Set(dmCampaigns));
+        const finalJoined = Array.from(new Set(joinedCampaigns));
+
+        // Automatic backfill: Ensure every verified joined/DM campaign has an authoritative row in campaign_members
+        const existingMemberCodes = new Set(memberRows.map((m: any) => (m.campaign_code || '').trim().toUpperCase()));
+        const missingBackfillCampaigns = [...finalJoined, ...finalDm].filter((c) => !existingMemberCodes.has(c));
+        if (missingBackfillCampaigns.length > 0 && userId) {
+          const uniqueMissing = Array.from(new Set(missingBackfillCampaigns));
+          const backfillPayloads = uniqueMissing.map((cCode) => ({
+            id: `${cCode}_${userId}`,
+            campaign_code: cCode,
+            user_id: userId,
+            role: finalDm.includes(cCode) ? 'dm' : 'player',
+            status: 'active',
+            created_at: new Date().toISOString(),
+          }));
+          safeUpsert('campaign_members', backfillPayloads, { onConflict: 'id' }).catch(() => {});
+        }
+
         const result = {
-          dmCampaigns: Array.from(new Set(dmCampaigns)),
-          joinedCampaigns: Array.from(new Set(joinedCampaigns)),
+          dmCampaigns: finalDm,
+          joinedCampaigns: finalJoined,
         };
 
         this.userCampaignsCache.set(cacheKey, { data: result, timestamp: Date.now() });
@@ -2121,22 +2432,59 @@ export class SupabaseSyncService {
 
     this.inFlightUserAccountsFetch = (async () => {
       try {
-        const { data, error } = await supabase.from('user_accounts').select('id, email, character_name, is_dm, dm_campaigns, joined_campaigns, color, avatar_url, campaign_profiles, preferences, created_at, updated_at');
+        const [{ data, error }, { data: realCamps }, { data: allMembers }] = await Promise.all([
+          supabase.from('user_accounts').select('id, email, character_name, is_dm, dm_campaigns, joined_campaigns, color, avatar_url, campaign_profiles, preferences, created_at, updated_at'),
+          supabase.from('campaigns').select('code, dm_id'),
+          supabase.from('campaign_members').select('campaign_code, user_id, role, character_name, status').neq('status', 'expelled'),
+        ]);
+
         if (error || !Array.isArray(data)) {
           return [];
         }
 
-        const { data: realCamps } = await supabase.from('campaigns').select('code');
         const realCodes = new Set((realCamps || []).map((rc: any) => (rc.code || '').trim().toUpperCase()));
+        const missingBackfills: any[] = [];
 
         const result = data.map((row) => {
           const rawDm = Array.isArray(row.dm_campaigns) ? row.dm_campaigns : [];
           const rawJoined = Array.isArray(row.joined_campaigns) ? row.joined_campaigns : [];
           const campaignProfiles = { ...(row.campaign_profiles || {}) };
 
+          const uId = String(row.id || '').toLowerCase();
+          const uEmail = String(row.email || '').toLowerCase().trim();
+
+          // Authoritative memberships from campaign_members
+          const userMembers = (allMembers || []).filter((m: any) => {
+            const mUser = String(m.user_id || '').toLowerCase();
+            return (mUser === uId || (uEmail && mUser === uEmail)) && m.status !== 'expelled';
+          });
+
+          const memJoined = userMembers.map((m: any) => (m.campaign_code || '').trim().toUpperCase()).filter(Boolean);
+          const memDm = userMembers.filter((m: any) => m.role === 'dm').map((m: any) => (m.campaign_code || '').trim().toUpperCase()).filter(Boolean);
+
           // Only filter campaign memberships if realCodes returned active campaigns
-          const dmCampaigns = realCodes.size > 0 ? rawDm.filter((c: string) => realCodes.has(c.toUpperCase())) : rawDm;
-          const joinedCampaigns = realCodes.size > 0 ? rawJoined.filter((c: string) => realCodes.has(c.toUpperCase())) : rawJoined;
+          const filteredRawDm = realCodes.size > 0 ? rawDm.filter((c: string) => realCodes.has(c.toUpperCase())) : rawDm;
+          const filteredRawJoined = realCodes.size > 0 ? rawJoined.filter((c: string) => realCodes.has(c.toUpperCase())) : rawJoined;
+
+          const dmCampaigns = Array.from(new Set([...filteredRawDm, ...memDm]));
+          const joinedCampaigns = Array.from(new Set([...filteredRawJoined, ...memJoined]));
+
+          // Backfill: if legacy user_accounts had campaigns not registered in campaign_members, queue backfill
+          if (row.id) {
+            const existingMemCodes = new Set(memJoined);
+            const neededBackfill = [...dmCampaigns, ...joinedCampaigns].filter((c) => !existingMemCodes.has(c));
+            neededBackfill.forEach((cCode) => {
+              missingBackfills.push({
+                id: `${cCode}_${row.id}`,
+                campaign_code: cCode,
+                user_id: row.id,
+                role: dmCampaigns.includes(cCode) ? 'dm' : 'player',
+                character_name: row.character_name || 'Avventuriero',
+                status: 'active',
+                created_at: new Date().toISOString(),
+              });
+            });
+          }
 
           return {
             id: row.id,
@@ -2152,6 +2500,11 @@ export class SupabaseSyncService {
             createdAt: row.created_at || new Date().toISOString(),
           };
         });
+
+        if (missingBackfills.length > 0) {
+          safeUpsert('campaign_members', missingBackfills, { onConflict: 'id' }).catch(() => {});
+        }
+
         this.userAccountsCache = { data: result, timestamp: Date.now() };
         return result;
       } catch (err) {
@@ -2181,16 +2534,66 @@ export class SupabaseSyncService {
 
     this.inFlightAllCampaignsFetch = (async () => {
       try {
-        const { data, error } = await supabase
-          .from('campaigns')
-          .select('code, title, subtitle, description, system, dm_id, active_players, expelled_accounts, dm_is_player, title_font, title_effect, created_at, updated_at');
+        const [{ data, error }, { data: allMembers }] = await Promise.all([
+          supabase
+            .from('campaigns')
+            .select('code, title, subtitle, description, system, dm_id, active_players, expelled_accounts, dm_is_player, title_font, title_effect, created_at, updated_at'),
+          supabase
+            .from('campaign_members')
+            .select('campaign_code, user_id, role, character_name, status')
+            .neq('status', 'expelled'),
+        ]);
+
         if (error || !Array.isArray(data)) return [];
+        const missingMemberBackfills: any[] = [];
+
         const result = data.map((c) => {
+          const campCode = (c.code || '').trim().toUpperCase();
+          const campMembers = (allMembers || []).filter((m: any) => (m.campaign_code || '').trim().toUpperCase() === campCode);
           const activePlayers = Array.isArray(c.active_players) ? c.active_players : [];
+
+          const dmMember = campMembers.find((m: any) => m.role === 'dm');
           const dmPlayer = activePlayers.find((p: any) => p && (p.isDm || (c.dm_id && (p.id === c.dm_id || p._id === c.dm_id))));
-          const activePlayerEmails = activePlayers.map((p: any) => (p?.email || '').toLowerCase().trim()).filter(Boolean);
+
+          const memberEmails = campMembers.map((m: any) => (m?.user_id?.includes('@') ? m.user_id.toLowerCase().trim() : '')).filter(Boolean);
+          const activePlayerEmails = Array.from(new Set([
+            ...activePlayers.map((p: any) => (p?.email || '').toLowerCase().trim()).filter(Boolean),
+            ...memberEmails,
+          ]));
+
           const dmIsPlayer = c.dm_is_player !== undefined ? Boolean(c.dm_is_player) : (dmPlayer ? Boolean(dmPlayer.isDm) : undefined);
           const expelledAccountIds = Array.isArray(c.expelled_accounts) ? c.expelled_accounts : [];
+
+          // Backfill: If legacy active_players has players not yet in campaign_members, queue backfill
+          const existingMemIds = new Set(campMembers.map((m: any) => String(m.user_id).toLowerCase()));
+          activePlayers.forEach((p: any) => {
+            const pId = p?.id || p?._id;
+            if (pId && !existingMemIds.has(String(pId).toLowerCase())) {
+              const isDm = p.isDm || (c.dm_id && String(pId).toLowerCase() === String(c.dm_id).toLowerCase());
+              missingMemberBackfills.push({
+                id: `${campCode}_${pId}`,
+                campaign_code: campCode,
+                user_id: pId,
+                role: isDm ? 'dm' : (p.role || 'player'),
+                character_name: p.characterName || null,
+                status: 'active',
+                created_at: new Date().toISOString(),
+              });
+            }
+          });
+
+          // Ensure DM is also registered in campaign_members
+          if (c.dm_id && !existingMemIds.has(String(c.dm_id).toLowerCase())) {
+            missingMemberBackfills.push({
+              id: `${campCode}_${c.dm_id}`,
+              campaign_code: campCode,
+              user_id: c.dm_id,
+              role: 'dm',
+              character_name: null,
+              status: 'active',
+              created_at: new Date().toISOString(),
+            });
+          }
 
           return {
             code: c.code,
@@ -2201,14 +2604,19 @@ export class SupabaseSyncService {
             titleFont: (c.title_font as any) || 'cinzel',
             titleEffect: (c.title_effect as any) || 'default',
             createdAt: c.created_at || new Date().toISOString(),
-            dmId: c.dm_id || dmPlayer?.id || undefined,
+            dmId: c.dm_id || dmMember?.user_id || dmPlayer?.id || undefined,
             dmEmail: dmPlayer?.email || undefined,
-            dmName: dmPlayer?.characterName || undefined,
+            dmName: dmMember?.character_name || dmPlayer?.characterName || undefined,
             dmIsPlayer,
             activePlayerEmails,
             expelledAccountIds,
           };
         });
+
+        if (missingMemberBackfills.length > 0) {
+          safeUpsert('campaign_members', missingMemberBackfills, { onConflict: 'id' }).catch(() => {});
+        }
+
         this.allCampaignsCache = { data: result, timestamp: Date.now() };
         return result;
       } catch {
@@ -2361,10 +2769,12 @@ export class SupabaseSyncService {
     if (!isSupabaseConfigured() || !campaignCode || !rel || !rel.id) return false;
     try {
       const code = campaignCode.trim().toUpperCase();
+      const linkedPlayer = rel.linkedPlayerId || (rel.playerId && (rel.playerId.startsWith('player_') || rel.playerId.includes('@') || rel.playerId.startsWith('usr_')) ? rel.playerId : null);
+
       const payload = {
         id: rel.id,
         campaign_code: code,
-        source_entity_id: rel.playerId,
+        source_entity_id: rel.playerId || rel.sourceEntityId || '',
         target_entity_id: rel.linkedEntityId || null,
         relationship_type: rel.relationshipType || 'family',
         description: rel.bio || '',
@@ -2379,7 +2789,7 @@ export class SupabaseSyncService {
         status: rel.status || 'alive',
         second_parent_id: rel.secondParentId || null,
         other_parent_name: rel.otherParentName || '',
-        linked_player_id: rel.linkedPlayerId || null,
+        linked_player_id: linkedPlayer,
         tags: Array.isArray(rel.tags) ? rel.tags : [],
         order_index: rel.order || 0,
         updated_at: new Date().toISOString(),
@@ -2398,39 +2808,43 @@ export class SupabaseSyncService {
   static async saveFamilyRelations(campaignCode: string, relations: any[]): Promise<boolean> {
     if (!isSupabaseConfigured() || !campaignCode) return false;
     try {
-      const code = campaignCode.trim();
+      const code = campaignCode.trim().toUpperCase();
 
       // Atomic write to 'family_relations'
-      const upsertPromises = (relations || []).map((rel) => {
-        if (!rel || !rel.id) return Promise.resolve();
-        const payload = {
-          id: rel.id,
-          campaign_code: code,
-          source_entity_id: rel.playerId || '',
-          target_entity_id: rel.linkedEntityId || rel.linkedPlayerId || '',
-          relationship_type: rel.relationshipType || 'companion',
-          description: rel.bio || '',
-          is_secret: Boolean(rel.sharedWithParty === false),
-          name: rel.name || '',
-          avatar_url: rel.avatarUrl || '',
-          custom_relationship_label: rel.customRelationshipLabel || '',
-          title_or_role: rel.titleOrRole || '',
-          generation_category: rel.generationCategory || 'same_generation',
-          genealogy_role: rel.genealogyRole || '',
-          side_of_family: rel.sideOfFamily || 'unspecified',
-          status: rel.status || 'alive',
-          second_parent_id: rel.secondParentId || '',
-          other_parent_name: rel.otherParentName || '',
-          linked_player_id: rel.linkedPlayerId || '',
-          tags: rel.tags || [],
-          order_index: rel.order || 0,
-          updated_at: new Date().toISOString(),
-        };
-        return supabase.from('family_relations').upsert(payload, { onConflict: 'id' });
-      });
+      const payloads = (relations || [])
+        .filter((rel) => rel && rel.id)
+        .map((rel) => {
+          const linkedPlayer = rel.linkedPlayerId || (rel.playerId && (rel.playerId.startsWith('player_') || rel.playerId.includes('@') || rel.playerId.startsWith('usr_')) ? rel.playerId : null);
 
-      await Promise.all(upsertPromises);
-      return true;
+          return {
+            id: rel.id,
+            campaign_code: code,
+            source_entity_id: rel.playerId || rel.sourceEntityId || '',
+            target_entity_id: rel.linkedEntityId || null,
+            relationship_type: rel.relationshipType || 'family',
+            description: rel.bio || rel.description || '',
+            is_secret: Boolean(rel.sharedWithParty === false || rel.isSecret || rel.is_secret),
+            name: rel.name || '',
+            avatar_url: rel.avatarUrl || rel.avatar_url || '',
+            custom_relationship_label: rel.customRelationshipLabel || rel.custom_relationship_label || '',
+            title_or_role: rel.titleOrRole || rel.title_or_role || '',
+            generation_category: rel.generationCategory || rel.generation_category || 'same_generation',
+            genealogy_role: rel.genealogyRole || rel.genealogy_role || '',
+            side_of_family: rel.sideOfFamily || rel.side_of_family || 'unspecified',
+            status: rel.status || 'alive',
+            second_parent_id: rel.secondParentId || rel.second_parent_id || null,
+            other_parent_name: rel.otherParentName || rel.other_parent_name || '',
+            linked_player_id: linkedPlayer,
+            tags: Array.isArray(rel.tags) ? rel.tags : [],
+            order_index: rel.order || rel.orderIndex || rel.order_index || 0,
+            updated_at: new Date().toISOString(),
+          };
+        });
+
+      if (payloads.length === 0) return true;
+      const { error } = await safeUpsert('family_relations', payloads, { onConflict: 'id' });
+      if (error) console.error('[Supabase] Error saving family relations:', error);
+      return !error;
     } catch (err) {
       console.error('[Supabase] Failed to save family relations:', err);
       return false;
@@ -2871,6 +3285,54 @@ export class SupabaseSyncService {
           const { error } = await safeUpsert('sessions', chunk, { onConflict: 'id' });
           if (error) throw error;
         }
+        // Also persist any session-embedded audio logs into public.audio_logs
+        const sessionAudioPayloads: any[] = [];
+        data.sessions.forEach((s: any) => {
+          const sessId = String(s.id || s._id || '');
+          if (Array.isArray(s.audioLogs)) {
+            s.audioLogs.forEach((l: any) => {
+              if (l && (l.audioUrl || l.audio_url)) {
+                sessionAudioPayloads.push(
+                  audioLogModelToRow(
+                    {
+                      ...l,
+                      associatedType: 'session',
+                      associatedId: sessId,
+                      loreDate: l.loreDate || s.calendar_date || s.loreDate,
+                    },
+                    code
+                  )
+                );
+              }
+            });
+          }
+          const directUrl = s.audioUrl || s.audio_url;
+          if (directUrl && typeof directUrl === 'string' && directUrl.trim()) {
+            sessionAudioPayloads.push(
+              audioLogModelToRow(
+                {
+                  id: `aud_sess_${sessId}`,
+                  title: `Audio Sessione #${s.number || 1}`,
+                  audioUrl: directUrl.trim(),
+                  associatedType: 'session',
+                  associatedId: sessId,
+                  loreDate: s.calendar_date || s.loreDate,
+                  createdAt: s.createdAt || new Date().toISOString(),
+                },
+                code
+              )
+            );
+          }
+        });
+
+        if (sessionAudioPayloads.length > 0) {
+          const audioChunkSize = 50;
+          for (let i = 0; i < sessionAudioPayloads.length; i += audioChunkSize) {
+            const aChunk = sessionAudioPayloads.slice(i, i + audioChunkSize);
+            await safeUpsert('audio_logs', aChunk, { onConflict: 'id' }).catch(() => {});
+          }
+        }
+
         stats.sessions = payloads.length;
       } catch (err: any) {
         console.error('[Supabase Bulk] Error saving sessions:', err);
@@ -3021,16 +3483,33 @@ export class SupabaseSyncService {
     // 9. Family Relations
     if (Array.isArray(data.familyRelations) && data.familyRelations.length > 0) {
       try {
-        const payloads = data.familyRelations.map((rel) => ({
-          id: rel.id,
-          campaign_code: code,
-          source_entity_id: rel.playerId || '',
-          target_entity_id: rel.linkedEntityId || rel.linkedPlayerId || '',
-          relationship_type: rel.relationshipType || 'companion',
-          description: rel.bio || '',
-          is_secret: Boolean(rel.sharedWithParty === false),
-          updated_at: new Date().toISOString(),
-        }));
+        const payloads = data.familyRelations.map((rel) => {
+          const linkedPlayer = rel.linkedPlayerId || (rel.playerId && (rel.playerId.startsWith('player_') || rel.playerId.includes('@') || rel.playerId.startsWith('usr_')) ? rel.playerId : null);
+
+          return {
+            id: rel.id,
+            campaign_code: code,
+            source_entity_id: rel.playerId || rel.sourceEntityId || '',
+            target_entity_id: rel.linkedEntityId || null,
+            relationship_type: rel.relationshipType || 'family',
+            description: rel.bio || rel.description || '',
+            is_secret: Boolean(rel.sharedWithParty === false || rel.isSecret || rel.is_secret),
+            name: rel.name || '',
+            avatar_url: rel.avatarUrl || rel.avatar_url || '',
+            custom_relationship_label: rel.customRelationshipLabel || rel.custom_relationship_label || '',
+            title_or_role: rel.titleOrRole || rel.title_or_role || '',
+            generation_category: rel.generationCategory || rel.generation_category || 'same_generation',
+            genealogy_role: rel.genealogyRole || rel.genealogy_role || '',
+            side_of_family: rel.sideOfFamily || rel.side_of_family || 'unspecified',
+            status: rel.status || 'alive',
+            second_parent_id: rel.secondParentId || rel.second_parent_id || null,
+            other_parent_name: rel.otherParentName || rel.other_parent_name || '',
+            linked_player_id: linkedPlayer,
+            tags: Array.isArray(rel.tags) ? rel.tags : [],
+            order_index: rel.order || rel.orderIndex || rel.order_index || 0,
+            updated_at: new Date().toISOString(),
+          };
+        });
 
         const { error } = await safeUpsert('family_relations', payloads, { onConflict: 'id' });
         if (error) throw error;

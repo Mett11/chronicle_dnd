@@ -40,6 +40,7 @@ interface SessionModalProps {
   initialSession?: Session | null;
   existingSessions: Session[];
   chapters: CampaignChapter[];
+  defaultChapterId?: string;
   onClose: () => void;
   onSave: (sessionPayload: {
     number: number;
@@ -78,6 +79,7 @@ export function SessionModal({
   initialSession,
   existingSessions,
   chapters,
+  defaultChapterId,
   onClose,
   onSave,
 }: SessionModalProps) {
@@ -343,7 +345,10 @@ export function SessionModal({
       setNumberInput(String(nextNum));
       setTitle('');
       setSessionType('mixed');
-      const defaultChap = chapters[0];
+      const matchedChap = defaultChapterId
+        ? chapters.find((c) => c.id === defaultChapterId || c.name === defaultChapterId)
+        : null;
+      const defaultChap = matchedChap || (defaultChapterId === 'unassigned' ? null : chapters[0]);
       setChapterId(defaultChap?.id || '');
       setChapterName(defaultChap?.name || '');
       setIsAddingNewChapterInline(false);
@@ -365,7 +370,7 @@ export function SessionModal({
       setSessionImages([]);
       setEventsList([]);
     }
-  }, [isOpen, isEditing, initialSession]);
+  }, [isOpen, isEditing, initialSession, defaultChapterId, chapters]);
 
   if (!isOpen) return null;
 

@@ -1,5 +1,6 @@
 import React, { useState, useRef, useMemo, useEffect } from 'react';
 import { CampaignManager } from '../store/campaignStore';
+import { MapFolderService } from '../lib/mapFolderService';
 import { isSupabaseConfigured } from '../lib/supabase';
 import { SupabaseSyncService } from '../lib/supabaseSyncService';
 import { WorldMap as WorldMapType, type MapPin, Entity, MapFolder, Session } from '../types';
@@ -748,7 +749,7 @@ export function WorldMap() {
 
   const confirmDeleteFolder = () => {
     if (!folderToDelete) return;
-    CampaignManager.deleteMapFolder(folderToDelete);
+    MapFolderService.deleteFolder(folderToDelete);
     setFolders(CampaignManager.getMapFolders());
     setMaps(CampaignManager.getMaps());
     refreshEntities();
@@ -756,7 +757,7 @@ export function WorldMap() {
       setSelectedFolderFilter('all');
     }
     setFolderToDelete(null);
-    showToast('Cartella eliminata. Le mappe sono state spostate alla vista principale.');
+    showToast('Cartella eliminata. Le mappe sono state riassegnate alla vista principale senza perdite.');
   };
 
   const handleQuickMoveMapFolder = (mapId: string, newFolderId: string) => {

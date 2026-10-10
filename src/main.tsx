@@ -7,11 +7,17 @@ import { initTheme } from './lib/theme';
 import { initPwa } from './lib/pwa';
 import { CampaignManager } from './store/campaignStore';
 import { SessionMemorySyncService } from './lib/sessionMemorySyncService';
+import { LocalStorageMigrationService } from './lib/localStorageMigrationService';
+import { MapFolderService } from './lib/mapFolderService';
+
+// Run deduplication & migration of legacy localStorage keys at app boot
+LocalStorageMigrationService.runMigrations();
 
 // Expose on window for easy inspection and console debugging.
 if (typeof window !== 'undefined') {
   (window as any).CampaignManager = CampaignManager;
   (window as any).SessionMemorySyncService = SessionMemorySyncService;
+  (window as any).MapFolderService = MapFolderService;
 }
 
 // Initialize class theme & PWA service worker

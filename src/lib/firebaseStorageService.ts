@@ -128,14 +128,86 @@ export class SupabaseStorageService {
     return true;
   }
 
+
   /**
-   * Uploads an image or audio file to Supabase Storage (bucket: chronicle-media).
+   * Normalizes a storage file path or URL by stripping query parameters and decoding URI components.
    */
+  static normalizeStoragePath(urlOrPath: string): string {
+    if (!urlOrPath || typeof urlOrPath !== 'string') return '';
+    const clean = urlOrPath.trim().split('?')[0];
+    try {
+      return decodeURIComponent(clean);
+    } catch {
+      return clean;
+    }
+  }
+
+  /**
+   * Pipeline replaceMedia: Uploads new file first and removes old file only after confirmed upload.
+   * Prevents broken references if upload fails and avoids orphan files on success.
+   */
+  static async replaceMedia(options: {
+    oldUrl?: string | null;
+    newFile: File | Blob | string;
+    campaignCode: string;
+    bucket?: string;
+    folder?: 'entities' | 'maps' | 'scrapbook' | 'audio' | 'general' | 'images';
+    filenamePrefix?: string;
+  }): Promise<string> {
+    const {
+      oldUrl,
+      newFile,
+      campaignCode,
+      folder = 'images',
+      filenamePrefix = 'media',
+    } = options;
+
+    if (!newFile) return oldUrl || '';
+
+    // If new file is already an external HTTP URL and matches oldUrl, return it directly
+    if (typeof newFile === 'string' && (newFile.startsWith('http://') || newFile.startsWith('https://'))) {
+      if (oldUrl && oldUrl !== newFile) {
+        // Option to clean old media if changed to external link
+        this.deleteMedia(oldUrl).catch(() => {});
+      }
+      return newFile;
+    }
+
+    const filename = `${filenamePrefix}_${Date.now()}.png`;
+
+    // 1. Upload new file first
+    let newCdnUrl = '';
+    try {
+      newCdnUrl = await this.uploadMedia(campaignCode, folder, filename, newFile);
+    } catch (err) {
+      console.error('[replaceMedia] Upload of new file failed, preserving old file:', err);
+      throw err;
+    }
+
+    if (!newCdnUrl || (!newCdnUrl.startsWith('http://') && !newCdnUrl.startsWith('https://'))) {
+      console.warn('[replaceMedia] Upload returned empty or invalid URL, keeping old URL.');
+      return oldUrl || '';
+    }
+
+    // 2. Delete old file ONLY after successful upload confirmation
+    if (oldUrl && oldUrl !== newCdnUrl) {
+      const normalizedOld = this.normalizeStoragePath(oldUrl);
+      const normalizedNew = this.normalizeStoragePath(newCdnUrl);
+      if (normalizedOld && normalizedOld !== normalizedNew) {
+        this.deleteMedia(oldUrl).catch((err) => {
+          console.warn('[replaceMedia] Non-fatal error removing previous orphan file:', err);
+        });
+      }
+    }
+
+    return newCdnUrl;
+  }
   static async uploadMedia(
     campaignCode: string,
     folder: 'entities' | 'maps' | 'scrapbook' | 'audio' | 'general' | 'images',
     filename: string,
-    input: File | Blob | string
+    input: File | Blob | string,
+    bucketName: string = CHRONICLE_MEDIA_BUCKET
   ): Promise<string> {
     if (!input) return '';
 

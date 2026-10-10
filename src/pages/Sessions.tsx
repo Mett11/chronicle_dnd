@@ -137,6 +137,8 @@ export function Sessions() {
   const [sessionToDelete, setSessionToDelete] = useState<string | null>(null);
   const [chapterToDelete, setChapterToDelete] = useState<string | null>(null);
 
+  const [createModalChapterId, setCreateModalChapterId] = useState<string | undefined>(undefined);
+
   // Chapter Modal & Cover Form State
   const [editingChapter, setEditingChapter] = useState<CampaignChapter | null>(null);
   const [editingCoverChapter, setEditingCoverChapter] = useState<CampaignChapter | null>(null);
@@ -156,8 +158,8 @@ export function Sessions() {
   // Reading Mode: toggle interactive @entity mention badges vs clean uninterrupted prose
   const [showMentionTags, setShowMentionTags] = useState<boolean>(() => {
     try {
-      const saved = localStorage.getItem('chronicle_show_mention_tags');
-      return saved !== null ? saved === 'true' : true;
+      const prefs = CampaignManager.getUserPreferences();
+      return prefs.reading?.pillTagsEnabled ?? true;
     } catch {
       return true;
     }
@@ -166,7 +168,7 @@ export function Sessions() {
   const handleToggleMentionTags = () => {
     setShowMentionTags((prev) => {
       const next = !prev;
-      CampaignManager.saveUserPreferences({ showMentionTags: next });
+      CampaignManager.saveUserPreferences({ reading: { pillTagsEnabled: next } });
       return next;
     });
   };
@@ -457,8 +459,10 @@ export function Sessions() {
     }
   };
 
-  const handleOpenCreateModal = () => {
+  const handleOpenCreateModal = (targetChapterId?: string) => {
     setIsEditing(false);
+    const resolvedChapterId = targetChapterId || (selectedChapterFilter !== 'all' ? selectedChapterFilter : undefined);
+    setCreateModalChapterId(resolvedChapterId);
     setIsModalOpen(true);
   };
 
@@ -568,6 +572,8 @@ export function Sessions() {
         memorySyncedAt: payload.memorySyncedAt,
       });
       setSelectedSession(newSess);
+      setMainTab('chronicles');
+      setChronicleView('reader');
     }
 
     setIsModalOpen(false);
@@ -1458,8 +1464,8 @@ export function Sessions() {
                             key={log.id}
                             log={log}
                             onDelete={() => {
+                              CampaignManager.deleteAudioLog(log.id);
                               const updated = (selectedSession.audioLogs || []).filter((l) => l.id !== log.id);
-                              CampaignManager.updateSession(selectedSession._id, { audioLogs: updated });
                               setSelectedSession({ ...selectedSession, audioLogs: updated });
                               refreshSessions();
                             }}
@@ -1832,6 +1838,14 @@ export function Sessions() {
                           <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
                             <button
                               type="button"
+                              onClick={() => handleOpenCreateModal(chap.id)}
+                              className="p-2 rounded-[2px] bg-primary/90 hover:bg-primary text-surface-0 backdrop-blur-md transition-colors cursor-pointer border border-primary/30 shadow-sm"
+                              title={`Registra nuova sessione nel capitolo "${chap.name}"`}
+                            >
+                              <Plus size={14} className="stroke-[2.5]" />
+                            </button>
+                            <button
+                              type="button"
                               onClick={() => setEditingCoverChapter(chap)}
                               className="p-2 rounded-[2px] bg-black/80 hover:bg-black text-white/90 hover:text-white backdrop-blur-md transition-colors cursor-pointer border border-white/10 shadow-sm"
                               title="Modifica copertina capitolo"
@@ -2099,6 +2113,7 @@ export function Sessions() {
         initialSession={isEditing ? selectedSession : null}
         existingSessions={sessions}
         chapters={chapters}
+        defaultChapterId={createModalChapterId || (selectedChapterFilter !== 'all' ? selectedChapterFilter : undefined)}
         onClose={() => setIsModalOpen(false)}
         onSave={handleSaveSessionData}
       />
@@ -2120,20 +2135,27 @@ export function Sessions() {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-surface-0/80 backdrop-blur-sm">
           <AudioRecorder
             associatedType="session"
-            associatedId={selectedSession._id}
-            loreDate={selectedSession.loreDate}
+            associatedId={selectedSession.id || selectedSession._id}
+            loreDate={selectedSession.calendar_date || selectedSession.loreDate}
             defaultTitle={`Nota Vocale #${selectedSession.number}: ${selectedSession.title}`}
             onCancel={() => setIsAudioRecorderOpen(false)}
             onSave={(newLog) => {
-              const fullLog = {
+              const sessId = selectedSession.id || selectedSession._id;
+              const fullLog = CampaignManager.addAudioLog({
                 ...newLog,
-                id: 'aud_' + Date.now(),
-                createdAt: new Date().toISOString(),
-              };
+                associatedType: 'session',
+                associatedId: sessId,
+              });
               const currentLogs = selectedSession.audioLogs || [];
-              const updatedLogs = [...currentLogs, fullLog];
-              CampaignManager.updateSession(selectedSession._id, { audioLogs: updatedLogs });
-              setSelectedSession({ ...selectedSession, audioLogs: updatedLogs });
+              const updatedLogs = [fullLog, ...currentLogs.filter((l) => l.id !== fullLog.id)];
+              const updated = CampaignManager.updateSession(sessId, {
+                audioLogs: updatedLogs,
+              });
+              if (updated) {
+                setSelectedSession(updated);
+              } else {
+                setSelectedSession({ ...selectedSession, audioLogs: updatedLogs });
+              }
               setIsAudioRecorderOpen(false);
               refreshSessions();
             }}

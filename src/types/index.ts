@@ -1,5 +1,14 @@
 export type PlayerPartyStatus = 'active' | 'inactive' | 'retired' | 'dead';
 
+export type CampaignRole = 'dm' | 'player' | 'co_dm';
+
+export function normalizeCampaignRole(role: any): CampaignRole {
+  const r = String(role || 'player').toLowerCase().trim();
+  if (r === 'dm' || r === 'master') return 'dm';
+  if (r === 'co_dm' || r === 'co-dm' || r === 'codm' || r === 'comaster') return 'co_dm';
+  return 'player';
+}
+
 export interface CampaignMemberPermissions {
   canCreateSessions?: boolean;
   canEditSessions?: boolean;
@@ -11,6 +20,18 @@ export interface CampaignMemberPermissions {
   canEditLore?: boolean;
   canDeleteLore?: boolean;
   canManageMaps?: boolean;
+
+  // Snake_case aliases for standardized DB schema representation
+  can_create_sessions?: boolean;
+  can_edit_sessions?: boolean;
+  can_delete_sessions?: boolean;
+  can_create_entities?: boolean;
+  can_edit_entities?: boolean;
+  can_delete_entities?: boolean;
+  can_create_lore?: boolean;
+  can_edit_lore?: boolean;
+  can_delete_lore?: boolean;
+  can_manage_maps?: boolean;
 }
 
 export type PermissionAction =
@@ -26,9 +47,10 @@ export type PermissionAction =
   | 'manage_maps';
 
 export interface CampaignMemberRecord {
+  id?: string;
   campaignCode: string;
   userId: string;
-  role: 'dm' | 'player' | 'co-dm' | 'comaster';
+  role: CampaignRole | 'co-dm' | 'comaster';
   characterName?: string;
   status?: 'active' | 'expelled' | 'inactive';
   permissions?: CampaignMemberPermissions;
@@ -89,18 +111,6 @@ export interface UserPreferences {
     dismissedByCampaign?: Record<string, string[]>;
   };
   updatedAt?: string;
-
-  // Legacy / direct flat aliases for backwards compatibility across existing components
-  themeId?: string;
-  aiProvider?: 'gemini' | 'cloudflare' | 'openrouter';
-  oracleGeminiModel?: string;
-  oracleCloudflareModel?: string;
-  oracleOpenrouterModel?: string;
-  extractionGeminiModel?: string;
-  extractionCloudflareModel?: string;
-  extractionOpenrouterModel?: string;
-  showMentionTags?: boolean;
-  viewMode?: 'edit' | 'read';
 }
 
 export interface UserAccount {
@@ -149,6 +159,7 @@ export interface CampaignAiConfig {
 
 export interface CampaignMeta {
   code: string;
+  id?: string; // Canonical identifier alias (id = code)
   name: string;
   subtitle?: string;
   description?: string;
@@ -168,24 +179,43 @@ export interface CampaignMeta {
   aiConfig?: CampaignAiConfig;
 }
 
-export interface Player {
+export interface CampaignPlayer {
+  id?: string;
   _id: string;
-  characterName: string;
-  email?: string;
+  userId?: string;
+  campaignCode?: string;
+
+  role?: CampaignRole;
   isDm: boolean;
   isCoDm?: boolean;
   isCoMaster?: boolean;
-  color?: string;
-  aliases?: string[];
+  status?: PlayerPartyStatus | 'active' | 'expelled' | 'inactive';
+  partyStatus?: PlayerPartyStatus;
+  permissions?: CampaignMemberPermissions;
+
+  name?: string;
+  characterName: string;
   avatarUrl?: string;
+  color?: string;
+  email?: string;
+  aliases?: string[];
+  tags?: string[];
+
+  bio?: CharacterBio;
+  characterBio?: CharacterBio;
+
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface Player extends CampaignPlayer {
   avatar?: any;
   archived?: boolean;
-  status?: PlayerPartyStatus;
-  tags?: string[];
 }
 
 export interface Category {
-  _id: string;
+  id?: string;
+  _id?: string;
   title: string;
   slug: { current: string };
   icon?: string;
@@ -268,10 +298,14 @@ export interface ScrapbookItem {
 
 export interface CampaignChapter {
   id: string;
-  name: string; // e.g. "Prologo", "Atto I: L'Ombra della Miniera", "Capitolo 2"
-  description?: string;
+  title?: string; // Native DB column name
+  name?: string; // Legacy compatibility alias for title
+  synopsis?: string; // Native DB column name
+  description?: string; // Legacy compatibility alias for synopsis
   color?: string; // e.g. "#D4AF37", "#3B82F6", "#10B981", "#8B5CF6", "#EF4444"
-  order?: number;
+  orderIndex?: number; // Native DB column name (order_index)
+  order?: number; // Legacy compatibility alias for orderIndex
+  status?: string;
   coverImageUrl?: string;
   createdAt?: string;
 }
@@ -317,25 +351,31 @@ export interface GazetteConfig {
 }
 
 export interface Session {
-  _id: string;
+  id?: string;
+  _id?: string; // Legacy compatibility alias
   number: number;
-  date: string; // Real world date (YYYY-MM-DD)
+  date_str?: string; // Real world date column YYYY-MM-DD
+  date: string; // Real world date alias YYYY-MM-DD
   title: string;
   sessionType?: 'combat' | 'roleplay' | 'exploration' | 'investigation' | 'lore' | 'mixed';
   chapterId?: string; // Associated chapter ID
   chapterName?: string; // e.g. "Prologo", "Atto I: L'Ombra dell'Antico"
   linkedEntityIds?: string[];
-  loreDate?: string; // Lore date string (e.g. "14 - 16 Alturiak, 1492 CV")
+  calendar_date?: string; // Fantasy calendar date column
+  loreDate?: string; // Fantasy calendar date alias
   loreStartDay?: number;
   loreEndDay?: number;
   loreMonth?: string;
   loreEndMonth?: string;
   loreYear?: number;
   loreEndYear?: number;
-  recap?: any[];
-  events?: SessionEvent[];
+  summary?: string; // Overall narrative chronicle summary
+  recap?: any[]; // Legacy recap block array
+  plot_events?: SessionEvent[]; // Structured plot events column
+  events?: SessionEvent[]; // Structured plot events alias
   images?: string[];
   coverImage?: any;
+  coverImageUrl?: string;
   attendees?: Player[];
   excludedPlayerIds?: string[]; // IDs dei PG che non erano presenti (es. entrati in campagna successivamente)
   attendeePlayerIds?: string[]; // IDs dei PG presenti alla sessione
@@ -581,7 +621,8 @@ export interface SessionMemorySyncResult {
 }
 
 export interface Entity {
-  _id: string;
+  id?: string;
+  _id?: string; // Legacy compatibility alias
   type: 'npc' | 'monster' | 'place' | 'item' | 'faction' | 'quest';
   name: string;
   description?: string;
@@ -622,11 +663,12 @@ export interface DmResponse {
 }
 
 export interface Note {
-  _id: string;
-  _createdAt: string;
-  _updatedAt?: string;
+  id?: string;
+  _id?: string; // Legacy compatibility alias
   createdAt?: string;
   updatedAt?: string;
+  _createdAt?: string; // Legacy compatibility alias
+  _updatedAt?: string; // Legacy compatibility alias
   title: string;
   content?: string;
   body?: any[];
@@ -829,9 +871,12 @@ export interface WorldLoreBite {
 }
 
 export interface WorldLoreArticle {
-  _id: string;
-  _createdAt: string;
-  _updatedAt?: string;
+  id?: string;
+  _id?: string; // Legacy compatibility alias
+  createdAt?: string;
+  updatedAt?: string;
+  _createdAt?: string; // Legacy compatibility alias
+  _updatedAt?: string; // Legacy compatibility alias
   title: string;
   subtitle?: string;
   category: WorldLoreCategory;

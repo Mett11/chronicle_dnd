@@ -8,6 +8,7 @@ import {
   Check,
   FileImage,
   Loader2,
+  AlertTriangle,
 } from 'lucide-react';
 import { ImageOptimizerModal } from './ImageOptimizer';
 import { FirebaseStorageService } from '../lib/firebaseStorageService';
@@ -47,13 +48,25 @@ export function SingleImageUploader({
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const handleApplyUrl = () => {
+  const handleApplyUrl = async () => {
     const trimmed = urlDraft.trim();
     if (trimmed) {
       if (value && value !== trimmed) {
-        FirebaseStorageService.deleteMedia(value).catch(() => {});
+        const code = CampaignManager.getActiveCampaignCode() || 'default';
+        try {
+          const finalUrl = await FirebaseStorageService.replaceMedia({
+            oldUrl: value,
+            newFile: trimmed,
+            campaignCode: code,
+            folder: 'images',
+          });
+          onChange(finalUrl);
+        } catch {
+          onChange(trimmed);
+        }
+      } else {
+        onChange(trimmed);
       }
-      onChange(trimmed);
     }
   };
 
@@ -74,34 +87,23 @@ export function SingleImageUploader({
   const handleOptimizerConfirm = async (optimizedList: string[]) => {
     if (optimizedList.length > 0) {
       const raw = optimizedList[0];
-      if (raw.startsWith('data:')) {
-        setIsUploadingImage(true);
-        try {
-          const code = CampaignManager.getActiveCampaignCode() || 'default';
-          const cdnUrl = await FirebaseStorageService.uploadMedia(
-            code,
-            'images',
-            `img_${Date.now()}.png`,
-            raw
-          );
-          if (cdnUrl && (cdnUrl.startsWith('http://') || cdnUrl.startsWith('https://'))) {
-            if (value && value !== cdnUrl) {
-              FirebaseStorageService.deleteMedia(value).catch(() => {});
-            }
-            onChange(cdnUrl);
-          } else {
-            console.warn('[SingleImageUploader] Upload fallito o URL storage non valido.');
-          }
-        } catch (err) {
-          console.error('Errore upload immagine su Storage:', err);
-        } finally {
-          setIsUploadingImage(false);
+      setIsUploadingImage(true);
+      try {
+        const code = CampaignManager.getActiveCampaignCode() || 'default';
+        const finalCdnUrl = await FirebaseStorageService.replaceMedia({
+          oldUrl: value,
+          newFile: raw,
+          campaignCode: code,
+          folder: 'images',
+          filenamePrefix: entityName ? entityName.replace(/\s+/g, '_').toLowerCase() : 'img',
+        });
+        if (finalCdnUrl) {
+          onChange(finalCdnUrl);
         }
-      } else {
-        if (value && value !== raw) {
-          FirebaseStorageService.deleteMedia(value).catch(() => {});
-        }
-        onChange(raw);
+      } catch (err) {
+        console.error('Errore durante la sostituzione dell\'immagine:', err);
+      } finally {
+        setIsUploadingImage(false);
       }
     }
     setPendingFiles([]);
@@ -191,17 +193,22 @@ export function SingleImageUploader({
             </div>
           </div>
 
-          <div className="px-3 py-2 bg-surface-0 border-t border-[#222] flex items-center justify-between text-[11px] font-mono text-content-1/50">
+          <div className="px-3 py-2 bg-surface-0 border-t border-[#222] flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 text-[11px] font-mono text-content-1/50">
             <span className="truncate max-w-[240px]">
               {value.startsWith('data:') ? 'Immagine caricata da file locale' : value}
             </span>
-            <button
-              type="button"
-              onClick={handleRemove}
-              className="text-primary hover:underline font-bold text-[10px] uppercase cursor-pointer"
-            >
-              Cambia
-            </button>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-amber-400/80 flex items-center gap-1" title="La sostituzione o rimozione eliminerà definitivamente il file precedente dallo storage">
+                <AlertTriangle size={11} /> La sostituzione elimina il file precedente
+              </span>
+              <button
+                type="button"
+                onClick={handleRemove}
+                className="text-primary hover:underline font-bold text-[10px] uppercase cursor-pointer shrink-0"
+              >
+                Cambia
+              </button>
+            </div>
           </div>
         </div>
       ) : (

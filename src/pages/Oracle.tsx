@@ -2365,7 +2365,12 @@ export function Oracle() {
         activeProvider={provider}
         onSelectProvider={(p) => {
           setProvider(p);
-          CampaignManager.saveUserPreferences({ aiProvider: p });
+          CampaignManager.saveUserPreferences({
+            ai: {
+              preferredProvider: p as any,
+              oracleProvider: p as any,
+            },
+          });
         }}
         currentModelId={activeModelId}
         onSelectModel={(id, selectedProvider) => {
@@ -2374,11 +2379,25 @@ export function Oracle() {
           if (targetProvider === 'openrouter') {
             setOpenrouterModel(id);
             setIsCustomOpenrouter(false);
-            CampaignManager.saveUserPreferences({ aiProvider: targetProvider, oracleOpenrouterModel: id });
+            CampaignManager.saveUserPreferences({
+              ai: {
+                preferredProvider: 'openrouter',
+                oracleProvider: 'openrouter',
+                oracleModel: id,
+                oracleOpenrouterModel: id,
+              },
+            });
           } else {
             setGeminiModel(id);
             setIsCustomGemini(false);
-            CampaignManager.saveUserPreferences({ aiProvider: targetProvider, oracleGeminiModel: id });
+            CampaignManager.saveUserPreferences({
+              ai: {
+                preferredProvider: 'gemini',
+                oracleProvider: 'gemini',
+                oracleModel: id,
+                oracleGeminiModel: id,
+              },
+            });
           }
         }}
         favoriteModelIds={favoriteModelIds}

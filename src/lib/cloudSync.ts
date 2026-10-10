@@ -1859,6 +1859,13 @@ export class CloudSyncService {
         }
       }
 
+      if (Array.isArray(remote.campaignMembers) && remote.campaignMembers.length > 0) {
+        const cCode = CampaignManager.getActiveCampaignCode();
+        if (cCode) {
+          CampaignManager.saveCampaignMembersLocalOnly(cCode, remote.campaignMembers);
+        }
+      }
+
       if (Array.isArray(remote.familyRelations)) {
         const localRelations = CampaignManager.getAllFamilyRelations();
         if (remote.familyRelations.length === 0 && localRelations.length > 0) {

@@ -132,9 +132,7 @@ export class ApiKeyManager {
   static getEffectiveCampaignCode(): string {
     if (typeof window === 'undefined') return 'CAMPAIGN';
     try {
-      const userActive =
-        localStorage.getItem('chronicle_current_campaign') ||
-        localStorage.getItem('chronicle_active_campaign_code');
+      const userActive = localStorage.getItem('chronicle_current_campaign');
       if (userActive && userActive.trim() && userActive.trim() !== '__NONE__') {
         return userActive.trim().toUpperCase();
       }
@@ -700,7 +698,7 @@ export class ApiKeyManager {
     if (typeof window !== 'undefined') {
       try {
         localStorage.setItem('chronicle_current_campaign', cleanCode);
-        localStorage.setItem('chronicle_active_campaign_code', cleanCode);
+        localStorage.removeItem('chronicle_active_campaign_code');
         localStorage.setItem(CAMPAIGN_KEYS_STORAGE_KEY, JSON.stringify(encryptedPayload));
         if (updated.geminiKey) {
           localStorage.setItem('chronicle_gemini_api_key', updated.geminiKey);
@@ -859,7 +857,7 @@ export class ApiKeyManager {
     if (currentMode === 'campaign') {
       const campaignCode =
         typeof window !== 'undefined'
-          ? localStorage.getItem('chronicle_active_campaign_code') || ''
+          ? localStorage.getItem('chronicle_current_campaign') || ''
           : '';
       this.saveCampaignKeys(campaignCode, updates);
       return this.getKeys();
@@ -894,7 +892,7 @@ export class ApiKeyManager {
     if (mode === 'campaign') {
       const campaignCode =
         typeof window !== 'undefined'
-          ? localStorage.getItem('chronicle_active_campaign_code') || ''
+          ? localStorage.getItem('chronicle_current_campaign') || ''
           : '';
       this.saveCampaignKeys(campaignCode, { [keyName]: '' });
     } else {

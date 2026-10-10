@@ -1829,7 +1829,12 @@ PG party: ${playerNames.join(', ')}.`;
         activeProvider={provider}
         onSelectProvider={(p) => {
           setProvider(p);
-          CampaignManager.saveUserPreferences({ aiProvider: p });
+          CampaignManager.saveUserPreferences({
+            ai: {
+              preferredProvider: p as any,
+              extractorProvider: p as any,
+            },
+          });
         }}
         currentModelId={activeModelId}
         onSelectModel={(selectedId, selectedProvider) => {
@@ -1837,10 +1842,24 @@ PG party: ${playerNames.join(', ')}.`;
           setProvider(targetProv);
           if (targetProv === 'openrouter') {
             setOpenrouterModel(selectedId);
-            CampaignManager.saveUserPreferences({ aiProvider: targetProv, extractionOpenrouterModel: selectedId });
+            CampaignManager.saveUserPreferences({
+              ai: {
+                preferredProvider: 'openrouter',
+                extractorProvider: 'openrouter',
+                extractorModel: selectedId,
+                extractorOpenrouterModel: selectedId,
+              },
+            });
           } else {
             setGeminiModel(selectedId);
-            CampaignManager.saveUserPreferences({ aiProvider: targetProv, extractionGeminiModel: selectedId });
+            CampaignManager.saveUserPreferences({
+              ai: {
+                preferredProvider: 'gemini',
+                extractorProvider: 'gemini',
+                extractorModel: selectedId,
+                extractorGeminiModel: selectedId,
+              },
+            });
           }
           setIsCatalogModalOpen(false);
         }}
