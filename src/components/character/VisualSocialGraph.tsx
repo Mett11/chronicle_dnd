@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useRef } from 'react';
+import { CampaignManager } from '../../store/campaignStore';
 import {
   Users,
   User,
@@ -54,6 +55,7 @@ export interface SocialGraphNode {
   subtitle: string;
   attitude: SocialAttitude;
   relationLabel: string;
+  trustLevel?: number;
   notes?: string;
   linkedEntityId?: string;
   linkedPlayerId?: string;
@@ -110,6 +112,12 @@ const ATTITUDE_CONFIG: Record<
   },
 };
 
+const isValidAvatar = (url?: string | null): boolean => {
+  if (!url || typeof url !== 'string') return false;
+  const t = url.trim();
+  return Boolean(t && t.toUpperCase() !== 'EMPTY' && t !== 'null' && t !== 'undefined' && t !== '""');
+};
+
 export function VisualSocialGraph({
   player,
   relations,
@@ -143,12 +151,15 @@ export function VisualSocialGraph({
     const rawEdges: SocialGraphEdge[] = [];
 
     // Center Hero node
+    const heroAv = CampaignManager.cleanAvatarString(player.avatarUrl);
+    const safeHeroAv = (!player.isDm && CampaignManager.isDmAvatar(heroAv)) ? '' : heroAv;
+
     const heroNode: Omit<SocialGraphNode, 'x' | 'y'> = {
       id: 'hero',
       uniqueKey: 'hero',
       name: player.characterName || 'Eroe',
       nodeType: 'hero',
-      avatarUrl: player.avatarUrl,
+      avatarUrl: safeHeroAv,
       color: player.color || '#D4AF37',
       subtitle: characterBio?.characterClass || 'Protagonista',
       attitude: 'friendly',
@@ -162,46 +173,47 @@ export function VisualSocialGraph({
     // 2. Party Companions (PG Nodes)
     const otherPlayers = allPlayers.filter((p) => p._id !== player._id);
     otherPlayers.forEach((otherP) => {
-      // Find custom interPartyRelation if available in bio
-      const customPartyRel = characterBio?.interPartyRelations?.[otherP._id];
-      // Or find matching CharacterRelationship linked to this player
-      const linkedFamRel = relations.find((r) => r.linkedPlayerId === otherP._id);
+      // Find matching CharacterRelationship linked to this player
+      const linkedFamRel = relations.find((r) =>
+        r.linkedPlayerId === otherP._id ||
+        (r.name && otherP.characterName && r.name.trim().toLowerCase() === otherP.characterName.trim().toLowerCase())
+      );
 
-      let attitude: SocialAttitude = 'friendly';
-      let relationLabel = "Compagno d'Avventura";
-      let notes = `Membro della Compagnia di Avventurieri.`;
-
-      if (customPartyRel) {
-        relationLabel = customPartyRel.relationType || relationLabel;
-        attitude =
-          customPartyRel.attitude === 'hostile'
-            ? 'hostile'
-            : customPartyRel.attitude === 'neutral'
-            ? 'neutral'
-            : 'friendly';
-        if (customPartyRel.notes) notes = customPartyRel.notes;
-      } else if (linkedFamRel) {
-        relationLabel = linkedFamRel.customRelationshipLabel || linkedFamRel.name;
-        if (linkedFamRel.relationshipType === 'enemy' || linkedFamRel.relationshipType === 'rival') {
-          attitude = 'hostile';
-        }
-        if (linkedFamRel.bio) notes = linkedFamRel.bio;
-      }
+      // Deeply resolve companion relation from bio, Codex, or family relations
+      const resolvedCompanion = CampaignManager.resolveCompanionRelation(
+        characterBio,
+        otherP,
+        relations,
+        null
+      );
 
       const isFamily = isFamilyRelation(linkedFamRel);
       const familyRole = isFamily ? (linkedFamRel?.customRelationshipLabel || linkedFamRel?.titleOrRole || 'Familiare') : undefined;
+
+      const attitude: SocialAttitude =
+        resolvedCompanion.attitude === 'hostile'
+          ? 'hostile'
+          : resolvedCompanion.attitude === 'suspicious'
+          ? 'suspicious'
+          : resolvedCompanion.attitude === 'neutral'
+          ? 'neutral'
+          : 'friendly';
+
+      const cleanAv = CampaignManager.cleanAvatarString(otherP.avatarUrl);
+      const safeAvatar = (!otherP.isDm && CampaignManager.isDmAvatar(cleanAv)) ? '' : cleanAv;
 
       rawNodes.push({
         id: otherP._id,
         uniqueKey: `pg_${otherP._id}`,
         name: otherP.characterName,
         nodeType: 'pg',
-        avatarUrl: otherP.avatarUrl,
+        avatarUrl: safeAvatar,
         color: otherP.color || '#3b82f6',
         subtitle: 'Personaggio Giocante (PG)',
         attitude,
-        relationLabel,
-        notes,
+        relationLabel: resolvedCompanion.relationType,
+        trustLevel: resolvedCompanion.trustLevel,
+        notes: resolvedCompanion.notes,
         linkedPlayerId: otherP._id,
         rawPlayer: otherP,
         rawRelation: linkedFamRel,
@@ -212,9 +224,9 @@ export function VisualSocialGraph({
       rawEdges.push({
         fromId: 'hero',
         toId: otherP._id,
-        label: relationLabel,
+        label: resolvedCompanion.relationType,
         attitude,
-        notes,
+        notes: resolvedCompanion.notes,
         isFamily,
         familyRole,
       });
@@ -650,7 +662,7 @@ export function VisualSocialGraph({
           >
             <div className="relative">
               <div className="w-16 h-16 sm:w-18 sm:h-18 rounded-full border-3 border-primary shadow-lg shadow-primary/30 overflow-hidden bg-surface-2 p-0.5 flex items-center justify-center">
-                {centerHero.avatarUrl && centerHero.avatarUrl.trim() ? (
+                {isValidAvatar(centerHero.avatarUrl) ? (
                   <img
                     src={centerHero.avatarUrl}
                     alt={centerHero.name}
@@ -715,7 +727,7 @@ export function VisualSocialGraph({
                     }`}
                     style={{ borderColor }}
                   >
-                    {node.avatarUrl && node.avatarUrl.trim() ? (
+                    {isValidAvatar(node.avatarUrl) ? (
                       <img
                         src={node.avatarUrl}
                         alt={node.name}
@@ -778,7 +790,7 @@ export function VisualSocialGraph({
             <div className="flex items-start justify-between gap-3 mb-2.5">
               <div className="flex items-center gap-2.5 min-w-0">
                 <div className="w-10 h-10 rounded-full overflow-hidden border border-surface-3 shrink-0 bg-surface-2 flex items-center justify-center">
-                  {selectedNode.avatarUrl && selectedNode.avatarUrl.trim() ? (
+                  {isValidAvatar(selectedNode.avatarUrl) ? (
                     <img
                       src={selectedNode.avatarUrl}
                       alt={selectedNode.name}
@@ -838,6 +850,12 @@ export function VisualSocialGraph({
                   ? 'Fazione'
                   : 'PNG Mondo'}
               </span>
+
+              {selectedNode.trustLevel !== undefined && (
+                <span className="px-2 py-0.5 rounded-md text-[10px] font-mono font-semibold bg-primary/10 text-primary border border-primary/20">
+                  Fiducia: {selectedNode.trustLevel}/10
+                </span>
+              )}
             </div>
 
             {/* Notes snippet */}

@@ -1536,14 +1536,39 @@ export function Storyline() {
   const { allPlayers } = useAuth();
   const [sessions, setSessions] = useState<Session[]>(() => CampaignManager.getSessions());
   const [chapters, setChapters] = useState<CampaignChapter[]>(() => CampaignManager.getChapters());
-  const [selectedChapterId, setSelectedChapterId] = useState<string>('all');
+  const [selectedChapterId, setSelectedChapterId] = useState<string>(() => {
+    const rawTarget = (chapterSlug || searchParams.get('chapter') || searchParams.get('chap') || '').trim();
+    const currentChapters = CampaignManager.getChapters();
+    if (rawTarget && rawTarget !== 'all' && rawTarget !== 'tutti') {
+      const matched = currentChapters.find(
+        (c) =>
+          c.id === rawTarget ||
+          slugifyChapterTitle(c.name) === rawTarget.toLowerCase() ||
+          c.name.toLowerCase() === decodeURIComponent(rawTarget).toLowerCase()
+      );
+      if (matched) return matched.id;
+    }
+    if (currentChapters.length > 0) {
+      return currentChapters[0].id;
+    }
+    return 'all';
+  });
   const [calendar, setCalendar] = useState(() => CampaignManager.getCalendar());
   const [entities, setEntities] = useState<Entity[]>(() => CampaignManager.getEntities());
 
   // URL Slug synchronization with selectedChapterId
   useEffect(() => {
     const rawTarget = (chapterSlug || searchParams.get('chapter') || searchParams.get('chap') || '').trim();
-    if (!rawTarget || rawTarget === 'all' || rawTarget === 'tutti') {
+    const currentChapters = CampaignManager.getChapters();
+    if (!rawTarget) {
+      if (currentChapters.length > 0) {
+        setSelectedChapterId(currentChapters[0].id);
+      } else {
+        setSelectedChapterId('all');
+      }
+      return;
+    }
+    if (rawTarget === 'all' || rawTarget === 'tutti') {
       setSelectedChapterId('all');
       return;
     }
@@ -1551,7 +1576,6 @@ export function Storyline() {
       setSelectedChapterId('unassigned');
       return;
     }
-    const currentChapters = CampaignManager.getChapters();
     const matched = currentChapters.find(
       (c) =>
         c.id === rawTarget ||
@@ -1560,6 +1584,10 @@ export function Storyline() {
     );
     if (matched) {
       setSelectedChapterId(matched.id);
+    } else if (currentChapters.length > 0) {
+      setSelectedChapterId(currentChapters[0].id);
+    } else {
+      setSelectedChapterId('all');
     }
   }, [chapterSlug, searchParams]);
 
@@ -1854,9 +1882,18 @@ export function Storyline() {
         new Set([...(sess.linkedEntityIds || []), ...allEventsList.flatMap((e) => e.linkedEntityIds || [])])
       ).filter(Boolean);
 
-      const sessImages = Array.from(
-        new Set([...(sess.images || []), ...allEventsList.flatMap((e) => e.images || [])])
-      ).filter(Boolean);
+      const chapObj = chapters.find((c) => c.id === sess.chapterId || c.name === sess.chapterName);
+      const chapterCover = chapObj?.coverImageUrl?.trim();
+      const sessionCover = (typeof sess.coverImage === 'string' ? sess.coverImage : (sess.coverImage as any)?.url) || '';
+
+      const rawSessionImages = [
+        ...(sessionCover ? [sessionCover] : []),
+        ...(sess.images || []),
+        ...allEventsList.flatMap((e) => e.images || []),
+      ].filter(Boolean);
+
+      // Session's own images (do NOT fallback to chapter cover for individual session images)
+      const sessImages = Array.from(new Set(rawSessionImages));
 
       const sessionImpact =
         sess.events?.some((e) => e.impact === 'major') || allEventsList.some((e) => e.impact === 'major')
@@ -2147,22 +2184,55 @@ export function Storyline() {
 
     const targetSessions = sortedSessions.filter((s) => matchingSessionIds.has(s._id));
     const sessionsToProcess = targetSessions.length > 0 ? targetSessions : sortedSessions;
+    const seenChapterCovers = new Set<string>();
 
     sessionsToProcess.forEach((s) => {
-      // Find chapter object for cover artwork fallback
+      // Find session's chapter
       const chapObj = chapters.find((c) => c.id === s.chapterId || c.name === s.chapterName);
-      const coverImg = (chapObj?.coverImageUrl || (s as any).coverImage || (s as any).coverImageUrl || "").trim();
+      const chapterCover = chapObj?.coverImageUrl?.trim() || '';
+      const chapKey = (chapObj?.id || chapObj?.name || s.chapterName || '').trim();
 
-      // 1. Gather & deduplicate images across session and all its events
-      const rawImages: string[] = [
-        ...(coverImg ? [coverImg] : []),
+      // If this session opens a new chapter with a chapter cover image, insert a dedicated Chapter Intro Slide
+      if (chapterCover && chapKey && !seenChapterCovers.has(chapKey)) {
+        seenChapterCovers.add(chapKey);
+        slides.push({
+          imageUrl: chapterCover,
+          nodeId: `chap_${chapKey}`,
+          nodeTitle: `Copertina: ${chapObj?.name || chapObj?.title || s.chapterName || 'Capitolo'}`,
+          nodeDescription: chapObj?.description || (chapObj as any)?.summary || `Apertura e Copertina del Capitolo "${chapObj?.name || s.chapterName || ''}".`,
+          nodeType: 'chapter',
+          loreDate: s.loreDate?.trim() || (s.date ? `Sessione del ${s.date}` : ''),
+          sessionNumber: s.number,
+          sessionTitle: s.title,
+          chapterName: chapObj?.name || s.chapterName,
+          imageIndexInNode: 0,
+          nodeTotalImages: 1,
+          globalIndex: globalIdx,
+          totalGlobalImages: 0,
+          sessionId: s._id,
+          sessionObj: s,
+          isPlaceholder: false,
+          isChapterCover: true,
+        });
+        globalIdx++;
+      }
+
+      const sessionCover = (
+        typeof (s as any).coverImage === 'string'
+          ? (s as any).coverImage
+          : ((s as any).coverImage?.url || (s as any).coverImageUrl || '')
+      ).trim();
+
+      // Gather session's own images (session cover, images array, and event images)
+      const rawSessionImages = [
+        ...(sessionCover ? [sessionCover] : []),
         ...(s.images || []),
         ...(s.events || []).flatMap((e) => e.images || []),
       ].filter(Boolean);
 
       const uniqueImages: string[] = [];
       const seenImages = new Set<string>();
-      for (const img of rawImages) {
+      for (const img of rawSessionImages) {
         const trimmed = typeof img === "string" ? img.trim() : "";
         if (trimmed && !seenImages.has(trimmed)) {
           seenImages.add(trimmed);
@@ -2201,11 +2271,11 @@ export function Storyline() {
       if (uniqueImages.length > 0) {
         const totalInSession = uniqueImages.length;
         uniqueImages.forEach((imgUrl, imgIdx) => {
-          const isCover = coverImg && imgUrl === coverImg;
+          const isCover = Boolean(sessionCover && imgUrl === sessionCover);
           slides.push({
             imageUrl: imgUrl,
             nodeId: `sess_${s._id}`,
-            nodeTitle: `Capitolo #${s.number}: ${s.title}`,
+            nodeTitle: `Sessione #${s.number}: ${s.title}`,
             nodeDescription: recapText,
             nodeType: "session",
             loreDate: formattedLoreDate,
@@ -2227,11 +2297,12 @@ export function Storyline() {
           globalIdx++;
         });
       } else {
-        // Session without photos: add a single slide representation
+        // Session without photos: add a single slide representation (using sessionCover if present, else placeholder)
+        const fallbackCover = sessionCover;
         slides.push({
-          imageUrl: coverImg,
+          imageUrl: fallbackCover,
           nodeId: `sess_${s._id}`,
-          nodeTitle: `Capitolo #${s.number}: ${s.title}`,
+          nodeTitle: `Sessione #${s.number}: ${s.title}`,
           nodeDescription: recapText,
           nodeType: "session",
           loreDate: formattedLoreDate,
@@ -2242,13 +2313,13 @@ export function Storyline() {
           eventType: category,
           impact: impact,
           imageIndexInNode: 0,
-          nodeTotalImages: coverImg ? 1 : 0,
+          nodeTotalImages: fallbackCover ? 1 : 0,
           globalIndex: globalIdx,
           totalGlobalImages: 0,
           sessionId: s._id,
           sessionObj: s,
-          isPlaceholder: !coverImg,
-          isChapterCover: Boolean(coverImg),
+          isPlaceholder: !fallbackCover,
+          isChapterCover: false,
         });
         globalIdx++;
       }
@@ -2517,9 +2588,36 @@ export function Storyline() {
 
       {/* Timeline Visualization */}
       {filteredNodes.length === 0 ? (
-        <div className="flex-1 flex flex-col items-center justify-center text-center py-20 bg-surface-1 rounded-2xl border border-dashed border-surface-2 p-8">
-          <Scroll size={36} className="mx-auto text-content-3 mb-2" />
-          <p className="text-sm font-medium text-content-2">Nessun evento corrisponde ai filtri della storyline.</p>
+        <div className="flex-1 flex flex-col items-center justify-center text-center py-20 bg-surface-1 rounded-2xl border border-dashed border-surface-2 p-8 space-y-3">
+          <Scroll size={36} className="mx-auto text-content-3" />
+          <div className="space-y-1">
+            <p className="text-sm font-medium text-content-1">Nessuna sessione trovata per questo capitolo.</p>
+            <p className="text-xs text-content-3 max-w-md mx-auto">
+              Seleziona un capitolo contenente sessioni oppure visualizza l&apos;intera campagna.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
+            <button
+              type="button"
+              onClick={() => handleSelectChapter('all')}
+              className="px-3 py-1.5 rounded-xl bg-primary text-surface-0 font-medium text-xs hover:bg-primary-hover shadow-xs transition-colors cursor-pointer"
+            >
+              Visualizza Tutta la Campagna ({sessions.length} sessioni)
+            </button>
+            {chapters
+              .filter((c) => sessions.some((s) => s.chapterId === c.id || s.chapterName === c.name))
+              .map((chap) => (
+                <button
+                  key={chap.id}
+                  type="button"
+                  onClick={() => handleSelectChapter(chap.id)}
+                  className="px-3 py-1.5 rounded-xl bg-surface-2 text-content-1 border border-surface-3 font-medium text-xs hover:bg-surface-3 transition-colors cursor-pointer flex items-center gap-1.5"
+                >
+                  <span className="w-2 h-2 rounded-full" style={{ backgroundColor: chap.color || '#6366f1' }} />
+                  {chap.name}
+                </button>
+              ))}
+          </div>
         </div>
       ) : (
         <>

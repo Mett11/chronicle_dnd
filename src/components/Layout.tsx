@@ -29,6 +29,7 @@ import {
   Globe,
   Database,
   QrCode,
+  Dices,
 } from 'lucide-react';
 import { CampaignManager } from '../store/campaignStore';
 import { NotificationsModal } from './NotificationsModal';
@@ -41,6 +42,64 @@ import { getStoredTheme, ClassTheme } from '../lib/theme';
 import { getPwaStatus, subscribePwa, PwaStatus } from '../lib/pwa';
 import { CampaignMeta, Note } from '../types';
 import { Download, Sliders } from 'lucide-react';
+
+interface NavItemProps {
+  to: string;
+  icon: React.ElementType;
+  label: string;
+  badge?: string | number;
+  badgeColor?: string;
+  shortcut?: string;
+}
+
+const NavItem = React.memo(function NavItem({
+  to,
+  icon: Icon,
+  label,
+  badge,
+  badgeColor,
+  shortcut,
+}: NavItemProps) {
+  const location = useLocation();
+  const isCodexLink = to === '/codex';
+  const isCodexActive =
+    isCodexLink &&
+    (location.pathname === '/codex' ||
+      location.pathname.startsWith('/codex/') ||
+      location.pathname.startsWith('/entities'));
+
+  return (
+    <NavLink
+      to={to}
+      className={({ isActive }) =>
+        `flex items-center justify-between px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+          isActive || isCodexActive
+            ? 'bg-primary/10 text-primary'
+            : 'text-content-2 hover:bg-surface-2 hover:text-content-1'
+        }`
+      }
+    >
+      <div className="flex items-center gap-3 min-w-0">
+        <Icon size={16} className="shrink-0" />
+        <span className="truncate">{label}</span>
+      </div>
+      {badge !== undefined && (
+        <span
+          className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold leading-tight shrink-0 ${
+            badgeColor || 'bg-primary text-surface-0'
+          }`}
+        >
+          {badge}
+        </span>
+      )}
+      {shortcut && (
+        <kbd className="hidden lg:inline font-mono text-[10px] text-content-3 opacity-70">
+          {shortcut}
+        </kbd>
+      )}
+    </NavLink>
+  );
+});
 
 export function Layout() {
   const { player, logout } = useAuth();
@@ -116,9 +175,26 @@ export function Layout() {
         setCurrentTheme(getStoredTheme());
       }
     };
+    const handleOpenTheme = () => setIsThemeModalOpen(true);
+    const handleOpenTypography = () => setIsTypographyModalOpen(true);
+    const handleOpenInvite = () => setIsInviteModalOpen(true);
+    const handleOpenInstall = () => setIsInstallModalOpen(true);
+    const handleSwitch = () => handleSwitchCampaign();
+
     window.addEventListener('chronicle_theme_changed', handleThemeChange);
+    window.addEventListener('chronicle_open_theme_modal', handleOpenTheme);
+    window.addEventListener('chronicle_open_typography_modal', handleOpenTypography);
+    window.addEventListener('chronicle_open_invite_modal', handleOpenInvite);
+    window.addEventListener('chronicle_open_install_modal', handleOpenInstall);
+    window.addEventListener('chronicle_switch_campaign', handleSwitch);
+
     return () => {
       window.removeEventListener('chronicle_theme_changed', handleThemeChange);
+      window.removeEventListener('chronicle_open_theme_modal', handleOpenTheme);
+      window.removeEventListener('chronicle_open_typography_modal', handleOpenTypography);
+      window.removeEventListener('chronicle_open_invite_modal', handleOpenInvite);
+      window.removeEventListener('chronicle_open_install_modal', handleOpenInstall);
+      window.removeEventListener('chronicle_switch_campaign', handleSwitch);
     };
   }, []);
 
@@ -168,62 +244,54 @@ export function Layout() {
     navigate(`/notes?select=${noteId}`);
   };
 
-  const NavItem = ({
-    to,
-    icon: Icon,
-    label,
-    badge,
-    badgeColor,
-    shortcut,
-  }: {
-    to: string;
-    icon: React.ElementType;
-    label: string;
-    badge?: string | number;
-    badgeColor?: string;
-    shortcut?: string;
-  }) => {
-    const isCodexLink = to === '/codex';
-    const isCodexActive =
-      isCodexLink &&
-      (location.pathname === '/codex' ||
-        location.pathname.startsWith('/codex/') ||
-        location.pathname.startsWith('/entities'));
-
-    return (
-      <NavLink
-        to={to}
-        className={({ isActive }) =>
-          `flex items-center justify-between px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-            isActive || isCodexActive
-              ? 'bg-primary/10 text-primary'
-              : 'text-content-2 hover:bg-surface-2 hover:text-content-1'
-          }`
-        }
-      >
-        <div className="flex items-center gap-3 min-w-0">
-          <Icon size={16} className="shrink-0" />
-          <span className="truncate">{label}</span>
-        </div>
-        {badge !== undefined && (
-          <span
-            className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold leading-tight shrink-0 ${
-              badgeColor || 'bg-primary text-surface-0'
-            }`}
-          >
-            {badge}
-          </span>
-        )}
-        {shortcut && (
-          <kbd className="hidden lg:inline font-mono text-[10px] text-content-3 opacity-70">
-            {shortcut}
-          </kbd>
-        )}
-      </NavLink>
-    );
-  };
-
   const titleClasses = getCampaignTitleClasses(campaignMeta);
+
+  const isD20HubPage =
+    location.pathname === '/table' ||
+    location.pathname === '/d20' ||
+    location.pathname === '/hub' ||
+    location.pathname === '/menu';
+
+  if (isD20HubPage) {
+    return (
+      <div className="w-full h-screen overflow-hidden bg-surface-0 font-body text-content-2">
+        <Outlet />
+        <NotificationsModal
+          isOpen={isNotificationsOpen}
+          onClose={() => {
+            setIsNotificationsOpen(false);
+            updateNotificationsCount();
+          }}
+          currentUser={player}
+          onSelectNote={handleSelectNoteFromNotification}
+        />
+        <ThemeSelectorModal isOpen={isThemeModalOpen} onClose={() => setIsThemeModalOpen(false)} />
+        <InstallAppModal isOpen={isInstallModalOpen} onClose={() => setIsInstallModalOpen(false)} />
+        {campaignMeta && (
+          <CampaignTypographyModal
+            isOpen={isTypographyModalOpen}
+            onClose={() => setIsTypographyModalOpen(false)}
+            campaign={campaignMeta}
+            onSaved={(updated) => setCampaignMeta(updated)}
+          />
+        )}
+        {campaignMeta && (
+          <CampaignInviteModal
+            isOpen={isInviteModalOpen}
+            onClose={() => setIsInviteModalOpen(false)}
+            campaignCode={campaignMeta.code}
+            campaignName={campaignMeta.name}
+          />
+        )}
+        <OrphanTagModal
+          isOpen={Boolean(orphanTagToResolve)}
+          onClose={() => setOrphanTagToResolve(null)}
+          tagName={orphanTagToResolve || ''}
+          onResolved={() => setOrphanTagToResolve(null)}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen overflow-hidden bg-surface-0 font-body text-content-2">
@@ -246,9 +314,9 @@ export function Layout() {
         >
           <div className="flex-1 min-w-0 flex items-center justify-between group/sidebar-title px-3">
             <Link
-              to="/character"
+              to="/table"
               className="flex items-center min-w-0 flex-1 focus:outline-none"
-              title={campaignMeta?.name || 'Campagna'}
+              title={`${campaignMeta?.name || 'Campagna'} • Clicca per il Tavolo D20 Immersivo`}
             >
               <span
                 className={`text-sm sm:text-base font-bold select-none transition-all truncate block ${titleClasses.fullClass}`}
@@ -282,6 +350,7 @@ export function Layout() {
         <div className="flex-1 overflow-y-auto p-3 space-y-6 custom-scrollbar flex flex-col justify-between">
           <div className="space-y-6">
             <div className="space-y-1">
+              <NavItem to="/table" icon={Dices} label="Tavolo D20" />
               <NavItem to="/notes" icon={Scroll} label="Diario & Appunti" />
               <NavItem to="/sessions" icon={BookOpen} label="Tomo Sessioni" />
               <NavItem to="/storyline" icon={Layers} label="Storyline" />
@@ -350,8 +419,8 @@ export function Layout() {
               className="w-8 h-8 rounded-lg bg-surface-2 border flex items-center justify-center shrink-0 overflow-hidden group-hover:border-primary transition-colors shadow-xs"
               style={{ borderColor: player.color || '#6366f1' }}
             >
-              {player.avatarUrl && player.avatarUrl.trim() ? (
-                <img src={player.avatarUrl} alt={player.characterName} className="w-full h-full object-cover" />
+              {CampaignManager.cleanAvatarString(player.avatarUrl) ? (
+                <img src={CampaignManager.cleanAvatarString(player.avatarUrl)} alt={player.characterName} className="w-full h-full object-cover" />
               ) : (
                 <span className="font-heading font-semibold text-xs text-content-1">
                   {player.characterName?.charAt(0).toUpperCase()}

@@ -197,6 +197,22 @@ export function safeLocalStorageSetItem(key: string, value: string): boolean {
       return true;
     } catch {}
 
+    // 2b. If campaigns array exceeds browser storage quota due to heavy banner/covers
+    if (key === 'chronicle_global_campaigns') {
+      try {
+        const parsed = JSON.parse(value);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const lightweight = parsed.map((camp: any) => ({
+            ...camp,
+            bannerUrl: camp.bannerUrl && camp.bannerUrl.length > 2000 ? '' : camp.bannerUrl,
+            logoUrl: camp.logoUrl && camp.logoUrl.length > 2000 ? '' : camp.logoUrl,
+          }));
+          localStorage.setItem(key, JSON.stringify(lightweight));
+          return true;
+        }
+      } catch {}
+    }
+
     // 3. If accounts array exceeds browser storage quota due to large avatar strings
     if (key === 'chronicle_global_user_accounts') {
       try {
@@ -722,7 +738,7 @@ export class CampaignManager {
   static saveCampaignsLocalOnly(campaigns: CampaignMeta[]) {
     const canonical = campaigns.map((c) => ({ ...c, id: c.id || c.code }));
     setCached("chronicle_global_campaigns", canonical);
-    localStorage.setItem(
+    safeLocalStorageSetItem(
       "chronicle_global_campaigns",
       JSON.stringify(canonical),
     );
@@ -843,9 +859,11 @@ export class CampaignManager {
       SupabaseSyncService.updateCampaignMetadata(code, { dmIsPlayer: isPlayer }).catch(() => {});
     }
     if (typeof window !== 'undefined') {
-      localStorage.setItem(`chronicle_${code}_dm_is_player`, String(isPlayer));
-      localStorage.setItem('chronicle_reading_include_dm', String(isPlayer));
-      localStorage.setItem('chronicle_include_dm_as_player', String(isPlayer));
+      try {
+        localStorage.setItem(`chronicle_${code}_dm_is_player`, String(isPlayer));
+        localStorage.setItem('chronicle_reading_include_dm', String(isPlayer));
+        localStorage.setItem('chronicle_include_dm_as_player', String(isPlayer));
+      } catch {}
       window.dispatchEvent(
         new CustomEvent('chronicle_campaign_updated', {
           detail: { code, dmIsPlayer: isPlayer },
@@ -1347,6 +1365,23 @@ export class CampaignManager {
           new Set([...(existing.dmCampaigns || []), ...(acc.dmCampaigns || [])])
         );
 
+        // Helper to check for generic fallback names that should NOT override actual character names
+        const isGenericFallbackName = (name?: string | null): boolean => {
+          if (!name) return true;
+          const clean = name.trim().toLowerCase();
+          if (!clean) return true;
+          const emailPrefix = emailKey ? emailKey.split('@')[0].toLowerCase() : '';
+          return (
+            clean === 'personaggio' ||
+            clean === 'giocatore' ||
+            clean === 'player' ||
+            clean === 'avventuriero' ||
+            clean === 'nessun nome' ||
+            clean === 'dungeon master' ||
+            (Boolean(emailPrefix) && clean === emailPrefix)
+          );
+        };
+
         // Merge campaignProfiles per campaign key
         const allCampKeys = Array.from(
           new Set([
@@ -1376,21 +1411,53 @@ export class CampaignManager {
                 ? pPrimary.status
                 : (pSecondary.status || pPrimary.status || 'active');
 
+            // Robust name resolution: non-generic real character name takes priority
+            const pPrimaryName = pPrimary.characterName?.trim();
+            const pSecondaryName = pSecondary.characterName?.trim();
+            const resolvedProfName = !isGenericFallbackName(pPrimaryName)
+              ? pPrimaryName
+              : (!isGenericFallbackName(pSecondaryName) ? pSecondaryName : (pPrimaryName || pSecondaryName || 'Personaggio'));
+
+            // Robust avatar resolution: non-empty avatar takes priority
+            const pPrimaryAvatar = pPrimary.avatarUrl?.trim();
+            const pSecondaryAvatar = pSecondary.avatarUrl?.trim();
+            const resolvedProfAvatar = pPrimaryAvatar || pSecondaryAvatar || '';
+
+            // Robust color resolution: custom color takes priority over default
+            const resolvedProfColor = (pPrimary.color && pPrimary.color !== '#6366f1')
+              ? pPrimary.color
+              : (pSecondary.color || pPrimary.color || '#6366f1');
+
             mergedProfiles[k] = {
-              characterName: pPrimary.characterName || pSecondary.characterName || 'Personaggio',
-              color: pPrimary.color || pSecondary.color || '#6366f1',
-              avatarUrl: pPrimary.avatarUrl !== undefined ? pPrimary.avatarUrl : pSecondary.avatarUrl,
+              characterName: resolvedProfName!,
+              color: resolvedProfColor,
+              avatarUrl: resolvedProfAvatar,
               status: resolvedStatus,
               tags: resolvedTags,
               aliases: resolvedAliases,
+              isCoDm: Boolean(pPrimary.isCoDm || pSecondary.isCoDm),
+              isCoMaster: Boolean(pPrimary.isCoMaster || pSecondary.isCoMaster),
             };
           }
         });
 
-        // Resolve merged color: primary color takes priority
-        const chosenColor = primary.color || secondary.color || '#6366f1';
-        const chosenName = primary.characterName || secondary.characterName || 'Giocatore';
-        const chosenAvatar = primary.avatarUrl !== undefined ? primary.avatarUrl : (secondary.avatarUrl || '');
+        // Resolve merged root characterName: non-generic character name takes priority
+        const primaryName = primary.characterName?.trim();
+        const secondaryName = secondary.characterName?.trim();
+        const chosenName = !isGenericFallbackName(primaryName)
+          ? primaryName
+          : (!isGenericFallbackName(secondaryName) ? secondaryName : (primaryName || secondaryName || 'Giocatore'));
+
+        // Resolve merged root avatar: non-empty avatar takes priority over empty string
+        const primaryAvatar = primary.avatarUrl?.trim();
+        const secondaryAvatar = secondary.avatarUrl?.trim();
+        const chosenAvatar = primaryAvatar || secondaryAvatar || '';
+
+        // Resolve merged root color: custom color takes priority
+        const chosenColor = (primary.color && primary.color !== '#6366f1')
+          ? primary.color
+          : (secondary.color || primary.color || '#6366f1');
+
         const finalTags =
           (primary.tags && primary.tags.length > 0)
             ? primary.tags
@@ -1400,12 +1467,21 @@ export class CampaignManager {
             ? primary.aliases
             : (secondary.aliases && secondary.aliases.length > 0 ? secondary.aliases : []);
 
+        const mergedPreviousIds = Array.from(
+          new Set([
+            ...(primary.previousAccountIds || []),
+            ...(secondary.previousAccountIds || []),
+            primary.id,
+            secondary.id,
+          ].filter(Boolean))
+        );
+
         emailMap.set(emailKey, {
           ...secondary,
           ...primary,
           id: targetId,
           email: emailKey,
-          characterName: chosenName,
+          characterName: chosenName!,
           color: chosenColor,
           avatarUrl: chosenAvatar,
           isDm: Boolean(primary.isDm || secondary.isDm || mergedDm.length > 0),
@@ -1415,6 +1491,7 @@ export class CampaignManager {
           lastCampaignCode: primary.lastCampaignCode || secondary.lastCampaignCode,
           tags: finalTags,
           aliases: finalAliases,
+          previousAccountIds: mergedPreviousIds,
         });
       }
     });
@@ -1657,6 +1734,7 @@ export class CampaignManager {
     profile: Partial<CampaignProfile>,
   ): UserAccount | null {
     const cleanCode = campaignCode.trim().toUpperCase();
+    const campaign = this.getCampaigns().find((c) => c.code.toUpperCase() === cleanCode);
     const accounts = this.getAccounts();
     const index = accounts.findIndex((a) => a.id === accountId);
     if (index === -1) return null;
@@ -1664,9 +1742,10 @@ export class CampaignManager {
     const account = { ...accounts[index] };
     if (!account.campaignProfiles) account.campaignProfiles = {};
 
+    const isAccountDm = Boolean(account.isDm || (campaign?.dmId && campaign.dmId === account.id));
     const prev = account.campaignProfiles[cleanCode] || {
       characterName: profile.characterName?.trim() || '',
-      avatarUrl: account.avatarUrl || "",
+      avatarUrl: isAccountDm ? (account.avatarUrl || "") : "",
       color: account.color || "#6366f1",
       status: profile.status || "active",
       tags: [],
@@ -1720,9 +1799,10 @@ export class CampaignManager {
 
     const account = { ...accounts[index] };
     if (!account.campaignProfiles) account.campaignProfiles = {};
+    const isAccountDm = Boolean(account.isDm || (cleanCode && account.dmCampaigns?.some((c) => c.toUpperCase() === cleanCode)));
     const prev = (cleanCode ? account.campaignProfiles[cleanCode] : null) || {
       characterName: account.characterName,
-      avatarUrl: account.avatarUrl || "",
+      avatarUrl: isAccountDm ? (account.avatarUrl || "") : "",
       color: account.color || "#6366f1",
       status: "active",
       tags: [],
@@ -1762,9 +1842,10 @@ export class CampaignManager {
 
     const account = { ...accounts[index] };
     if (!account.campaignProfiles) account.campaignProfiles = {};
+    const isAccountDm = Boolean(account.isDm || (cleanCode && account.dmCampaigns?.some((c) => c.toUpperCase() === cleanCode)));
     const prev = (cleanCode ? account.campaignProfiles[cleanCode] : null) || {
       characterName: account.characterName,
-      avatarUrl: account.avatarUrl || "",
+      avatarUrl: isAccountDm ? (account.avatarUrl || "") : "",
       color: account.color || "#6366f1",
       status: "active",
       tags: [],
@@ -1813,9 +1894,10 @@ export class CampaignManager {
 
     const account = { ...accounts[index] };
     if (!account.campaignProfiles) account.campaignProfiles = {};
+    const isAccountDm = Boolean(account.isDm || (cleanCode && account.dmCampaigns?.some((c) => c.toUpperCase() === cleanCode)));
     const prev = (cleanCode ? account.campaignProfiles[cleanCode] : null) || {
       characterName: account.characterName,
-      avatarUrl: account.avatarUrl || "",
+      avatarUrl: isAccountDm ? (account.avatarUrl || "") : "",
       color: account.color || "#6366f1",
       status: "active",
       tags: [],
@@ -2602,7 +2684,7 @@ export class CampaignManager {
       const prevProfile: Partial<CampaignProfile> = account.campaignProfiles[activeCode] || {};
       account.campaignProfiles[activeCode] = {
         characterName: updates.characterName !== undefined ? updates.characterName.trim() : (prevProfile.characterName || account.characterName),
-        avatarUrl: updates.avatarUrl !== undefined ? updates.avatarUrl.trim() : (prevProfile.avatarUrl !== undefined ? prevProfile.avatarUrl : account.avatarUrl),
+        avatarUrl: updates.avatarUrl !== undefined ? updates.avatarUrl.trim() : (prevProfile.avatarUrl !== undefined ? prevProfile.avatarUrl : (account.isDm ? (account.avatarUrl || '') : '')),
         color: updates.color !== undefined ? updates.color : (prevProfile.color || account.color || '#6366f1'),
       };
     }
@@ -2610,6 +2692,45 @@ export class CampaignManager {
     accounts[index] = account;
     this.saveAccounts(accounts);
     return accounts[index];
+  }
+
+  static cleanAvatarString(url?: string | null): string {
+    if (!url || typeof url !== 'string') return '';
+    const t = url.trim();
+    if (!t || t.toUpperCase() === 'EMPTY' || t === 'null' || t === 'undefined' || t === '""') return '';
+    return t;
+  }
+
+  static isDmAvatar(url?: string | null): boolean {
+    if (!url || typeof url !== 'string') return false;
+    const clean = this.cleanAvatarString(url);
+    if (!clean) return false;
+    const activeCode = (this.getActiveCampaignCode() || '').trim().toUpperCase();
+    const campaign = activeCode ? this.getCampaigns().find((c) => c.code.toUpperCase() === activeCode) : null;
+    const accounts = this.getAccounts();
+    for (const a of accounts) {
+      if (!a) continue;
+      const isAccDm = Boolean(
+        a.isDm ||
+        (campaign?.dmId && a.id === campaign.dmId) ||
+        (campaign?.dmEmail && a.email && campaign.dmEmail.toLowerCase() === a.email.toLowerCase()) ||
+        (activeCode && a.dmCampaigns?.some((c) => c.toUpperCase() === activeCode))
+      );
+      if (isAccDm && this.cleanAvatarString(a.avatarUrl) === clean) {
+        return true;
+      }
+    }
+    const cur = this.getCurrentAccount();
+    const isCurDm = Boolean(
+      cur?.isDm ||
+      (campaign?.dmId && cur?.id === campaign.dmId) ||
+      (campaign?.dmEmail && cur?.email && campaign.dmEmail.toLowerCase() === cur.email.toLowerCase()) ||
+      (activeCode && cur?.dmCampaigns?.some((c) => c.toUpperCase() === activeCode))
+    );
+    if (isCurDm && this.cleanAvatarString(cur?.avatarUrl) === clean) {
+      return true;
+    }
+    return false;
   }
 
   static accountToPlayer(account: UserAccount): Player {
@@ -2653,55 +2774,53 @@ export class CampaignManager {
       ? this.getCampaignMember(cleanCode, account.id, account.email)
       : null;
 
-    // Check bios directly without calling getCharacterBio (to prevent mutual recursion)
-    const bios = this.getAllCharacterBios();
-    const cleanId = String(account.id || '').toLowerCase();
-    const cleanEmail = String(account.email || '').toLowerCase();
-    const charBio = bios.find((b) => {
-      if (!b) return false;
-      const bPid = String(b.playerId || (b as any).player_id || '').toLowerCase();
-      const bEmail = String((b as any).email || '').toLowerCase();
-      return (cleanId && bPid === cleanId) || (cleanEmail && bEmail && bEmail === cleanEmail);
-    });
-
-    const bioName = charBio?.characterName?.trim() || charBio?.name?.trim();
     const memName = campaignMember?.characterName?.trim();
-    const accName = account.characterName?.trim();
     const profName = profile?.characterName?.trim();
+    const accName = account.characterName?.trim();
     const emailPrefix = account.email ? account.email.split('@')[0].toLowerCase() : '';
 
-    const validBioName = (bioName && bioName !== 'Personaggio' && bioName !== 'Avventuriero' && bioName.toLowerCase() !== emailPrefix) ? bioName : null;
-    const validMemName = (memName && memName !== 'Personaggio' && memName !== 'Avventuriero') ? memName : null;
-    const validProfName = profName && profName !== 'Personaggio' && profName.toLowerCase() !== emailPrefix ? profName : null;
-    const validAccName = accName && accName !== 'Personaggio' && accName !== 'Avventuriero' && accName !== 'Dungeon Master' && accName.toLowerCase() !== emailPrefix ? accName : null;
+    const isGenericFallback = (n?: string | null) => !n || ['personaggio', 'avventuriero', 'player', 'giocatore'].includes(n.trim().toLowerCase()) || (Boolean(emailPrefix) && n.trim().toLowerCase() === emailPrefix);
 
-    // 1. Authoritative Character Name (character_bios as SSOT)
+    const validMemName = memName && !isGenericFallback(memName) ? memName : null;
+    const validProfName = profName && !isGenericFallback(profName) ? profName : null;
+    const validAccName = accName && !isGenericFallback(accName) && accName !== 'Dungeon Master' ? accName : null;
+
+    // 1. Authoritative Character Name (Member / Profile / Account SSOT)
     const resolvedCharName =
-      validBioName ||
-      validMemName ||
       validProfName ||
+      validMemName ||
       validAccName ||
-      bioName ||
-      memName ||
       profName ||
+      memName ||
       accName ||
       'Avventuriero';
 
-    // 2. Authoritative Avatar (character_bios as SSOT, with automatic backfill from profile/account)
-    const bioAvatar = charBio?.avatarUrl?.trim() || '';
-    const profAvatar = profile?.avatarUrl?.trim() || '';
-    const accAvatar = account.avatarUrl?.trim() || '';
-    const resolvedAvatar = bioAvatar || profAvatar || accAvatar || '';
-
-    // Automatic backfill: If charBio exists but was missing avatar, populate it so character_bios stays up-to-date
-    if (charBio && !bioAvatar && (profAvatar || accAvatar)) {
-      charBio.avatarUrl = profAvatar || accAvatar;
-      if (!charBio.characterName) charBio.characterName = resolvedCharName;
-      if (!charBio.name) charBio.name = resolvedCharName;
-      this.saveCharacterBio(charBio).catch(() => {});
+    // 2. Authoritative Avatar (Campaign Profile / Character Bio SSOT)
+    // Never fallback to global user account avatar for other players or from the DM
+    let profAvatar = CampaignManager.cleanAvatarString(profile?.avatarUrl);
+    if (!isDm && CampaignManager.isDmAvatar(profAvatar)) {
+      profAvatar = '';
     }
 
-    const resolvedColorFinal = charBio?.color || profile?.color || resolvedColor;
+    const charBio = this.getCharacterBio(account.id);
+    const isBioBelongingToAccount = Boolean(
+      charBio &&
+      (charBio.playerId === account.id ||
+       charBio.playerId === account.email ||
+       (account.previousAccountIds && account.previousAccountIds.includes(charBio.playerId)) ||
+       (charBio.characterName && charBio.characterName.trim().toLowerCase() === resolvedCharName.toLowerCase()))
+    );
+
+    let bioAvatar = isBioBelongingToAccount ? CampaignManager.cleanAvatarString(charBio?.avatarUrl) : '';
+    if (!isDm && CampaignManager.isDmAvatar(bioAvatar)) {
+      bioAvatar = '';
+    }
+
+    // Prioritize campaign-specific avatar (profile in campaign or character bio).
+    // If none exists, keep blank so initials placeholder is displayed rather than another user's avatar.
+    const resolvedAvatar = profAvatar || bioAvatar || (isDm ? CampaignManager.cleanAvatarString(account.avatarUrl) : '');
+
+    const resolvedColorFinal = (isBioBelongingToAccount && charBio?.color) || profile?.color || resolvedColor;
     const role: CampaignRole = isDm ? 'dm' : (isCoDm ? 'co_dm' : 'player');
 
     return {
@@ -2723,7 +2842,7 @@ export class CampaignManager {
       tags: resolvedTags,
       aliases: resolvedAliases,
       permissions: campaignMember?.permissions,
-      bio: charBio || undefined,
+      bio: isBioBelongingToAccount ? charBio || undefined : undefined,
       characterBio: charBio || undefined,
     };
   }
@@ -2817,7 +2936,17 @@ export class CampaignManager {
       });
 
     // Also include any members from campaign_members that are not in local accounts array
-    const coveredIds = new Set(resultPlayers.map((p) => String(p._id).toLowerCase()));
+    const coveredIds = new Set<string>();
+    const coveredNames = new Set<string>();
+    resultPlayers.forEach((p) => {
+      if (p._id) coveredIds.add(String(p._id).toLowerCase());
+      if (p.id) coveredIds.add(String(p.id).toLowerCase());
+      if (p.email) coveredIds.add(String(p.email).toLowerCase());
+      if (p.characterName && p.characterName !== 'Avventuriero' && p.characterName !== 'Personaggio') {
+        coveredNames.add(p.characterName.trim().toLowerCase());
+      }
+    });
+
     const allBios = this.getAllCharacterBios();
     members.forEach((m) => {
       const mId = String(m.userId || '').toLowerCase();
@@ -2830,6 +2959,12 @@ export class CampaignManager {
         const isDm = normRole === 'dm';
         const isCoDm = normRole === 'co_dm';
         const charName = mBio?.characterName || mBio?.name || m.characterName || 'Avventuriero';
+        const cleanCharName = charName.trim().toLowerCase();
+
+        // If this member's character name is already represented by an account in the party, do not duplicate
+        if (cleanCharName !== 'avventuriero' && cleanCharName !== 'personaggio' && coveredNames.has(cleanCharName)) {
+          return;
+        }
 
         resultPlayers.push({
           id: m.userId,
@@ -2843,17 +2978,37 @@ export class CampaignManager {
           isCoDm,
           isCoMaster: isCoDm,
           color: mBio?.color || '#6366f1',
-          avatarUrl: mBio?.avatarUrl || '',
+          avatarUrl: (!isDm && this.isDmAvatar(this.cleanAvatarString(mBio?.avatarUrl))) ? '' : this.cleanAvatarString(mBio?.avatarUrl),
           status: m.status || 'active',
           permissions: m.permissions,
           bio: mBio || undefined,
           characterBio: mBio || undefined,
         } as Player);
         coveredIds.add(mId);
+        if (cleanCharName !== 'avventuriero' && cleanCharName !== 'personaggio') {
+          coveredNames.add(cleanCharName);
+        }
       }
     });
 
-    return resultPlayers;
+    // Deduplicate resultPlayers by _id and characterName to ensure party list has distinct party members
+    const finalPlayers: Player[] = [];
+    const seenP = new Set<string>();
+    const seenNames = new Set<string>();
+    resultPlayers.forEach((p) => {
+      const pId = String(p._id || p.id || '').toLowerCase();
+      const pName = (p.characterName || p.name || '').trim().toLowerCase();
+      const isGeneric = !pName || ['avventuriero', 'personaggio', 'player', 'giocatore'].includes(pName);
+
+      if (seenP.has(pId)) return;
+      if (!isGeneric && seenNames.has(pName)) return;
+
+      seenP.add(pId);
+      if (!isGeneric) seenNames.add(pName);
+      finalPlayers.push(p);
+    });
+
+    return finalPlayers;
   }
 
   static getPlayers(): Player[] {
@@ -5544,88 +5699,300 @@ export class CampaignManager {
   static getCharacterBio(playerId: string): CharacterBio | null {
     if (!playerId) return null;
     const bios = this.getAllCharacterBios();
-    let found = bios.find((b) => b && b.playerId === playerId);
-    if (found) return found;
-
-    // Smart fallback 1: Match by characterName or email from raw accounts pool (without calling getPlayers)
     const accounts = this.getAccounts();
-    const targetAccount = accounts.find((a) => a && (a.id === playerId || a.email === playerId));
-    const targetName = (targetAccount?.characterName || '').trim().toLowerCase();
-    const targetEmail = (targetAccount?.email || '').trim().toLowerCase();
+    const cleanPlayerId = playerId.trim().toLowerCase();
+    const activeCode = (this.getActiveCampaignCode() || '').trim().toUpperCase();
+    const campaign = activeCode ? this.getCampaigns().find((c) => c.code.toUpperCase() === activeCode) : null;
 
-    if (targetName || targetEmail) {
+    // Helper: is a character name a generic placeholder?
+    const isGeneric = (n?: string | null) => {
+      if (!n) return true;
+      const clean = n.trim().toLowerCase();
+      return !clean || ['personaggio', 'avventuriero', 'player', 'giocatore'].includes(clean);
+    };
+
+    // Find candidate account by id, email, or previousAccountIds
+    const targetAccount = accounts.find((a) => {
+      if (!a) return false;
+      const aId = String(a.id || '').toLowerCase();
+      const aEmail = (a.email || '').toLowerCase().trim();
+      if (aId === cleanPlayerId || (aEmail && aEmail === cleanPlayerId)) return true;
+      if (a.previousAccountIds && a.previousAccountIds.some((pid) => String(pid).toLowerCase() === cleanPlayerId)) return true;
+      return false;
+    });
+
+    const profile = activeCode && targetAccount?.campaignProfiles
+      ? (targetAccount.campaignProfiles[activeCode] || Object.entries(targetAccount.campaignProfiles).find(([k]) => k.toUpperCase() === activeCode)?.[1])
+      : null;
+
+    // Collect all known identifier aliases for this user
+    const knownUserIds = new Set<string>([cleanPlayerId]);
+    if (targetAccount?.id) knownUserIds.add(String(targetAccount.id).toLowerCase().trim());
+    if (targetAccount?.email) knownUserIds.add(targetAccount.email.toLowerCase().trim());
+    if (Array.isArray(targetAccount?.previousAccountIds)) {
+      targetAccount.previousAccountIds.forEach((pid) => {
+        if (pid) knownUserIds.add(String(pid).toLowerCase().trim());
+      });
+    }
+
+    const isUserDm = Boolean(
+      targetAccount?.isDm ||
+      targetAccount?.dmCampaigns?.some((c) => c.toUpperCase() === activeCode) ||
+      (campaign?.dmId && knownUserIds.has(String(campaign.dmId).toLowerCase())) ||
+      (campaign?.dmEmail && targetAccount?.email && campaign.dmEmail.toLowerCase() === targetAccount.email.toLowerCase())
+    );
+    if (isUserDm) {
+      if (campaign?.dmId) knownUserIds.add(String(campaign.dmId).toLowerCase());
+      knownUserIds.add('usr_dm');
+      knownUserIds.add('dm');
+    }
+
+    // Candidate character names for this user
+    const candidateNames: string[] = [];
+    if (targetAccount?.characterName && !isGeneric(targetAccount.characterName)) {
+      candidateNames.push(targetAccount.characterName.trim().toLowerCase());
+    }
+    if (profile?.characterName && !isGeneric(profile.characterName)) {
+      candidateNames.push(profile.characterName.trim().toLowerCase());
+    }
+    if (Array.isArray(targetAccount?.aliases)) {
+      targetAccount.aliases.forEach((a) => {
+        if (a && !isGeneric(a)) candidateNames.push(a.trim().toLowerCase());
+      });
+    }
+
+    // Candidate avatars
+    const candidateAvatars = [
+      targetAccount?.avatarUrl?.trim(),
+      profile?.avatarUrl?.trim(),
+    ].filter((av): av is string => Boolean(av && av.length > 5));
+
+    // 1. Collect all matching bios for this user across ID, email, and known aliases
+    const matchedBios = bios.filter((b) => {
+      if (!b) return false;
+      const bPid = String(b.playerId || (b as any).player_id || '').toLowerCase().trim();
+      const bEmail = String((b as any).email || '').toLowerCase().trim();
+      if (knownUserIds.has(bPid) || (Boolean(bEmail) && knownUserIds.has(bEmail))) return true;
+      const bName = (b.characterName || (b as any).name || '').trim().toLowerCase();
+      if (bName && !isGeneric(bName) && candidateNames.includes(bName)) return true;
+      return false;
+    });
+
+    let found: CharacterBio | null = null;
+    if (matchedBios.length > 0) {
+      // Prioritize the bio with the richest timeline memories and backstory
+      found = matchedBios.reduce((best, curr) => {
+        const bestScore = (best.timelineMemories?.length || 0) * 10 + (best.backstoryMarkdown?.length || 0) + (best.evolvingBeliefs?.length || 0) * 5;
+        const currScore = (curr.timelineMemories?.length || 0) * 10 + (curr.backstoryMarkdown?.length || 0) + (curr.evolvingBeliefs?.length || 0) * 5;
+        return currScore >= bestScore ? curr : best;
+      }, matchedBios[0]);
+
+      // Consolidate memories, beliefs, and inter-party relations from all matched bios belonging to this player
+      const combinedMemories = new Map<string, TimelineMemoryEntry>();
+      const combinedBeliefs = new Map<string, EvolvingBelief>();
+      const combinedInterParty = { ...(found.interPartyRelations || {}) };
+
+      matchedBios.forEach((b) => {
+        (b.timelineMemories || []).forEach((m) => {
+          if (m && m.id) combinedMemories.set(m.id, m);
+        });
+        (b.evolvingBeliefs || []).forEach((eb) => {
+          if (eb && (eb.id || eb.subject)) combinedBeliefs.set(eb.id || eb.subject, eb);
+        });
+        Object.entries(b.interPartyRelations || {}).forEach(([k, rel]) => {
+          if (rel && !combinedInterParty[k]) combinedInterParty[k] = rel;
+        });
+      });
+
+      found = {
+        ...found,
+        timelineMemories: Array.from(combinedMemories.values()).filter((m) => {
+          if (!m || !m.title) return false;
+          const t = m.title.trim().toLowerCase();
+          const s = (m.summary || '').trim().toLowerCase();
+          if (t.includes('la direzione della campagna') || t.match(/^sessione\s+\d+/i) || t.includes('sessione 22')) return false;
+          if (s.includes('il dm gestisce il racconto') || s.includes('sessione di campagna registrata')) return false;
+          return true;
+        }),
+        evolvingBeliefs: Array.from(combinedBeliefs.values()),
+        interPartyRelations: combinedInterParty,
+        backstoryMarkdown: found.backstoryMarkdown || matchedBios.find((b) => Boolean(b.backstoryMarkdown))?.backstoryMarkdown || '',
+      };
+    }
+
+    // 2. DM bio match (if user is DM and there is a bio associated with DM ID or marker)
+    if (!found && isUserDm) {
       found = bios.find((b) => {
         if (!b) return false;
-        const bName = (b.characterName || (b as any).name || '').trim().toLowerCase();
-        const bEmail = ((b as any).email || '').trim().toLowerCase();
-        return (targetName && bName === targetName) || (targetEmail && bEmail === targetEmail);
-      });
-      if (found) {
-        // Auto-link the playerId to ensure smooth caching without creating duplicates
-        return { ...found, playerId };
+        const bPid = String(b.playerId || (b as any).player_id || '').toLowerCase().trim();
+        return bPid === 'usr_dm' || bPid === 'dm' || Boolean(campaign?.dmId && bPid === String(campaign.dmId).toLowerCase());
+      }) || null;
+    }
+
+    // 3. Check campaign_members table for mapped userId
+    if (!found && activeCode) {
+      const members = this.getCampaignMembers(activeCode);
+      const userMember = members.find((m) => knownUserIds.has(String(m.userId).toLowerCase()) || (m.characterName && candidateNames.includes(m.characterName.toLowerCase())));
+      if (userMember) {
+        found = bios.find((b) => {
+          if (!b) return false;
+          const bPid = String(b.playerId || (b as any).player_id || '').toLowerCase().trim();
+          return bPid === String(userMember.userId).toLowerCase();
+        }) || null;
       }
     }
 
-    // Smart fallback 2: Check localStorage for legacy/individual key
-    const indKey = this.getStorageKey(`char_bio_${playerId}`);
-    const indSaved = localStorage.getItem(indKey);
-    if (indSaved) {
-      try {
-        const parsed = JSON.parse(indSaved);
-        if (parsed && typeof parsed === 'object') return parsed;
-      } catch {}
-    }
-
-    // Smart fallback 3: Check any global or un-prefixed bio matching character name
-    if (targetName) {
-      try {
-        for (let i = 0; i < localStorage.length; i++) {
-          const k = localStorage.key(i);
-          if (k && k.includes('character_bios')) {
-            const raw = localStorage.getItem(k);
-            if (raw) {
-              const list = JSON.parse(raw);
-              if (Array.isArray(list)) {
-                const match = list.find((b: any) => {
-                  const n = (b?.characterName || b?.name || '').trim().toLowerCase();
-                  return n === targetName;
-                });
-                if (match) return { ...match, playerId };
-              }
+    // 4. Check localStorage individual keys
+    if (!found) {
+      for (const uid of Array.from(knownUserIds)) {
+        const indKey = this.getStorageKey(`char_bio_${uid}`);
+        const indSaved = localStorage.getItem(indKey);
+        if (indSaved) {
+          try {
+            const parsed = JSON.parse(indSaved);
+            if (parsed && typeof parsed === 'object') {
+              found = parsed;
+              break;
             }
-          }
+          } catch {}
         }
-      } catch {}
+      }
     }
 
-    // Smart fallback 4 (Automatic Backfill): Synthesize from account & campaignProfiles if available
-    if (targetAccount) {
-      const activeCode = (this.getActiveCampaignCode() || '').trim().toUpperCase();
-      const profile = activeCode && targetAccount.campaignProfiles
-        ? targetAccount.campaignProfiles[activeCode]
-        : null;
-      const charName = profile?.characterName || targetAccount.characterName || 'Personaggio';
-      const avatarUrl = profile?.avatarUrl || targetAccount.avatarUrl || '';
-      const color = profile?.color || targetAccount.color || '#6366f1';
+    // 5. Consolidate memories, beliefs, and known lore bites from matching Codex entity (if any)
+    const allEntities = this.getEntities();
+    const matchingCodexEnt = allEntities.find((e) => {
+      if (!e) return false;
+      const cleanEntName = (e.name || '').trim().toLowerCase();
+      if (!cleanEntName || cleanEntName === 'avventuriero' || cleanEntName === 'personaggio') return false;
+      return candidateNames.includes(cleanEntName) || (e.aliases && Array.isArray(e.aliases) && e.aliases.some((a) => typeof a === 'string' && candidateNames.includes(a.trim().toLowerCase())));
+    });
 
-      if (avatarUrl || (charName && charName !== 'Personaggio')) {
-        const syntheticBio: CharacterBio = {
-          playerId,
+    if (matchingCodexEnt?.aiConfig) {
+      if (!found) {
+        found = {
+          playerId: cleanPlayerId,
           campaignCode: activeCode || undefined,
-          characterName: charName,
-          name: charName,
-          avatarUrl,
-          color,
-          updatedAt: new Date().toISOString(),
+          characterName: matchingCodexEnt.name,
+          name: matchingCodexEnt.name,
+          color: matchingCodexEnt.color || '#6366f1',
+          timelineMemories: [],
+          evolvingBeliefs: [],
+          knownLoreBites: [],
         };
-        const allBios = this.getAllCharacterBios();
-        allBios.push(syntheticBio);
-        this.saveAllCharacterBiosLocalOnly(allBios);
-        if (isSupabaseConfigured() && activeCode) {
-          SupabaseSyncService.saveCharacterBio(activeCode, syntheticBio).catch(() => {});
-        }
-        return syntheticBio;
       }
+
+      if (Array.isArray(matchingCodexEnt.aiConfig.timelineMemories)) {
+        const existingMemIds = new Set((found.timelineMemories || []).map((m) => m.id || `${m.sessionId}_${m.title}`));
+        const mergedMemories = [...(found.timelineMemories || [])];
+        matchingCodexEnt.aiConfig.timelineMemories.forEach((m) => {
+          const key = m.id || `${m.sessionId}_${m.title}`;
+          if (m && !existingMemIds.has(key)) {
+            existingMemIds.add(key);
+            mergedMemories.push(m);
+          }
+        });
+        found.timelineMemories = mergedMemories;
+      }
+
+      if (Array.isArray(matchingCodexEnt.aiConfig.evolvingBeliefs)) {
+        const existingBeliefSubjects = new Set((found.evolvingBeliefs || []).map((b) => (b.subject || '').toLowerCase().trim()));
+        const mergedBeliefs = [...(found.evolvingBeliefs || [])];
+        matchingCodexEnt.aiConfig.evolvingBeliefs.forEach((b) => {
+          const key = (b.subject || '').toLowerCase().trim();
+          if (b && key && !existingBeliefSubjects.has(key)) {
+            existingBeliefSubjects.add(key);
+            mergedBeliefs.push(b);
+          }
+        });
+        found.evolvingBeliefs = mergedBeliefs;
+      }
+
+      if (Array.isArray(matchingCodexEnt.aiConfig.knownLoreBites)) {
+        const existingBites = new Set((found.knownLoreBites || []).map((k) => `${k.articleId}_${k.biteId}`));
+        const mergedBites = [...(found.knownLoreBites || [])];
+        matchingCodexEnt.aiConfig.knownLoreBites.forEach((k) => {
+          const key = `${k.articleId}_${k.biteId}`;
+          if (k && !existingBites.has(key)) {
+            existingBites.add(key);
+            mergedBites.push(k);
+          }
+        });
+        found.knownLoreBites = mergedBites;
+      }
+
+      // Merge narrative companion relations from matching Codex entity
+      if (matchingCodexEnt.aiConfig.partyRelations && typeof matchingCodexEnt.aiConfig.partyRelations === 'object') {
+        const currentInter = { ...(found.interPartyRelations || {}) };
+        Object.entries(matchingCodexEnt.aiConfig.partyRelations).forEach(([k, pRel]) => {
+          if (!pRel) return;
+          const cleanK = k.toLowerCase().trim();
+          const pName = (pRel.characterName || '').toLowerCase().trim();
+          const existingKey = Object.keys(currentInter).find((ck) => {
+            const low = ck.toLowerCase().trim();
+            if (low === cleanK) return true;
+            if (pName && currentInter[ck]?.targetCharacterName?.toLowerCase().trim() === pName) return true;
+            return false;
+          });
+
+          if (existingKey) {
+            const existing = currentInter[existingKey];
+            const isGenericType = !existing.relationType || ['compagno', "compagno d'armi", "compagno d'avventura"].includes(existing.relationType.toLowerCase().trim());
+            const lastTrust = (pRel.progression && pRel.progression.length > 0)
+              ? pRel.progression[pRel.progression.length - 1].trustLevel
+              : undefined;
+
+            currentInter[existingKey] = {
+              ...existing,
+              relationType: (isGenericType && pRel.relationType) ? pRel.relationType : existing.relationType,
+              attitude: existing.attitude || (pRel.attitude as any) || 'neutral',
+              notes: existing.notes || pRel.notes || '',
+              progression: (existing.progression && existing.progression.length > 0)
+                ? existing.progression
+                : (pRel.progression || []),
+              trustLevel: existing.trustLevel !== undefined
+                ? existing.trustLevel
+                : (lastTrust ?? 5),
+            };
+          } else {
+            const lastTrust = (pRel.progression && pRel.progression.length > 0)
+              ? pRel.progression[pRel.progression.length - 1].trustLevel
+              : undefined;
+
+            currentInter[k] = {
+              targetPlayerId: pRel.playerId || k,
+              targetCharacterName: pRel.characterName || k,
+              relationType: pRel.relationType || "Compagno d'Avventura",
+              attitude: (pRel.attitude as any) || 'friendly',
+              notes: pRel.notes || '',
+              progression: pRel.progression || [],
+              trustLevel: lastTrust ?? 5,
+            };
+          }
+        });
+        found.interPartyRelations = currentInter;
+      }
+    }
+
+    // Return the matched bio directly WITHOUT auto-saving/overwriting cloud DB on read operations
+    if (found) {
+      const canonicalTargetId = targetAccount?.id || playerId;
+      const bestName = !isGeneric(targetAccount?.characterName)
+        ? targetAccount!.characterName
+        : (!isGeneric(profile?.characterName) ? profile!.characterName : null);
+
+      let resolvedBioAvatar = this.cleanAvatarString(profile?.avatarUrl) || this.cleanAvatarString(found.avatarUrl) || '';
+      if (!isUserDm && this.isDmAvatar(resolvedBioAvatar)) {
+        resolvedBioAvatar = '';
+      }
+
+      return {
+        ...found,
+        playerId: canonicalTargetId,
+        characterName: bestName || found.characterName || 'Personaggio',
+        name: bestName || found.name || found.characterName || 'Personaggio',
+        avatarUrl: resolvedBioAvatar,
+      };
     }
 
     return null;
@@ -5701,7 +6068,188 @@ export class CampaignManager {
       interPartyRelations: currentRelations,
     };
     this.saveCharacterBio(updatedBio);
+
+    // Sync inverse relation on target player for symmetric trustLevel
+    if (relation.targetPlayerId) {
+      const targetBio = this.getCharacterBio(relation.targetPlayerId);
+      if (targetBio) {
+        const targetInter = { ...(targetBio.interPartyRelations || {}) };
+        const myName = bio.characterName || bio.name || 'Compagno';
+        const myKey = playerId;
+        const existingInv = targetInter[myKey] || Object.values(targetInter).find((r) => r.targetCharacterName?.toLowerCase().trim() === myName.toLowerCase().trim());
+        targetInter[myKey] = {
+          targetPlayerId: playerId,
+          targetCharacterName: myName,
+          relationType: existingInv?.relationType || relation.relationType || "Compagno d'Avventura",
+          attitude: existingInv?.attitude || relation.attitude || 'friendly',
+          trustLevel: relation.trustLevel ?? existingInv?.trustLevel ?? 5,
+          notes: existingInv?.notes || relation.notes || '',
+          progression: existingInv?.progression || relation.progression || [],
+        };
+        this.saveCharacterBio({ ...targetBio, interPartyRelations: targetInter });
+      }
+    }
+
     return updatedBio;
+  }
+
+  static resolveCompanionRelation(
+    characterBio: CharacterBio | null | undefined,
+    targetPlayer: { _id?: string; id?: string; email?: string; characterName?: string },
+    relations?: CharacterRelationship[],
+    codexEntity?: Entity | null
+  ): {
+    relationType: string;
+    attitude: string;
+    trustLevel: number;
+    notes: string;
+    progression: any[];
+    isCustom: boolean;
+  } {
+    const oCleanId = String(targetPlayer._id || targetPlayer.id || '').toLowerCase().trim();
+    const oCleanEmail = String(targetPlayer.email || '').toLowerCase().trim();
+    const oCleanName = String(targetPlayer.characterName || '').toLowerCase().trim();
+
+    // 1. Look up in characterBio.interPartyRelations
+    const relMap = characterBio?.interPartyRelations || {};
+    const matchedKey = Object.keys(relMap).find((k) => {
+      if (!k) return false;
+      const cleanK = k.toLowerCase().trim();
+      if (oCleanId && cleanK === oCleanId) return true;
+      if (oCleanEmail && cleanK === oCleanEmail) return true;
+      const item = relMap[k];
+      if (item?.targetPlayerId && oCleanId && String(item.targetPlayerId).toLowerCase() === oCleanId) return true;
+      if (item?.targetCharacterName && oCleanName && item.targetCharacterName.trim().toLowerCase() === oCleanName) return true;
+      return false;
+    });
+    const customPartyRel = matchedKey ? relMap[matchedKey] : undefined;
+
+    // 2. Look up in Codex entity partyRelations
+    const codexPartyRel = codexEntity?.aiConfig?.partyRelations
+      ? Object.values(codexEntity.aiConfig.partyRelations).find((pr) => {
+          if (!pr) return false;
+          const pId = String(pr.playerId || '').toLowerCase().trim();
+          const pName = String(pr.characterName || '').toLowerCase().trim();
+          if (oCleanId && pId === oCleanId) return true;
+          if (oCleanName && pName === oCleanName) return true;
+          return false;
+        })
+      : undefined;
+
+    // 3. Look up in CharacterRelationship list (family/mentors/rivals/bonds)
+    const linkedFamRel = Array.isArray(relations)
+      ? relations.find((r) => {
+          if (!r) return false;
+          const rLink = String(r.linkedPlayerId || '').toLowerCase().trim();
+          const rName = String(r.name || '').toLowerCase().trim();
+          if (oCleanId && rLink && rLink === oCleanId) return true;
+          if (oCleanName && rName && rName === oCleanName) return true;
+          return false;
+        })
+      : undefined;
+
+    const isGenericLabel = (lbl?: string | null) =>
+      !lbl || ['compagno', "compagno d'armi", "compagno d'avventura", "avventuriero"].includes(lbl.trim().toLowerCase());
+
+    let relationType = "Compagno d'Avventura";
+    let attitude = 'friendly';
+    let trustLevel = 5;
+    let notes = `Membro della Compagnia di Avventurieri.`;
+    let progression: any[] = [];
+    let isCustom = false;
+
+    if (customPartyRel) {
+      if (customPartyRel.relationType && !isGenericLabel(customPartyRel.relationType)) {
+        relationType = customPartyRel.relationType.trim();
+        isCustom = true;
+      }
+      attitude = customPartyRel.attitude || attitude;
+      if (customPartyRel.notes) {
+        notes = customPartyRel.notes;
+        isCustom = true;
+      }
+      if (customPartyRel.trustLevel !== undefined) {
+        trustLevel = customPartyRel.trustLevel;
+      } else if (customPartyRel.progression && customPartyRel.progression.length > 0) {
+        const last = customPartyRel.progression[customPartyRel.progression.length - 1];
+        if (last && last.trustLevel !== undefined) trustLevel = last.trustLevel;
+      }
+      if (customPartyRel.progression && customPartyRel.progression.length > 0) {
+        progression = customPartyRel.progression;
+      }
+    }
+
+    // Check inverse relation on target player's bio if trust level is default 5 or relation missing
+    if ((!customPartyRel || trustLevel === 5) && (targetPlayer._id || targetPlayer.id || targetPlayer.email)) {
+      const targetBio = this.getCharacterBio(targetPlayer._id || targetPlayer.id || targetPlayer.email || '');
+      if (targetBio?.interPartyRelations) {
+        const myId = characterBio?.playerId?.toLowerCase().trim();
+        const myName = (characterBio?.characterName || characterBio?.name || '').toLowerCase().trim();
+        const invMatch = Object.values(targetBio.interPartyRelations).find((r) => {
+          if (!r) return false;
+          const rPId = String(r.targetPlayerId || '').toLowerCase().trim();
+          const rPName = String(r.targetCharacterName || '').toLowerCase().trim();
+          if (myId && rPId === myId) return true;
+          if (myName && rPName === myName) return true;
+          return false;
+        });
+        if (invMatch) {
+          if (!customPartyRel) {
+            attitude = invMatch.attitude || attitude;
+            if (invMatch.notes) notes = invMatch.notes;
+            if (invMatch.relationType && !isGenericLabel(invMatch.relationType)) {
+              relationType = invMatch.relationType.trim();
+              isCustom = true;
+            }
+          }
+          if (invMatch.trustLevel !== undefined) {
+            trustLevel = invMatch.trustLevel;
+          }
+        }
+      }
+    }
+
+    if (codexPartyRel) {
+      if ((!isCustom || isGenericLabel(relationType)) && codexPartyRel.relationType && !isGenericLabel(codexPartyRel.relationType)) {
+        relationType = codexPartyRel.relationType.trim();
+        isCustom = true;
+      }
+      if (!customPartyRel) {
+        attitude = (codexPartyRel.attitude as any) || attitude;
+        if (codexPartyRel.notes) notes = codexPartyRel.notes;
+      }
+      if (trustLevel === 5 && codexPartyRel.progression && codexPartyRel.progression.length > 0) {
+        const last = codexPartyRel.progression[codexPartyRel.progression.length - 1];
+        if (last && last.trustLevel !== undefined) trustLevel = last.trustLevel;
+      }
+      if (progression.length === 0 && codexPartyRel.progression) {
+        progression = codexPartyRel.progression;
+      }
+    }
+
+    if (linkedFamRel) {
+      const famLabel = linkedFamRel.customRelationshipLabel || linkedFamRel.titleOrRole;
+      if (famLabel && !isGenericLabel(famLabel)) {
+        relationType = famLabel.trim();
+        isCustom = true;
+      }
+      if (linkedFamRel.relationshipType === 'enemy' || linkedFamRel.relationshipType === 'rival') {
+        attitude = 'hostile';
+      }
+      if (linkedFamRel.bio && !notes) notes = linkedFamRel.bio;
+      if (linkedFamRel.trustLevel !== undefined) {
+        trustLevel = linkedFamRel.trustLevel;
+      }
+    }
+
+    return {
+      relationType,
+      attitude,
+      trustLevel: Math.max(1, Math.min(10, trustLevel)),
+      notes,
+      progression,
+      isCustom,
+    };
   }
 
   // === FAMILY TREE & RELATIONSHIPS ===
@@ -5772,7 +6320,32 @@ export class CampaignManager {
   static getFamilyRelations(playerId: string): CharacterRelationship[] {
     if (!playerId) return [];
     const all = this.getAllFamilyRelations();
-    return all.filter((r) => r.playerId === playerId);
+    const cleanPlayerId = playerId.trim().toLowerCase();
+    const accounts = this.getAccounts();
+    const targetAccount = accounts.find((a) => {
+      if (!a) return false;
+      const aId = String(a.id || '').toLowerCase();
+      const aEmail = (a.email || '').toLowerCase().trim();
+      if (aId === cleanPlayerId || (aEmail && aEmail === cleanPlayerId)) return true;
+      if (a.previousAccountIds && a.previousAccountIds.some((pid) => String(pid).toLowerCase() === cleanPlayerId)) return true;
+      return false;
+    });
+
+    const knownIds = new Set<string>([cleanPlayerId]);
+    if (targetAccount?.id) knownIds.add(String(targetAccount.id).toLowerCase());
+    if (targetAccount?.email) knownIds.add(targetAccount.email.toLowerCase().trim());
+    if (Array.isArray(targetAccount?.previousAccountIds)) {
+      targetAccount.previousAccountIds.forEach((pid) => {
+        if (pid) knownIds.add(String(pid).toLowerCase().trim());
+      });
+    }
+
+    return all.filter((r) => {
+      if (!r) return false;
+      const rPid = String(r.playerId || '').toLowerCase().trim();
+      const rSrc = String((r as any).sourceEntityId || '').toLowerCase().trim();
+      return knownIds.has(rPid) || (Boolean(rSrc) && knownIds.has(rSrc));
+    });
   }
 
   static async addFamilyRelation(relation: Omit<CharacterRelationship, "id"> & { id?: string }): Promise<{ success: boolean; relation: CharacterRelationship; error?: string }> {

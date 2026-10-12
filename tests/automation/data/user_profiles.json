@@ -1,0 +1,14 @@
+{
+  "dm_user": {
+    "email": "dm.test@rpgapp.com",
+    "characterName": "Dungeon Master Rex",
+    "avatarUrl": "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=400&q=80",
+    "role": "dm"
+  },
+  "player_user": {
+    "email": "player1.test@rpgapp.com",
+    "characterName": "Eldrin il Mago",
+    "avatarUrl": "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=400&q=80",
+    "role": "player"
+  }
+}

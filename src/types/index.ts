@@ -52,6 +52,7 @@ export interface CampaignMemberRecord {
   userId: string;
   role: CampaignRole | 'co-dm' | 'comaster';
   characterName?: string;
+  avatarUrl?: string;
   status?: 'active' | 'expelled' | 'inactive';
   permissions?: CampaignMemberPermissions;
   createdAt?: string;
@@ -130,6 +131,7 @@ export interface UserAccount {
   authProvider?: 'google' | 'password' | 'guest';
   tags?: string[];
   aliases?: string[];
+  previousAccountIds?: string[];
   preferences?: UserPreferences;
 }
 
@@ -506,6 +508,7 @@ export interface EntityAiConfig {
   entityRelations?: Record<string, EntityToEntityRelation>;
   timelineMemories?: TimelineMemoryEntry[]; // Registro storico dei ricordi per PNG
   evolvingBeliefs?: EvolvingBelief[];       // Credenze evolutive e rivelazioni storiche
+  knownLoreBites?: CharacterKnownLoreItem[]; // Nozioni e conoscenze del mondo apprese
   visibilityMode?: 'dm_only' | 'all_players' | 'custom';
   allowedViewPlayerIds?: string[];
   allowedEditPlayerIds?: string[];

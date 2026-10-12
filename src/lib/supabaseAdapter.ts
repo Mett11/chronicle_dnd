@@ -33,6 +33,7 @@ export function resolveStorageUrl(
   const trimmed = pathOrUrl.trim();
   if (
     !trimmed ||
+    trimmed.toUpperCase() === 'EMPTY' ||
     trimmed === 'undefined' ||
     trimmed === 'null' ||
     trimmed.includes('[Immagine rimossa') ||
@@ -44,12 +45,13 @@ export function resolveStorageUrl(
   if (
     trimmed.startsWith('http://') ||
     trimmed.startsWith('https://') ||
-    trimmed.startsWith('blob:')
+    trimmed.startsWith('blob:') ||
+    trimmed.startsWith('data:image/')
   ) {
     return trimmed;
   }
 
-  // Reject legacy heavy base64 strings
+  // Reject malformed or non-image data strings
   if (trimmed.startsWith('data:')) {
     return '';
   }

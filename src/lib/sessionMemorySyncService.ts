@@ -1171,9 +1171,20 @@ export class SessionMemorySyncService {
       for (const pp of playerProposals) {
         if (!pp.playerId || pp.playerId.startsWith('unregistered_')) continue;
         let bioIndex = allBios.findIndex((b) => b.playerId === pp.playerId);
-        const currentBio = bioIndex !== -1 ? allBios[bioIndex] : { playerId: pp.playerId };
+        const resolvedExisting = bioIndex !== -1 ? allBios[bioIndex] : CampaignManager.getCharacterBio(pp.playerId);
+        if (bioIndex === -1 && resolvedExisting) {
+          bioIndex = allBios.findIndex((b) => b.playerId === resolvedExisting.playerId);
+        }
+        const currentBio = resolvedExisting || { playerId: pp.playerId };
         let bioChanged = false;
         let updatedBio = { ...currentBio };
+
+        // Ensure real characterName is populated on the bio so it never stays generic
+        if (pp.characterName && (!updatedBio.characterName || updatedBio.characterName === 'Personaggio' || updatedBio.characterName === 'Avventuriero')) {
+          updatedBio.characterName = pp.characterName;
+          updatedBio.name = pp.characterName;
+          bioChanged = true;
+        }
 
         // 2.1 Current status
         if (pp.applyCurrentStatus && pp.suggestedCurrentStatus?.trim()) {
@@ -1214,11 +1225,32 @@ export class SessionMemorySyncService {
         // 2.4 Inter-Party Relations
         if (Array.isArray(pp.interPartyRelationUpdates) && pp.interPartyRelationUpdates.length > 0) {
           const currentInter = { ...(updatedBio.interPartyRelations || {}) };
+          const allPlayers = CampaignManager.getStoredPlayers() || [];
           pp.interPartyRelationUpdates.forEach((rel) => {
-            if (!rel.applied || !rel.targetPlayerId) return;
-            const prev = currentInter[rel.targetPlayerId] || {
-              targetPlayerId: rel.targetPlayerId,
-              targetCharacterName: rel.targetCharacterName,
+            if (!rel.applied) return;
+            const rawTargetId = (rel.targetPlayerId || '').trim();
+            const targetCharName = (rel.targetCharacterName || '').trim().toLowerCase();
+
+            const matchedPlayer = allPlayers.find((p) => {
+              if (rawTargetId && (p._id === rawTargetId || (p as any).id === rawTargetId)) return true;
+              if (targetCharName && p.characterName && p.characterName.trim().toLowerCase() === targetCharName) return true;
+              if (targetCharName && p.aliases && p.aliases.some((a) => a.trim().toLowerCase() === targetCharName)) return true;
+              return false;
+            });
+
+            const resolvedTargetId = matchedPlayer?._id || (matchedPlayer as any)?.id || rawTargetId || rel.targetCharacterName;
+            if (!resolvedTargetId) return;
+
+            const existingKey = Object.keys(currentInter).find((k) => {
+              const low = k.toLowerCase().trim();
+              if (low === resolvedTargetId.toLowerCase().trim()) return true;
+              if (targetCharName && (currentInter[k] as any)?.targetCharacterName?.trim().toLowerCase() === targetCharName) return true;
+              return false;
+            });
+
+            const prev: any = (existingKey ? currentInter[existingKey] : null) || {
+              targetPlayerId: resolvedTargetId,
+              targetCharacterName: matchedPlayer?.characterName || rel.targetCharacterName || 'Compagno',
               attitude: 'neutral',
               trustLevel: 5,
             };
@@ -1234,21 +1266,27 @@ export class SessionMemorySyncService {
                 attitude: rel.newAttitude || prev.attitude || 'neutral',
                 relationType: rel.newRelationType ?? prev.relationType,
                 event: milestoneText,
-                trustLevel: rel.newTrust ?? prev.trustLevel,
+                trustLevel: rel.newTrust ?? prev.trustLevel ?? 5,
                 createdAt: new Date().toISOString(),
               });
             }
 
-            currentInter[rel.targetPlayerId] = {
+            const updatedItem = {
               ...prev,
-              targetCharacterName: rel.targetCharacterName || prev.targetCharacterName,
+              targetPlayerId: resolvedTargetId,
+              targetCharacterName: matchedPlayer?.characterName || rel.targetCharacterName || prev.targetCharacterName,
               attitude: rel.newAttitude || prev.attitude,
               relationType: rel.newRelationType ?? prev.relationType,
-              trustLevel: rel.newTrust ?? prev.trustLevel,
+              trustLevel: rel.newTrust ?? prev.trustLevel ?? 5,
               notes: rel.notes ?? prev.notes,
               progression: newProgression,
               updatedAt: new Date().toISOString(),
             };
+
+            currentInter[resolvedTargetId] = updatedItem;
+            if (matchedPlayer?.characterName) {
+              currentInter[matchedPlayer.characterName.toLowerCase()] = updatedItem;
+            }
             bioChanged = true;
           });
           updatedBio.interPartyRelations = currentInter;

@@ -75,18 +75,26 @@ export function Settings() {
   };
 
   // Personal Character Profile Edit State
+  const getInitialAvatar = () => {
+    const pUrl = player?.avatarUrl ? CampaignManager.cleanAvatarString(player.avatarUrl) : '';
+    if (player && !player.isDm && CampaignManager.isDmAvatar(pUrl)) return '';
+    if (pUrl) return pUrl;
+    if (account?.isDm && account.avatarUrl) return CampaignManager.cleanAvatarString(account.avatarUrl);
+    return '';
+  };
+
   const [charNameInput, setCharNameInput] = useState(() => player?.characterName || account?.characterName || '');
-  const [charAvatarInput, setCharAvatarInput] = useState(() => player?.avatarUrl || account?.avatarUrl || '');
+  const [charAvatarInput, setCharAvatarInput] = useState(getInitialAvatar);
   const [charColorInput, setCharColorInput] = useState(() => player?.color || account?.color || '#6366f1');
   const [charSavedMsg, setCharSavedMsg] = useState<string | null>(null);
 
   useEffect(() => {
     if (player || account) {
       setCharNameInput(player?.characterName || account?.characterName || '');
-      setCharAvatarInput(player?.avatarUrl || account?.avatarUrl || '');
+      setCharAvatarInput(getInitialAvatar());
       setCharColorInput(player?.color || account?.color || '#6366f1');
     }
-  }, [player?.characterName, player?.avatarUrl, player?.color, account?.characterName, account?.avatarUrl, account?.color]);
+  }, [player?.characterName, player?.avatarUrl, player?.color, account?.characterName, account?.avatarUrl, account?.color, account?.isDm]);
 
   const handleSaveCharacterProfile = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();

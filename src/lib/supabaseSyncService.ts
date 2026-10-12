@@ -660,6 +660,13 @@ export class SupabaseSyncService {
           const isSourcePlayer = rawLinkedPlayer || rawSource.startsWith('player_') || rawSource.includes('@') || rawSource.startsWith('usr_') || rawSource.startsWith('user_');
           const resolvedLinkedPlayerId = rawLinkedPlayer || (isSourcePlayer ? rawSource : '');
 
+          const rawTags = Array.isArray(row.tags) ? row.tags : [];
+          const trustTag = rawTags.find((t: any) => typeof t === 'string' && t.startsWith('trust:'));
+          const attTag = rawTags.find((t: any) => typeof t === 'string' && t.startsWith('att:'));
+          const extractedTrust = trustTag ? Number(trustTag.split(':')[1]) : undefined;
+          const extractedAtt = attTag ? attTag.split(':')[1] : undefined;
+          const cleanTags = rawTags.filter((t: any) => typeof t === 'string' && !t.startsWith('trust:') && !t.startsWith('att:'));
+
           return {
             id: row.id,
             playerId: isSourcePlayer ? rawSource : (rawLinkedPlayer || rawSource),
@@ -679,7 +686,9 @@ export class SupabaseSyncService {
             secondParentId: row.second_parent_id || '',
             otherParentName: row.other_parent_name || '',
             linkedPlayerId: resolvedLinkedPlayerId,
-            tags: Array.isArray(row.tags) ? row.tags : [],
+            tags: cleanTags,
+            trustLevel: row.trust_level ?? row.trustLevel ?? extractedTrust,
+            attitude: row.attitude || extractedAtt,
             order: row.order_index || 0,
             updatedAt: row.updated_at || new Date().toISOString(),
           };
@@ -2779,6 +2788,10 @@ export class SupabaseSyncService {
       const code = campaignCode.trim().toUpperCase();
       const linkedPlayer = rel.linkedPlayerId || (rel.playerId && (rel.playerId.startsWith('player_') || rel.playerId.includes('@') || rel.playerId.startsWith('usr_')) ? rel.playerId : null);
 
+      const baseTags = Array.isArray(rel.tags) ? rel.tags.filter((t: any) => typeof t === 'string' && !t.startsWith('trust:') && !t.startsWith('att:')) : [];
+      if (rel.trustLevel !== undefined) baseTags.push(`trust:${rel.trustLevel}`);
+      if (rel.attitude) baseTags.push(`att:${rel.attitude}`);
+
       const payload = {
         id: rel.id,
         campaign_code: code,
@@ -2798,7 +2811,7 @@ export class SupabaseSyncService {
         second_parent_id: rel.secondParentId || null,
         other_parent_name: rel.otherParentName || '',
         linked_player_id: linkedPlayer,
-        tags: Array.isArray(rel.tags) ? rel.tags : [],
+        tags: baseTags,
         order_index: rel.order || 0,
         updated_at: new Date().toISOString(),
       };

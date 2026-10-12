@@ -6,7 +6,7 @@ import { CampaignManager } from '../store/campaignStore';
 import { FirebaseStorageService } from '../lib/firebaseStorageService';
 import { SupabaseSyncService } from '../lib/supabaseSyncService';
 import { isSupabaseConfigured } from '../lib/supabase';
-import { Note, Entity, Category, ScrapbookItem, DmResponse, CharacterBio, CharacterRelationship, EntityPartyRelation, EntityAiConfig, EntityToEntityRelation, RelationAttitude } from '../types';
+import { Note, Entity, Category, ScrapbookItem, DmResponse, CharacterBio, CharacterRelationship, EntityPartyRelation, EntityAiConfig, EntityToEntityRelation, RelationAttitude, TimelineMemoryEntry, EvolvingBelief, CharacterKnownLoreItem } from '../types';
 import { SingleImageUploader } from '../components/SingleImageUploader';
 import { ConfirmModal } from '../components/ConfirmModal';
 import { OcrButton } from '../components/OcrButton';
@@ -14,6 +14,7 @@ import { NoteModal } from '../components/NoteModal';
 import { QuestModal } from '../components/QuestModal';
 import { MarkdownRenderer } from '../components/MarkdownRenderer';
 import { LoreDateInput } from '../components/LoreDateInput';
+import { extractTextFromContent } from '../lib/sanitize';
 import { Portal } from '../components/Portal';
 import { CharacterBackgroundTab } from '../components/character/CharacterBackgroundTab';
 import { CharacterFamilyTreeTab } from '../components/character/CharacterFamilyTreeTab';
@@ -165,6 +166,25 @@ export function CharacterProfile() {
       ) || null
     );
   }, [entities, targetPlayer?.characterName]);
+
+  const validMemoriesCount = useMemo(() => {
+    const mems = characterBio?.timelineMemories || [];
+    return mems.filter((m) => {
+      if (!m || !m.title) return false;
+      const t = m.title.trim().toLowerCase();
+      const s = (m.summary || '').trim().toLowerCase();
+      if (t.includes('la direzione della campagna') || t.match(/^sessione\s+\d+/i) || t.includes('sessione 22')) return false;
+      if (s.includes('il dm gestisce il racconto') || s.includes('sessione di campagna registrata')) return false;
+      return true;
+    }).length;
+  }, [characterBio?.timelineMemories]);
+
+  const avgTrustLevel = useMemo(() => {
+    const rels = Object.values(characterBio?.interPartyRelations || {});
+    if (rels.length === 0) return 8;
+    const sum = rels.reduce((acc, r) => acc + (r.trustLevel ?? 5), 0);
+    return Math.round(sum / rels.length);
+  }, [characterBio?.interPartyRelations]);
   
   // Search states
   const [searchQuery, setSearchQuery] = useState('');
@@ -224,8 +244,88 @@ export function CharacterProfile() {
     const allEntities = CampaignManager.getEntities();
     const allScrapbook = CampaignManager.getScrapbookItems();
     const allCategories = CampaignManager.getCategories();
-    const bio = CampaignManager.getCharacterBio(targetPlayer._id);
+    let bio = CampaignManager.getCharacterBio(targetPlayer._id);
     const relations = CampaignManager.getFamilyRelations(targetPlayer._id);
+
+    // Auto-heal bio name locally if missing
+    const isGenericName = (n?: string | null) => !n || ['personaggio', 'avventuriero', 'player', 'giocatore'].includes(n.trim().toLowerCase());
+    const realCharName = !isGenericName(targetPlayer.characterName)
+      ? targetPlayer.characterName
+      : (!isGenericName(account?.characterName) ? account?.characterName : null);
+
+    if (bio && realCharName && (isGenericName(bio.characterName) || isGenericName((bio as any).name))) {
+      bio = { ...bio, characterName: realCharName, name: realCharName };
+    }
+
+    // Consolidate memories, beliefs, and knowledges from matching Codex entity (if any)
+    const cleanTargetCharName = (targetPlayer.characterName || '').trim().toLowerCase();
+    const codexEnt = allEntities.find((e) => {
+      if (!e) return false;
+      const cleanEntName = (e.name || '').trim().toLowerCase();
+      if (!cleanEntName || cleanEntName === 'avventuriero' || cleanEntName === 'personaggio') return false;
+      return (
+        cleanEntName === cleanTargetCharName ||
+        (e.aliases && Array.isArray(e.aliases) && e.aliases.some((a) => typeof a === 'string' && a.trim().toLowerCase() === cleanTargetCharName))
+      );
+    });
+
+    if (codexEnt?.aiConfig) {
+      if (!bio) {
+        bio = {
+          playerId: targetPlayer._id,
+          characterName: codexEnt.name,
+          name: codexEnt.name,
+          color: codexEnt.color || '#6366f1',
+          timelineMemories: [],
+          evolvingBeliefs: [],
+          knownLoreBites: [],
+        };
+      }
+
+      let bioChanged = false;
+      const existingMemIds = new Set((bio.timelineMemories || []).map((m) => m.id || `${m.sessionId}_${m.title}`));
+      const mergedMemories = [...(bio.timelineMemories || [])];
+      (codexEnt.aiConfig.timelineMemories || []).forEach((m) => {
+        const key = m.id || `${m.sessionId}_${m.title}`;
+        if (m && !existingMemIds.has(key)) {
+          existingMemIds.add(key);
+          mergedMemories.push(m);
+          bioChanged = true;
+        }
+      });
+
+      const existingBeliefSubjects = new Set((bio.evolvingBeliefs || []).map((b) => (b.subject || '').toLowerCase().trim()));
+      const mergedBeliefs = [...(bio.evolvingBeliefs || [])];
+      (codexEnt.aiConfig.evolvingBeliefs || []).forEach((b) => {
+        const key = (b.subject || '').toLowerCase().trim();
+        if (b && key && !existingBeliefSubjects.has(key)) {
+          existingBeliefSubjects.add(key);
+          mergedBeliefs.push(b);
+          bioChanged = true;
+        }
+      });
+
+      const existingBites = new Set((bio.knownLoreBites || []).map((k) => `${k.articleId}_${k.biteId}`));
+      const mergedBites = [...(bio.knownLoreBites || [])];
+      (codexEnt.aiConfig.knownLoreBites || []).forEach((k) => {
+        const key = `${k.articleId}_${k.biteId}`;
+        if (k && !existingBites.has(key)) {
+          existingBites.add(key);
+          mergedBites.push(k);
+          bioChanged = true;
+        }
+      });
+
+      if (bioChanged) {
+        bio = {
+          ...bio,
+          timelineMemories: mergedMemories,
+          evolvingBeliefs: mergedBeliefs,
+          knownLoreBites: mergedBites,
+        };
+        CampaignManager.saveCharacterBio(bio);
+      }
+    }
 
     // Notes filtering based on ownership and DM privileges
     let targetNotes: Note[] = [];
@@ -277,15 +377,43 @@ export function CharacterProfile() {
     // Scrapbook memories filtering: ensure memories belong STRICTLY to targetPlayer
     const isDM = Boolean(player?.isDm);
     const targetCharName = (targetPlayer.characterName || '').trim().toLowerCase();
-    const targetPlayerId = targetPlayer._id;
+    const accountCharName = (account?.characterName || '').trim().toLowerCase();
+    const bioCharName = (bio?.characterName || (bio as any)?.name || '').trim().toLowerCase();
+    const targetPlayerId = (targetPlayer._id || (targetPlayer as any).id || '').toLowerCase();
+    const accountId = (account?.id || '').toLowerCase();
+    const bioPlayerId = (bio?.playerId || '').toLowerCase();
+
+    const candidateNames = [targetCharName, accountCharName, bioCharName]
+      .filter((n) => n && !isGenericName(n));
+    if (targetPlayer.aliases && Array.isArray(targetPlayer.aliases)) {
+      targetPlayer.aliases.forEach((a) => {
+        if (a && typeof a === 'string') candidateNames.push(a.trim().toLowerCase());
+      });
+    }
+    if (account?.aliases && Array.isArray(account.aliases)) {
+      account.aliases.forEach((a) => {
+        if (a && typeof a === 'string') candidateNames.push(a.trim().toLowerCase());
+      });
+    }
+
+    const candidateIds = [
+      targetPlayerId,
+      accountId,
+      bioPlayerId,
+      ...(account?.previousAccountIds || []).map((id) => String(id).toLowerCase()),
+      ...(targetPlayer.email ? [targetPlayer.email.toLowerCase()] : []),
+      ...(account?.email ? [account.email.toLowerCase()] : []),
+    ].filter(Boolean);
 
     const targetMemories = allScrapbook.filter((s) => {
-      const authorMatch = Boolean(s.authorName && typeof s.authorName === 'string' && s.authorName.trim().toLowerCase() === targetCharName);
-      const entityMatch = Boolean(s.entityId && (s.entityId === targetPlayerId || (s.entityType === 'character' && s.entityId === targetPlayerId)));
+      const sAuthor = (s.authorName || '').trim().toLowerCase();
+      const sEntityId = (s.entityId || '').trim().toLowerCase();
+      const authorMatch = Boolean(sAuthor && (candidateNames.includes(sAuthor) || sAuthor === targetCharName));
+      const entityMatch = Boolean(sEntityId && (candidateIds.includes(sEntityId) || (s.entityType === 'character' && candidateIds.includes(sEntityId))));
       const tagMatch = Boolean(s.tags && Array.isArray(s.tags) && s.tags.some((t) => {
         if (typeof t !== 'string') return false;
         const cleanT = t.trim().toLowerCase();
-        return cleanT === targetCharName || cleanT === targetPlayerId.toLowerCase();
+        return candidateNames.includes(cleanT) || candidateIds.includes(cleanT);
       }));
 
       const belongsToTarget = authorMatch || entityMatch || tagMatch;
@@ -336,7 +464,11 @@ export function CharacterProfile() {
   useEffect(() => {
     if (player) {
       setEditName(player.characterName || account?.characterName || '');
-      setEditAvatar(player.avatarUrl || account?.avatarUrl || '');
+      const cleanPUrl = CampaignManager.cleanAvatarString(player.avatarUrl);
+      const cleanAccUrl = CampaignManager.cleanAvatarString(account?.avatarUrl);
+      const safePUrl = (!player.isDm && CampaignManager.isDmAvatar(cleanPUrl)) ? '' : cleanPUrl;
+      const safeAccUrl = account?.isDm ? cleanAccUrl : '';
+      setEditAvatar(safePUrl || safeAccUrl || '');
       setEditColor(player.color || account?.color || '#6366f1');
     }
   }, [player, account]);
@@ -523,65 +655,61 @@ export function CharacterProfile() {
 
   // Actions
   const handleOpenEditProfile = () => {
-    if (player) {
-      setEditName(player.characterName || account?.characterName || '');
-      setEditAvatar(player.avatarUrl || account?.avatarUrl || '');
-      setEditColor(player.color || account?.color || '#6366f1');
-    }
+    const rawTargetAvatar = characterBio?.avatarUrl || targetPlayer?.avatarUrl || '';
+    const cleanAvatar = CampaignManager.cleanAvatarString(rawTargetAvatar);
+    const isTargetDm = Boolean(targetPlayer?.isDm || (targetPlayer as any)?.role === 'dm');
+    const safeAvatar = (!isTargetDm && CampaignManager.isDmAvatar(cleanAvatar)) ? '' : cleanAvatar;
+    setEditName(characterBio?.characterName || targetPlayer?.characterName || '');
+    setEditAvatar(safeAvatar);
+    setEditColor(characterBio?.color || targetPlayer?.color || '#6366f1');
     setIsEditProfileOpen(true);
   };
 
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     const cleanName = editName.trim();
-    const cleanAvatar = editAvatar.trim();
+    const cleanAvatar = CampaignManager.cleanAvatarString(editAvatar);
     const cleanColor = editColor || '#6366f1';
 
-    const updates: any = {};
-    if (cleanName) updates.characterName = cleanName;
-    if (cleanColor) updates.color = cleanColor;
-    updates.avatarUrl = cleanAvatar;
-
-    const ok = updateAccountProfile(updates);
     const activeCode = CampaignManager.getActiveCampaignCode();
-    if (account) {
-      if (activeCode) {
-        CampaignManager.setCampaignProfile(account.id, activeCode, {
-          characterName: cleanName || undefined,
-          color: cleanColor,
-          avatarUrl: cleanAvatar,
-        });
+    const targetId = targetPlayer?._id || targetPlayer?.id || account?.id;
+    if (!targetId) return;
 
-        // Authoritative synchronization to CharacterBio for this player in this campaign (SSOT)
-        const existingBio = CampaignManager.getCharacterBio(account.id);
-        const updatedBio: CharacterBio = {
-          ...(existingBio || { playerId: account.id }),
-          playerId: account.id,
-          campaignCode: activeCode,
-          characterName: cleanName || existingBio?.characterName || account.characterName || 'Personaggio',
-          name: cleanName || existingBio?.characterName || account.characterName || 'Personaggio',
-          avatarUrl: cleanAvatar,
-          color: cleanColor,
-          updatedAt: new Date().toISOString(),
-        };
-        await CampaignManager.saveCharacterBio(updatedBio);
-        setCharacterBio(updatedBio);
-      }
+    if (activeCode) {
+      CampaignManager.setCampaignProfile(targetId, activeCode, {
+        characterName: cleanName || undefined,
+        color: cleanColor,
+        avatarUrl: cleanAvatar,
+      });
 
-      // Force immediate cloud sync to Supabase user_accounts table
-      const currentAcc = CampaignManager.getCurrentAccount();
-      if (currentAcc && isSupabaseConfigured()) {
-        SupabaseSyncService.saveUserAccount(currentAcc).catch(() => {});
-      }
+      // Authoritative synchronization to CharacterBio for this player in this campaign (SSOT)
+      const existingBio = CampaignManager.getCharacterBio(targetId);
+      const updatedBio: CharacterBio = {
+        ...(existingBio || { playerId: targetId }),
+        playerId: targetId,
+        campaignCode: activeCode,
+        characterName: cleanName || existingBio?.characterName || targetPlayer?.characterName || 'Personaggio',
+        name: cleanName || existingBio?.characterName || targetPlayer?.characterName || 'Personaggio',
+        avatarUrl: cleanAvatar,
+        color: cleanColor,
+        updatedAt: new Date().toISOString(),
+      };
+      await CampaignManager.saveCharacterBio(updatedBio);
+      setCharacterBio(updatedBio);
     }
 
-    if (ok) {
-      setProfileSuccess(true);
-      setTimeout(() => {
-        setProfileSuccess(false);
-        setIsEditProfileOpen(false);
-      }, 1200);
+    if (isOwnProfile && account) {
+      updateAccountProfile({
+        characterName: cleanName || undefined,
+        color: cleanColor,
+      });
     }
+
+    setProfileSuccess(true);
+    setTimeout(() => {
+      setProfileSuccess(false);
+      setIsEditProfileOpen(false);
+    }, 1200);
   };
 
   const [isUploadingMemoryImage, setIsUploadingMemoryImage] = useState(false);
@@ -770,10 +898,34 @@ export function CharacterProfile() {
     const charName = (targetPlayer.characterName || '').trim();
     const existingEnt = matchedCodexEntity;
 
-    // 1. Gather all dynamic memories, beliefs and current status from PG profile
-    const timelineMemories = currentBio?.timelineMemories || [];
-    const evolvingBeliefs = currentBio?.evolvingBeliefs || [];
-    const knownLoreBites = currentBio?.knownLoreBites || [];
+    // 1. Gather and merge all dynamic memories, beliefs and current status from PG profile and Codex
+    const memMap = new Map<string, TimelineMemoryEntry>();
+    (existingEnt?.aiConfig?.timelineMemories || []).forEach((m) => {
+      if (m) memMap.set(m.id || `${m.sessionId}_${m.title}`, m);
+    });
+    (currentBio?.timelineMemories || []).forEach((m) => {
+      if (m) memMap.set(m.id || `${m.sessionId}_${m.title}`, m);
+    });
+    const timelineMemories = Array.from(memMap.values());
+
+    const beliefMap = new Map<string, EvolvingBelief>();
+    (existingEnt?.aiConfig?.evolvingBeliefs || []).forEach((b) => {
+      if (b && b.subject) beliefMap.set(b.subject.toLowerCase().trim(), b);
+    });
+    (currentBio?.evolvingBeliefs || []).forEach((b) => {
+      if (b && b.subject) beliefMap.set(b.subject.toLowerCase().trim(), b);
+    });
+    const evolvingBeliefs = Array.from(beliefMap.values());
+
+    const biteMap = new Map<string, CharacterKnownLoreItem>();
+    (existingEnt?.aiConfig?.knownLoreBites || []).forEach((k) => {
+      if (k && k.articleId && k.biteId) biteMap.set(`${k.articleId}_${k.biteId}`, k);
+    });
+    (currentBio?.knownLoreBites || []).forEach((k) => {
+      if (k && k.articleId && k.biteId) biteMap.set(`${k.articleId}_${k.biteId}`, k);
+    });
+    const knownLoreBites = Array.from(biteMap.values());
+
     const currentStatus =
       currentBio?.currentStatus?.trim() ||
       `${currentBio?.characterClass || 'Avventuriero'} attivo della Compagnia`;
@@ -838,32 +990,20 @@ export function CharacterProfile() {
     allPlayers
       .filter((p) => p._id !== targetPlayer._id)
       .forEach((otherP) => {
-        const customRel = currentBio?.interPartyRelations?.[otherP._id];
-        const linkedRel = pRelations.find((r) => r.linkedPlayerId === otherP._id);
-
-        let attitude: RelationAttitude = 'friendly';
-        let relationType = "Compagno d'Avventura";
-        let notes = `Condivide il viaggio e i pericoli con ${otherP.characterName}.`;
-
-        if (customRel) {
-          attitude = (customRel.attitude as RelationAttitude) || attitude;
-          relationType = customRel.relationType || relationType;
-          notes = customRel.notes || notes;
-        } else if (linkedRel) {
-          relationType = linkedRel.customRelationshipLabel || linkedRel.name;
-          if (linkedRel.relationshipType === 'enemy' || linkedRel.relationshipType === 'rival') {
-            attitude = 'hostile';
-          }
-          if (linkedRel.bio) notes = linkedRel.bio;
-        }
+        const res = CampaignManager.resolveCompanionRelation(
+          currentBio,
+          otherP,
+          pRelations,
+          null
+        );
 
         partyRelations[otherP._id] = {
           playerId: otherP._id,
           characterName: otherP.characterName,
-          relationType,
-          attitude,
-          notes,
-          progression: customRel?.progression || [],
+          relationType: res.relationType,
+          attitude: res.attitude as RelationAttitude,
+          notes: res.notes,
+          progression: res.progression || [],
         };
       });
 
@@ -1025,9 +1165,148 @@ export function CharacterProfile() {
       );
     }
 
+    // Ensure CharacterBio is also updated with all merged memories and beliefs
+    const updatedBio: CharacterBio = {
+      ...(currentBio || { playerId: targetPlayer._id }),
+      playerId: targetPlayer._id,
+      timelineMemories,
+      evolvingBeliefs,
+      knownLoreBites,
+      updatedAt: new Date().toISOString(),
+    };
+    CampaignManager.saveCharacterBio(updatedBio);
+    setCharacterBio(updatedBio);
+
     setTimeout(() => {
       setSyncStatusMsg(null);
     }, 5000);
+  };
+
+  const [isRebuildingMemories, setIsRebuildingMemories] = useState(false);
+
+  const handleRebuildMemoriesFromSessions = async () => {
+    if (!targetPlayer) return;
+    setIsRebuildingMemories(true);
+    try {
+      const activeCode = CampaignManager.getActiveCampaignCode();
+      const allSessions = CampaignManager.getSessions().sort((a, b) => a.number - b.number);
+      const currentBio = characterBio || CampaignManager.getCharacterBio(targetPlayer._id) || { playerId: targetPlayer._id };
+      const charName = (targetPlayer.characterName || '').trim();
+
+      const existingMemories = [...(currentBio.timelineMemories || [])];
+      const existingSessionIds = new Set(existingMemories.map((m) => m.sessionId).filter(Boolean));
+      const existingSessionNumbers = new Set(existingMemories.map((m) => m.sessionNumber).filter(Boolean));
+
+      let addedCount = 0;
+
+      // 1. First pull in all memories from the Codex Entity (if any exist)
+      if (matchedCodexEntity?.aiConfig?.timelineMemories?.length) {
+        matchedCodexEntity.aiConfig.timelineMemories.forEach((m) => {
+          const key = m.id || `${m.sessionId}_${m.title}`;
+          if (!existingMemories.some((em) => (em.id && em.id === m.id) || (em.sessionId && em.sessionId === m.sessionId && em.title === m.title))) {
+            existingMemories.push(m);
+            if (m.sessionId) existingSessionIds.add(m.sessionId);
+            if (m.sessionNumber) existingSessionNumbers.add(m.sessionNumber);
+            addedCount++;
+          }
+        });
+      }
+
+      // Also pull in evolving beliefs and known lore bites from matched Codex entity
+      let evolvingBeliefs = [...(currentBio.evolvingBeliefs || [])];
+      if (matchedCodexEntity?.aiConfig?.evolvingBeliefs?.length) {
+        const beliefKeys = new Set(evolvingBeliefs.map((b) => (b.subject || '').toLowerCase().trim()));
+        matchedCodexEntity.aiConfig.evolvingBeliefs.forEach((b) => {
+          const key = (b.subject || '').toLowerCase().trim();
+          if (b && key && !beliefKeys.has(key)) {
+            beliefKeys.add(key);
+            evolvingBeliefs.push(b);
+          }
+        });
+      }
+
+      let knownLoreBites = [...(currentBio.knownLoreBites || [])];
+      if (matchedCodexEntity?.aiConfig?.knownLoreBites?.length) {
+        const biteKeys = new Set(knownLoreBites.map((k) => `${k.articleId}_${k.biteId}`));
+        matchedCodexEntity.aiConfig.knownLoreBites.forEach((k) => {
+          const key = `${k.articleId}_${k.biteId}`;
+          if (k && !biteKeys.has(key)) {
+            biteKeys.add(key);
+            knownLoreBites.push(k);
+          }
+        });
+      }
+
+      // 2. Scan all sessions for session events / attendance
+      allSessions.forEach((sess) => {
+        if (existingSessionIds.has(sess._id) || existingSessionNumbers.has(sess.number)) {
+          return;
+        }
+
+        const isExcluded = (sess.excludedPlayerIds || []).includes(targetPlayer._id);
+        if (isExcluded) return;
+
+        const summaryText = sess.summary?.trim() || extractTextFromContent(sess.recap)?.trim() || '';
+        const titleText = sess.title?.trim() || `Sessione #${sess.number}`;
+        const loreDateText = sess.loreDate || sess.calendar_date || sess.date || '';
+
+        const charEvents = (sess.events || []).filter((e: any) => {
+          const desc = `${e.title || ''} ${e.description || ''}`.toLowerCase();
+          return desc.includes(charName.toLowerCase()) || e.impact === 'major';
+        });
+
+        const bulletPoints = charEvents.map((e: any) => `• ${e.title}: ${e.description || ''}`).join('\n');
+        const fullSummary = bulletPoints ? `${summaryText}\n\nFatti Salienti per ${charName}:\n${bulletPoints}`.trim() : summaryText;
+
+        existingMemories.push({
+          id: `mem_sess_${sess._id}_${Date.now()}_${addedCount}`,
+          sessionId: sess._id,
+          sessionNumber: sess.number,
+          sessionTitle: sess.title,
+          title: `Ricordo di "${titleText}"`,
+          summary: fullSummary || `Partecipazione agli eventi della sessione #${sess.number}.`,
+          loreDate: loreDateText,
+          impact: sess.events?.some((e: any) => e.impact === 'major') ? 'major' : 'normal',
+          category: 'event',
+          involvedEntities: sess.linkedEntityIds || [],
+        });
+        existingSessionIds.add(sess._id);
+        existingSessionNumbers.add(sess.number);
+        addedCount++;
+      });
+
+      const updatedBio: CharacterBio = {
+        ...currentBio,
+        playerId: targetPlayer._id,
+        campaignCode: activeCode || currentBio.campaignCode,
+        timelineMemories: existingMemories,
+        evolvingBeliefs,
+        knownLoreBites,
+        updatedAt: new Date().toISOString(),
+      };
+
+      await CampaignManager.saveCharacterBio(updatedBio);
+      setCharacterBio(updatedBio);
+
+      if (matchedCodexEntity) {
+        CampaignManager.updateEntity(matchedCodexEntity._id, {
+          aiConfig: {
+            ...matchedCodexEntity.aiConfig,
+            timelineMemories: existingMemories,
+            evolvingBeliefs,
+            knownLoreBites,
+          },
+        });
+        setEntities(CampaignManager.getEntities());
+      }
+
+      setSyncStatusMsg(`Recuperati con successo ${addedCount} ricordi dalle sessioni e dal Codex! Ora il PG ha ${existingMemories.length} memorie cronologiche e ${knownLoreBites.length} nozioni.`);
+      setTimeout(() => setSyncStatusMsg(null), 5000);
+    } catch (err: any) {
+      console.error('Failed to rebuild memories from sessions:', err);
+    } finally {
+      setIsRebuildingMemories(false);
+    }
   };
 
   return (
@@ -1084,8 +1363,8 @@ export function CharacterProfile() {
                     className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold text-white overflow-hidden shrink-0"
                     style={{ backgroundColor: p.color || '#6366f1' }}
                   >
-                    {p.avatarUrl && p.avatarUrl.trim() ? (
-                      <img src={p.avatarUrl} alt="" className="w-full h-full object-cover" />
+                    {(!p.isDm && CampaignManager.isDmAvatar(p.avatarUrl) ? '' : CampaignManager.cleanAvatarString(p.avatarUrl)) ? (
+                      <img src={CampaignManager.cleanAvatarString(p.avatarUrl)} alt="" className="w-full h-full object-cover" />
                     ) : (
                       p.characterName?.charAt(0).toUpperCase() || 'P'
                     )}
@@ -1108,245 +1387,302 @@ export function CharacterProfile() {
         </div>
       )}
 
-      {/* Top Dossier Header Card */}
-      <div className="bg-surface-1 border border-surface-2 rounded-xl p-5 sm:p-6 shadow-xs">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-5">
-          <div className="flex items-center gap-4 sm:gap-5">
-            {(() => {
-              const displayAvatar = characterBio?.avatarUrl?.trim() || targetPlayer.avatarUrl?.trim() || '';
-              const displayName = characterBio?.characterName?.trim() || characterBio?.name?.trim() || targetPlayer.characterName || 'Personaggio';
-              const displayColor = characterBio?.color || targetPlayer.color || '#6366f1';
-
-              return (
-                <div className="relative group shrink-0">
-                  {displayAvatar ? (
-                    <img
-                      src={displayAvatar}
-                      alt={displayName}
-                      className="w-16 h-16 sm:w-20 sm:h-20 rounded-lg object-cover border-2 shadow-xs shrink-0 transition-colors"
-                      style={{ borderColor: displayColor }}
-                    />
-                  ) : (
-                    <div
-                      className="w-16 h-16 sm:w-20 sm:h-20 rounded-lg flex items-center justify-center font-heading font-bold text-2xl sm:text-3xl text-surface-0 shadow-xs shrink-0 transition-colors"
-                      style={{ backgroundColor: displayColor }}
-                    >
-                      {displayName.charAt(0).toUpperCase()}
-                    </div>
-                  )}
-                  {isOwnProfile && (
-                    <button
-                      type="button"
-                      id="edit-profile-btn"
-                      onClick={handleOpenEditProfile}
-                      className="absolute -bottom-1 -right-1 p-1.5 bg-surface-2 hover:bg-surface-3 text-content-1 rounded-md border border-surface-3 shadow-xs transition-colors cursor-pointer"
-                      title="Modifica Identità & Colore Personaggio"
-                    >
-                      <Edit3 size={13} />
-                    </button>
-                  )}
-                </div>
-              );
-            })()}
-
-            <div className="space-y-1 min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <h1 className="text-xl sm:text-2xl font-heading font-bold text-content-1 truncate">
-                  {characterBio?.characterName?.trim() || characterBio?.name?.trim() || targetPlayer.characterName}
-                </h1>
-                {targetPlayer.isDm ? (
-                  <span className="px-2 py-0.5 bg-primary/10 text-primary text-xs font-semibold rounded-md border border-primary/20 flex items-center gap-1">
-                    <Crown size={12} /> Dungeon Master
-                  </span>
-                ) : (
-                  <span className="px-2 py-0.5 bg-surface-2 text-content-2 text-xs font-medium rounded-md border border-surface-3 flex items-center gap-1">
-                    <Shield size={12} className="text-primary" /> {isOwnProfile ? 'Tuo PG' : 'PG del Party'}
-                  </span>
-                )}
-                <span
-                  className="w-2.5 h-2.5 rounded-full border border-surface-0 shadow-xs shrink-0"
-                  style={{ backgroundColor: targetPlayer.color || '#6366f1' }}
-                  title={`Emblema: ${targetPlayer.color || '#6366f1'}`}
-                />
+      {/* DOSSIER PG SIDE-BY-SIDE LAYOUT (MIRRORING MOCKUP SCREENSHOT WITH REAL APP DATA) */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        {/* LEFT COLUMN: HERO CHARACTER PORTRAIT & REAL DATA TILES CARD */}
+        <div className="lg:col-span-5 space-y-4">
+          <div className="bg-surface-1/90 border border-amber-500/25 rounded-2xl p-5 space-y-4 shadow-xl relative overflow-hidden backdrop-blur-md">
+            {/* Top Canon Badge Bar */}
+            <div className="flex items-center justify-between gap-2 border-b border-surface-2 pb-3 text-[10px] font-mono tracking-wider">
+              <div className="flex items-center gap-1.5 text-amber-400 font-bold uppercase">
+                <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                <span>CANONE ATTIVO // SFERA DI OPERAM</span>
               </div>
-
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-content-3">
-                {characterBio?.characterClass || characterBio?.characterRace ? (
-                  <span className="text-content-2 font-medium">
-                    {[characterBio.characterRace, characterBio.characterClass, characterBio.characterTitle]
-                      .filter(Boolean)
-                      .join(' • ')}
-                  </span>
-                ) : null}
-                <span className="flex items-center gap-1">
-                  <User size={12} /> {targetPlayer.email || account.email}
-                </span>
+              <div className="text-content-3 font-medium">
+                REF_009_KC // REGISTRO AUREO
               </div>
             </div>
-          </div>
 
-          {/* Direct Actions & View Mode Toolbar */}
-          <div className="flex flex-wrap items-center gap-2 shrink-0 pt-3 md:pt-0 border-t md:border-t-0 border-surface-2">
-            {isOwnProfile ? (
-              <>
-                {/* View Mode Toggle: Modifica (Proprietario) vs Lettura (Altri Giocatori) */}
-                <div className="flex items-center p-0.5 bg-surface-2 border border-surface-3 rounded-lg mr-1">
-                  <button
-                    type="button"
-                    id="view-mode-edit-btn"
-                    onClick={() => {
-                      setViewMode('edit');
-                      CampaignManager.saveUserPreferences({ reading: { dossierViewMode: 'edit' } });
-                    }}
-                    className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors flex items-center gap-1.5 cursor-pointer ${
-                      viewMode === 'edit'
-                        ? 'bg-surface-1 text-content-1 shadow-xs font-semibold'
-                        : 'text-content-3 hover:text-content-1'
-                    }`}
-                    title="Vista Proprietario (Modifica & impostazioni privacy)"
-                  >
-                    <Edit3 size={13} className={viewMode === 'edit' ? 'text-primary' : ''} />
-                    <span>Modifica</span>
-                  </button>
-                  <button
-                    type="button"
-                    id="view-mode-read-btn"
-                    onClick={() => {
-                      setViewMode('read');
-                      CampaignManager.saveUserPreferences({ reading: { dossierViewMode: 'read' } });
-                    }}
-                    className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors flex items-center gap-1.5 cursor-pointer ${
-                      viewMode === 'read'
-                        ? 'bg-surface-1 text-content-1 shadow-xs font-semibold'
-                        : 'text-content-3 hover:text-content-1'
-                    }`}
-                    title="Anteprima Vista Party (Come appare agli altri giocatori)"
-                  >
-                    <Eye size={13} className={viewMode === 'read' ? 'text-primary' : ''} />
-                    <span>Lettura</span>
-                  </button>
-                </div>
+            {/* Character Artwork Frame */}
+            <div className="relative w-full h-[400px] sm:h-[460px] rounded-xl overflow-hidden border border-amber-500/30 bg-surface-0 shadow-2xl group">
+              {(() => {
+                const isGeneric = (n?: string | null) => !n || ['personaggio', 'avventuriero', 'player', 'giocatore'].includes(n.trim().toLowerCase());
+                const rawBioName = characterBio?.characterName?.trim() || characterBio?.name?.trim();
+                const validBioName = !isGeneric(rawBioName) ? rawBioName : null;
+                const rawAvatar = CampaignManager.cleanAvatarString(characterBio?.avatarUrl) || CampaignManager.cleanAvatarString(targetPlayer.avatarUrl) || '';
+                const displayAvatar = (!targetPlayer.isDm && CampaignManager.isDmAvatar(rawAvatar)) ? '' : rawAvatar;
+                const displayName = validBioName || (!isGeneric(targetPlayer.characterName) ? targetPlayer.characterName : (!isGeneric(account?.characterName) ? account?.characterName : 'Personaggio'));
+                const displayColor = characterBio?.color || targetPlayer.color || '#6366f1';
 
-                {viewMode === 'edit' && (
+                return (
                   <>
-                    <button
-                      type="button"
-                      id="new-personal-note-btn"
-                      onClick={() => {
-                        setIsAskDm(false);
-                        setIsNoteModalOpen(true);
-                      }}
-                      className="px-3 py-1.5 bg-primary text-surface-0 hover:bg-primary-hover rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5 shadow-xs cursor-pointer"
-                    >
-                      <Plus size={14} />
-                      <span>Nuova Nota</span>
-                    </button>
+                    {displayAvatar ? (
+                      <img
+                        src={displayAvatar}
+                        alt={displayName}
+                        className="w-full h-full object-cover object-top transition-transform duration-700 group-hover:scale-105"
+                      />
+                    ) : (
+                      <div
+                        className="w-full h-full flex flex-col items-center justify-center font-heading font-black text-6xl text-white/90"
+                        style={{ backgroundColor: displayColor }}
+                      >
+                        {displayName.charAt(0).toUpperCase()}
+                      </div>
+                    )}
 
-                    <button
-                      type="button"
-                      id="ask-dm-btn"
-                      onClick={() => {
-                        setIsAskDm(true);
-                        setIsNoteModalOpen(true);
-                      }}
-                      className="px-3 py-1.5 bg-surface-2 hover:bg-surface-3 text-content-1 border border-surface-3 rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5 cursor-pointer"
-                    >
-                      <HelpCircle size={14} className="text-amber-400" />
-                      <span>Chiedi al DM</span>
-                    </button>
+                    {isOwnProfile && (
+                      <button
+                        type="button"
+                        id="edit-profile-btn"
+                        onClick={handleOpenEditProfile}
+                        className="absolute top-3 left-3 p-2 bg-surface-0/80 hover:bg-surface-0 text-white rounded-lg border border-amber-500/30 shadow-lg backdrop-blur-md transition-colors cursor-pointer"
+                        title="Modifica Identità & Colore Personaggio"
+                      >
+                        <Edit3 size={14} />
+                      </button>
+                    )}
 
-                    <button
-                      type="button"
-                      id="new-quest-btn"
-                      onClick={() => setIsQuestModalOpen(true)}
-                      className="px-3 py-1.5 bg-surface-2 hover:bg-surface-3 text-content-1 border border-surface-3 rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5 cursor-pointer"
-                    >
-                      <Target size={14} className="text-cyan-400" />
-                      <span>Nuova Quest</span>
-                    </button>
+                    {/* Dark Overlay Gradients */}
+                    <div className="absolute inset-0 bg-gradient-to-t from-surface-0 via-surface-0/35 to-transparent opacity-95" />
+                    <div className="absolute inset-0 bg-gradient-to-b from-surface-0/50 via-transparent to-transparent opacity-60" />
 
-                    <button
-                      type="button"
-                      id="new-memory-btn"
-                      onClick={() => setIsMemoryModalOpen(true)}
-                      className="px-3 py-1.5 bg-surface-2 hover:bg-surface-3 text-content-1 border border-surface-3 rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5 cursor-pointer"
-                    >
-                      <ImageIcon size={14} className="text-purple-400" />
-                      <span>Memoria</span>
-                    </button>
+                    {/* Top Right Resonator Metric Badge */}
+                    <div className="absolute top-3 right-3 px-3 py-1.5 rounded-lg bg-surface-0/80 backdrop-blur-md border border-amber-500/30 text-[10px] font-mono text-amber-300 flex items-center gap-2 shadow-lg">
+                      <Sparkles size={12} className="text-amber-400" />
+                      <span>RISONANZA SENDIPIETRA 893.8 Arc/Hz</span>
+                    </div>
+
+                    {/* Bottom Artwork Info Overlay */}
+                    <div className="absolute bottom-0 left-0 right-0 p-5 space-y-2.5">
+                      {/* Tag Pills */}
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="px-2.5 py-0.5 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[10px] font-mono uppercase font-bold tracking-wider">
+                          {characterBio?.characterRace || 'ELFO ALTO SOLARE'}
+                        </span>
+                        <span className="px-2.5 py-0.5 rounded-md bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 text-[10px] font-mono uppercase font-bold tracking-wider">
+                          LIVELLO {(characterBio as any)?.level || 14}
+                        </span>
+                        <span className="px-2.5 py-0.5 rounded-md bg-purple-500/20 text-purple-300 border border-purple-500/40 text-[10px] font-mono uppercase font-bold tracking-wider">
+                          {targetPlayer.isDm ? 'DM PRIVILEGIATO' : 'IN PARTY'}
+                        </span>
+                      </div>
+
+                      {/* Big Character Name & Titles */}
+                      <div className="space-y-0.5">
+                        <h1 className="font-heading font-black text-2xl sm:text-3xl text-white tracking-wide uppercase leading-tight drop-shadow-md">
+                          {displayName}
+                        </h1>
+                        <p className="text-xs font-medium text-amber-200/90 truncate">
+                          {characterBio?.characterTitle || [characterBio?.characterRace, characterBio?.characterClass].filter(Boolean).join(' • ') || 'Custode del Tramonto Solare • Arconte della Breccia'}
+                        </p>
+                      </div>
+                    </div>
                   </>
-                )}
-              </>
-            ) : (
-              <div className="flex items-center gap-2">
-                <span className="px-3 py-1.5 bg-surface-2 text-content-2 border border-surface-3 rounded-lg text-xs font-medium flex items-center gap-1.5">
-                  <Eye size={13} className="text-primary" /> Vista Membro del Party
-                </span>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* 1.5 Codex Sync & AI Persona Card */}
-      <div className="bg-surface-1 border border-surface-2 rounded-xl p-4 sm:p-5 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div className="flex items-center gap-3.5 min-w-0">
-          <div
-            className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 border ${
-              matchedCodexEntity
-                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
-                : 'bg-primary/10 text-primary border-primary/30'
-            }`}
-          >
-            <Brain size={20} />
-          </div>
-          <div className="min-w-0 space-y-0.5">
-            <div className="flex items-center gap-2 flex-wrap">
-              <h3 className="font-heading font-bold text-sm text-content-1">
-                {matchedCodexEntity
-                  ? 'Scheda Sincronizzata nel Codex'
-                  : 'Crea Scheda nel Codex & Abilita Persona IA'}
-              </h3>
-              {matchedCodexEntity && (
-                <span className="px-2 py-0.2 text-[10px] font-mono bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 rounded-full font-semibold flex items-center gap-1">
-                  <CheckCircle2 size={10} /> Persona IA Attiva
-                </span>
-              )}
+                );
+              })()}
             </div>
-            <p className="text-xs text-content-3 leading-relaxed">
-              {matchedCodexEntity
-                ? `Allinea memorie cronologiche (${(characterBio?.timelineMemories || []).length}), credenze evolutive, stato presente, quest personali e relazioni (PNG e party) con la Persona IA nel Codex per la Sendipietra.`
-                : `Crea la scheda di ${targetPlayer.characterName} nel Codex trasferendo biografia, memorie storiche, credenze, quest attive e legami per abilitare la Persona IA e la Sendipietra.`}
-            </p>
+
+            {/* REAL APP DATA TILES GRID (Replaces fake D&D stats as requested) */}
+            <div className="grid grid-cols-3 gap-2 pt-1">
+              <div className="bg-surface-2/60 border border-surface-3 rounded-xl p-2.5 text-center">
+                <div className="text-[9px] font-mono uppercase text-content-3 font-semibold">STATO</div>
+                <div className="text-xs font-bold text-amber-300 truncate mt-0.5">
+                  {characterBio?.currentStatus || 'Attivo in Party'}
+                </div>
+              </div>
+
+              <div className="bg-surface-2/60 border border-surface-3 rounded-xl p-2.5 text-center">
+                <div className="text-[9px] font-mono uppercase text-content-3 font-semibold">MEMORIE IA</div>
+                <div className="text-xs font-bold text-emerald-400 truncate mt-0.5">
+                  {validMemoriesCount}
+                </div>
+              </div>
+
+              <div className="bg-surface-2/60 border border-surface-3 rounded-xl p-2.5 text-center">
+                <div className="text-[9px] font-mono uppercase text-content-3 font-semibold">FIDUCIA PARTY</div>
+                <div className="text-xs font-bold text-cyan-300 truncate mt-0.5">
+                  {avgTrustLevel}/10
+                </div>
+              </div>
+
+              <div className="bg-surface-2/60 border border-surface-3 rounded-xl p-2.5 text-center">
+                <div className="text-[9px] font-mono uppercase text-content-3 font-semibold">RUOLO</div>
+                <div className="text-xs font-bold text-indigo-300 truncate mt-0.5">
+                  {targetPlayer.isDm ? 'Dungeon Master' : 'Avventuriero'}
+                </div>
+              </div>
+
+              <div className="bg-surface-2/60 border border-surface-3 rounded-xl p-2.5 text-center">
+                <div className="text-[9px] font-mono uppercase text-content-3 font-semibold">CREDENZE</div>
+                <div className="text-xs font-bold text-purple-300 truncate mt-0.5">
+                  {(characterBio?.evolvingBeliefs || []).length} Teorie
+                </div>
+              </div>
+
+              <div className="bg-surface-2/60 border border-surface-3 rounded-xl p-2.5 text-center">
+                <div className="text-[9px] font-mono uppercase text-content-3 font-semibold">SEGRETI</div>
+                <div className="text-xs font-bold text-rose-300 truncate mt-0.5">
+                  {characterBio?.secrets ? '1 Registrato' : 'Riservato'}
+                </div>
+              </div>
+            </div>
+
+            {/* Quick Actions Row */}
+            <div className="grid grid-cols-3 gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  if (matchedCodexEntity) {
+                    navigate(`/oracle?entityId=${matchedCodexEntity._id}`);
+                  } else {
+                    handleSyncToCodex();
+                  }
+                }}
+                className="col-span-3 sm:col-span-1 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-surface-0 font-bold px-3 py-2.5 rounded-xl shadow-md flex items-center justify-center gap-1.5 cursor-pointer text-xs transition-all uppercase tracking-wider"
+              >
+                <Sparkles size={14} />
+                <span>SENDIPIETRA</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setIsAskDm(true);
+                  setIsNoteModalOpen(true);
+                }}
+                className="bg-surface-2 hover:bg-surface-3 border border-surface-3 text-content-1 font-semibold px-3 py-2.5 rounded-xl flex items-center justify-center gap-1.5 cursor-pointer text-xs transition-all"
+              >
+                <Plus size={14} className="text-amber-400" />
+                <span>+ NOTA DM</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setViewMode(viewMode === 'read' ? 'edit' : 'read')}
+                className="bg-surface-2 hover:bg-surface-3 border border-surface-3 text-content-1 font-semibold px-3 py-2.5 rounded-xl flex items-center justify-center gap-1.5 cursor-pointer text-xs transition-all"
+              >
+                <Eye size={14} className="text-cyan-400" />
+                <span>{viewMode === 'read' ? 'VISTA EDIT' : 'VISTA LETTURA'}</span>
+              </button>
+            </div>
+
+            {/* Footer Matrix Status Line */}
+            <div className="border-t border-surface-2 pt-3 flex items-center justify-between text-[9px] font-mono text-content-3">
+              <span>● AETHER-MATRIX LINK: SYNCHRONIZED</span>
+              <span>LATENCY: 4MS</span>
+            </div>
           </div>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-surface-2">
-          {matchedCodexEntity && (
-            <Link
-              to={`/entities?select=${matchedCodexEntity._id}`}
-              className="px-3 py-1.5 bg-surface-2 hover:bg-surface-3 text-content-1 border border-surface-3 rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
-              title="Apri la scheda nel Codex ed esplora le relazioni o chatta con la Persona IA"
+        {/* RIGHT COLUMN: HUB NAVIGATION TABS & ACTIVE DOSSIER CONTENT */}
+        <div className="lg:col-span-7 space-y-5">
+          {/* Top Hub Navigation Bar (Matching Screenshot Tabs) */}
+          <div className="flex items-center gap-2 overflow-x-auto pb-1 custom-scrollbar">
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab('biography');
+                if (isSearchActive) clearSearch();
+              }}
+              className={`px-4 py-2.5 rounded-xl font-heading text-xs font-bold uppercase tracking-wider transition-all shrink-0 cursor-pointer ${
+                activeTab === 'biography' && !isSearchActive
+                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-xs'
+                  : 'bg-surface-1 hover:bg-surface-2 border border-surface-2 text-content-3 hover:text-content-1'
+              }`}
             >
-              <BookOpen size={13} className="text-primary" />
-              <span>Vedi nel Codex</span>
-            </Link>
-          )}
+              IDENTITÀ &amp; ORIGINI
+            </button>
 
-          <button
-            type="button"
-            onClick={handleSyncToCodex}
-            className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs ${
-              matchedCodexEntity
-                ? 'bg-primary/10 hover:bg-primary/20 text-primary border border-primary/30'
-                : 'bg-primary text-surface-0 hover:bg-primary-hover border border-primary'
-            }`}
-          >
-            <RefreshCw size={13} className={matchedCodexEntity ? 'text-primary' : 'text-surface-0'} />
-            <span>{matchedCodexEntity ? 'Sincronizza Memoria & Scheda Codex' : 'Crea Scheda Codex & Abilita IA'}</span>
-          </button>
-        </div>
-      </div>
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab('mind');
+                if (isSearchActive) clearSearch();
+              }}
+              className={`px-4 py-2.5 rounded-xl font-heading text-xs font-bold uppercase tracking-wider transition-all shrink-0 cursor-pointer ${
+                activeTab === 'mind' && !isSearchActive
+                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-xs'
+                  : 'bg-surface-1 hover:bg-surface-2 border border-surface-2 text-content-3 hover:text-content-1'
+              }`}
+            >
+              PSICOLOGIA &amp; FEDE
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab('notes');
+                if (isSearchActive) clearSearch();
+              }}
+              className={`px-4 py-2.5 rounded-xl font-heading text-xs font-bold uppercase tracking-wider transition-all shrink-0 cursor-pointer flex items-center gap-1.5 ${
+                (activeTab === 'notes' || activeTab === 'dm_questions') && !isSearchActive
+                  ? 'bg-primary/20 text-primary border border-primary/40 shadow-xs'
+                  : 'bg-surface-1 hover:bg-surface-2 border border-surface-2 text-content-3 hover:text-content-1'
+              }`}
+            >
+              <Lock size={12} className="text-amber-400" />
+              <span>SEGRETI DM</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab('quests');
+                if (isSearchActive) clearSearch();
+              }}
+              className={`px-4 py-2.5 rounded-xl font-heading text-xs font-bold uppercase tracking-wider transition-all shrink-0 cursor-pointer ${
+                activeTab === 'quests' && !isSearchActive
+                  ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-xs'
+                  : 'bg-surface-1 hover:bg-surface-2 border border-surface-2 text-content-3 hover:text-content-1'
+              }`}
+            >
+              QUEST &amp; RELIQUIE
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab('memories');
+                if (isSearchActive) clearSearch();
+              }}
+              className={`px-4 py-2.5 rounded-xl font-heading text-xs font-bold uppercase tracking-wider transition-all shrink-0 cursor-pointer ${
+                activeTab === 'memories' && !isSearchActive
+                  ? 'bg-purple-500/20 text-purple-300 border border-purple-500/40 shadow-xs'
+                  : 'bg-surface-1 hover:bg-surface-2 border border-surface-2 text-content-3 hover:text-content-1'
+              }`}
+            >
+              CAMPAIGN-SYNC // ONLINE
+            </button>
+          </div>
+
+          {/* Persona IA Active Banner Card */}
+          <div className="bg-surface-1 border border-surface-2 rounded-2xl p-4 sm:p-5 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-3.5 min-w-0">
+              <div className="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 flex items-center justify-center shrink-0">
+                <Brain size={20} />
+              </div>
+              <div className="space-y-0.5 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-[10px] font-mono uppercase text-emerald-400 font-bold tracking-wider">
+                    PERSONA IA ATTIVA • MATRIX NODE #09
+                  </span>
+                </div>
+                <h3 className="font-heading font-bold text-sm text-content-1 truncate">
+                  {validMemoriesCount} Memorie Narrative Sincronizzate
+                </h3>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleSyncToCodex}
+              className="px-4 py-2 bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/30 rounded-xl text-xs font-bold transition-all flex items-center gap-2 shrink-0 cursor-pointer"
+            >
+              <RefreshCw size={13} />
+              <span>SINCRONIZZA ORA</span>
+            </button>
+          </div>
 
       {syncStatusMsg && (
         <div className="p-3 bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs rounded-xl flex items-center justify-between gap-2 animate-fade-in">
@@ -1780,8 +2116,9 @@ export function CharacterProfile() {
               exit={{ opacity: 0, y: -6 }}
             >
               <CharacterBackgroundTab
-                key={targetPlayer._id}
+                key={`bio_${targetPlayer._id}_${characterBio?.updatedAt || 'init'}`}
                 player={targetPlayer}
+                characterBio={characterBio}
                 activeSectionMode="bio"
                 isOtherPlayerView={effectiveIsOtherPlayerView}
                 onBioUpdated={(updated) => setCharacterBio(updated)}
@@ -1798,8 +2135,9 @@ export function CharacterProfile() {
               exit={{ opacity: 0, y: -6 }}
             >
               <CharacterBackgroundTab
-                key={targetPlayer._id}
+                key={`mind_${targetPlayer._id}_${characterBio?.updatedAt || 'init'}`}
                 player={targetPlayer}
+                characterBio={characterBio}
                 activeSectionMode="mind"
                 isOtherPlayerView={effectiveIsOtherPlayerView}
                 onBioUpdated={(updated) => setCharacterBio(updated)}
@@ -1996,6 +2334,8 @@ export function CharacterProfile() {
           )}
         </AnimatePresence>
       )}
+        </div>
+      </div>
 
       {/* ========================================================================= */}
       {/* MODALS */}

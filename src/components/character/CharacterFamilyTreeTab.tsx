@@ -64,6 +64,12 @@ const ATTITUDE_CONFIGS: Record<string, { label: string; emoji: string; badgeClas
   rival: { label: 'Rivale', emoji: '⚔️', badgeClass: 'bg-orange-500/10 text-orange-400 border-orange-500/30' },
 };
 
+const isValidAvatar = (url?: string | null): boolean => {
+  if (!url || typeof url !== 'string') return false;
+  const t = url.trim();
+  return Boolean(t && t.toUpperCase() !== 'EMPTY' && t !== 'null' && t !== 'undefined' && t !== '""');
+};
+
 interface UnifiedCardItem {
   id: string;
   name: string;
@@ -485,31 +491,52 @@ export function CharacterFamilyTreeTab({
 
     // 1. Fellow Party Members
     otherPlayers.forEach((otherP) => {
-      const partyRel = characterBio?.interPartyRelations?.[otherP._id];
-      const matchingFam = relations.find((r) => r.linkedPlayerId === otherP._id);
+      const relMap = characterBio?.interPartyRelations || {};
+      const oCleanId = otherP._id ? String(otherP._id).toLowerCase() : '';
+      const oCleanEmail = otherP.email ? String(otherP.email).toLowerCase() : '';
+      const oCleanName = otherP.characterName ? otherP.characterName.trim().toLowerCase() : '';
+
+      const matchedRelKey = Object.keys(relMap).find((k) => {
+        if (!k) return false;
+        const cleanKey = k.toLowerCase();
+        if (oCleanId && cleanKey === oCleanId) return true;
+        if (oCleanEmail && cleanKey === oCleanEmail) return true;
+        const item = relMap[k];
+        if (item?.targetPlayerId && oCleanId && String(item.targetPlayerId).toLowerCase() === oCleanId) return true;
+        if (item?.targetCharacterName && oCleanName && item.targetCharacterName.trim().toLowerCase() === oCleanName) return true;
+        return false;
+      });
+
+      const partyRel = matchedRelKey ? relMap[matchedRelKey] : undefined;
+      const matchingFam = relations.find((r) => r.linkedPlayerId === otherP._id || (oCleanName && r.name && r.name.trim().toLowerCase() === oCleanName));
+      const resolvedCompanion = CampaignManager.resolveCompanionRelation(
+        characterBio,
+        otherP,
+        relations,
+        null
+      );
 
       const isFam = isFamilyRelation(matchingFam);
-      const trust = partyRel?.trustLevel ?? matchingFam?.trustLevel ?? 5;
-      const rawAttitude = partyRel?.attitude || matchingFam?.attitude || 'neutral';
+      const trust = resolvedCompanion.trustLevel;
+      const rawAttitude = (resolvedCompanion.attitude as RelationAttitude) || partyRel?.attitude || matchingFam?.attitude || 'neutral';
       const attConf = ATTITUDE_CONFIGS[rawAttitude] || ATTITUDE_CONFIGS.neutral;
 
-      let bondText = "Compagno d'Armi";
+      let bondText = resolvedCompanion.relationType;
       let badgeColor = 'bg-blue-500/10 text-blue-400 border-blue-500/20';
 
       if (isFam && matchingFam) {
-        bondText = `👑 ${matchingFam.customRelationshipLabel || matchingFam.titleOrRole || getRelationshipBadge(matchingFam).label}`;
+        bondText = `👑 ${matchingFam.customRelationshipLabel || matchingFam.titleOrRole || resolvedCompanion.relationType || getRelationshipBadge(matchingFam).label}`;
         badgeColor = 'bg-amber-500/10 text-amber-400 border-amber-500/30 font-semibold';
-      } else if (partyRel?.relationType) {
-        bondText = partyRel.relationType;
-      } else if (matchingFam) {
-        bondText = matchingFam.customRelationshipLabel || matchingFam.titleOrRole || getRelationshipBadge(matchingFam).label;
       }
+
+      const cleanPUrl = CampaignManager.cleanAvatarString(otherP.avatarUrl || matchingFam?.avatarUrl);
+      const safePUrl = (!otherP.isDm && CampaignManager.isDmAvatar(cleanPUrl)) ? '' : cleanPUrl;
 
       list.push({
         id: `pg_${otherP._id}`,
         name: otherP.characterName,
         subtitle: 'Personaggio Giocante (Party)',
-        avatarUrl: otherP.avatarUrl || matchingFam?.avatarUrl,
+        avatarUrl: safePUrl,
         color: otherP.color || '#3b82f6',
         attitude: rawAttitude,
         attitudeConfig: attConf,
@@ -518,7 +545,7 @@ export function CharacterFamilyTreeTab({
         bondBadgeColor: badgeColor,
         isFamily: isFam,
         isPg: true,
-        notes: partyRel?.notes || matchingFam?.bio,
+        notes: resolvedCompanion.notes || partyRel?.notes || matchingFam?.bio,
         linkedPlayerId: otherP._id,
         linkedEntityId: matchingFam?.linkedEntityId,
         sharedWithParty: matchingFam ? matchingFam.sharedWithParty !== false : true,
@@ -546,7 +573,7 @@ export function CharacterFamilyTreeTab({
       } else if (rel.relationshipType === 'rival') {
         defaultTrust = 3;
       } else if (rel.relationshipType === 'mentor' || rel.relationshipType === 'parent' || rel.relationshipType === 'spouse') {
-        defaultTrust = 8;
+        defaultTrust = 7;
       }
 
       let defaultAttitude = rel.attitude;
@@ -565,12 +592,14 @@ export function CharacterFamilyTreeTab({
       const bondText = isFam ? `👑 ${badgeInfo.label}` : badgeInfo.label;
       const badgeColor = isFam ? 'bg-amber-500/10 text-amber-400 border-amber-500/30 font-semibold' : badgeInfo.color;
       const stBadge = getStatusBadge(rel.status);
+      const cleanRelUrl = CampaignManager.cleanAvatarString(rel.avatarUrl || matchedEntity?.images?.[0] || (matchedEntity as any)?.imageUrl);
+      const safeRelUrl = CampaignManager.isDmAvatar(cleanRelUrl) ? '' : cleanRelUrl;
 
       list.push({
         id: `rel_${rel.id}`,
         name: rel.name,
         subtitle: rel.titleOrRole || (matchedEntity ? `Codex: ${matchedEntity.type.toUpperCase()}` : isFam ? 'Componente della Famiglia' : 'PNG del Mondo'),
-        avatarUrl: rel.avatarUrl || matchedEntity?.images?.[0] || (matchedEntity as any)?.imageUrl,
+        avatarUrl: safeRelUrl,
         color: matchedEntity?.color || (isFam ? '#f59e0b' : '#10b981'),
         attitude: defaultAttitude,
         attitudeConfig: attConf,
@@ -674,7 +703,7 @@ export function CharacterFamilyTreeTab({
         >
           <div className="flex items-start justify-between gap-4">
             <div className="flex items-center gap-4">
-              {selectedRelationForDetail.avatarUrl && selectedRelationForDetail.avatarUrl.trim() ? (
+              {isValidAvatar(selectedRelationForDetail.avatarUrl) ? (
                 <img
                   src={selectedRelationForDetail.avatarUrl}
                   alt={selectedRelationForDetail.name}
@@ -1040,7 +1069,7 @@ export function CharacterFamilyTreeTab({
               {/* TOP: Avatar, Name & Attitude badge */}
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-3 min-w-0">
-                  {card.avatarUrl && card.avatarUrl.trim() ? (
+                  {isValidAvatar(card.avatarUrl) ? (
                     <img
                       src={card.avatarUrl}
                       alt={card.name}

@@ -326,18 +326,17 @@ export function Sessions() {
     const updatedChaps = CampaignManager.getChapters();
     setSessions(updated);
     setChapters(updatedChaps);
-    if (selectedSession) {
-      const refreshedSelected = updated.find((s) => s._id === selectedSession._id);
-      const nextSelected = refreshedSelected || updated[0] || null;
-      setSelectedSession(nextSelected);
-      if (!nextSelected) {
-        setChronicleView('index');
+    setSelectedSession((prev) => {
+      if (prev) {
+        const refreshed = updated.find((s) => s._id === prev._id);
+        const next = refreshed || updated[0] || null;
+        if (!next) setChronicleView('index');
+        return next;
       }
-    } else if (updated.length > 0) {
-      setSelectedSession(updated[0]);
-    } else {
+      if (updated.length > 0) return updated[0];
       setChronicleView('index');
-    }
+      return null;
+    });
   };
 
   useEffect(() => {
@@ -347,7 +346,7 @@ export function Sessions() {
         refreshSessions();
       }
     }).catch(() => {});
-  }, [player, activeCampaignCode]);
+  }, [player?._id, activeCampaignCode]);
 
   useEffect(() => {
     const handleUpdate = () => {
@@ -370,7 +369,7 @@ export function Sessions() {
       window.removeEventListener('chronicle_accounts_updated', handleAccountsUpdate);
       window.removeEventListener('storage', handleUpdate);
     };
-  }, [selectedSession, player]);
+  }, [player?._id, activeCampaignCode]);
 
   const filteredSessions = useMemo(() => {
     const list = sessions.filter((s) => {
@@ -418,13 +417,16 @@ export function Sessions() {
   // Keep selected session synced or pick first
   React.useEffect(() => {
     if (filteredSessions.length > 0) {
-      if (!selectedSession || !filteredSessions.some((s) => s._id === selectedSession._id)) {
-        setSelectedSession(filteredSessions[0]);
-      }
+      setSelectedSession((prev) => {
+        if (!prev || !filteredSessions.some((s) => s._id === prev._id)) {
+          return filteredSessions[0];
+        }
+        return prev;
+      });
     } else {
-      setSelectedSession(null);
+      setSelectedSession((prev) => (prev ? null : prev));
     }
-  }, [filteredSessions, selectedSession]);
+  }, [filteredSessions]);
 
   // Natural chronological session navigation:
   // "Sessione Precedente" (sx, indietro nella storia, es. da #12 a #11) -> decrementa il numero di sessione
@@ -1420,31 +1422,59 @@ export function Sessions() {
                     );
                   })()}
 
-                  {/* SECTION 3: Mappe & Illustrazioni (if present) */}
-                  {selectedSession.images && selectedSession.images.length > 0 && (
-                    <section className="space-y-3 pt-4 border-t border-surface-2">
-                      <h3 className="font-serif font-bold text-sm sm:text-base text-content-1 flex items-center gap-2">
-                        <ImageIcon size={14} className="text-primary" />
-                        <span>Mappe &amp; Illustrazioni ({selectedSession.images.length})</span>
-                      </h3>
-                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                        {selectedSession.images.filter((img) => img && typeof img === 'string' && img.trim()).map((img, idx) => (
-                          <div
-                            key={idx}
-                            onClick={() => setActiveLightboxImg(img)}
-                            className="aspect-video rounded-lg overflow-hidden cursor-pointer bg-surface-1 border border-surface-2 relative group"
-                          >
-                            <img
-                              src={img}
-                              alt="Illustrazione di sessione"
-                              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                              referrerPolicy="no-referrer"
-                            />
-                          </div>
-                        ))}
-                      </div>
-                    </section>
-                  )}
+                  {/* SECTION 3: Mappe & Illustrazioni (including cover image) */}
+                  {(() => {
+                    const sessionCover =
+                      (typeof selectedSession.coverImage === 'string' ? selectedSession.coverImage : selectedSession.coverImage?.url) ||
+                      (selectedSession.images && selectedSession.images.length > 0 ? selectedSession.images[0] : null);
+
+                    const allGalleryImages = Array.from(
+                      new Set([
+                        ...(sessionCover ? [sessionCover] : []),
+                        ...(selectedSession.images || []),
+                      ].filter((img): img is string => Boolean(img && typeof img === 'string' && img.trim())))
+                    );
+
+                    if (allGalleryImages.length === 0) return null;
+
+                    return (
+                      <section className="space-y-3 pt-4 border-t border-surface-2">
+                        <h3 className="font-serif font-bold text-sm sm:text-base text-content-1 flex items-center justify-between">
+                          <span className="flex items-center gap-2">
+                            <ImageIcon size={14} className="text-primary" />
+                            <span>Mappe, Copertina &amp; Illustrazioni ({allGalleryImages.length})</span>
+                          </span>
+                          <span className="text-[11px] font-mono text-content-3 font-normal">
+                            Include copertina &amp; allegati
+                          </span>
+                        </h3>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                          {allGalleryImages.map((img, idx) => {
+                            const isCover = img === sessionCover;
+                            return (
+                              <div
+                                key={idx}
+                                onClick={() => setActiveLightboxImg(img)}
+                                className="aspect-video rounded-lg overflow-hidden cursor-pointer bg-surface-1 border border-surface-2 relative group shadow-2xs"
+                              >
+                                <img
+                                  src={img}
+                                  alt="Illustrazione di sessione"
+                                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                                  referrerPolicy="no-referrer"
+                                />
+                                {isCover && (
+                                  <span className="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded bg-black/75 backdrop-blur-xs text-[10px] font-mono text-amber-300 border border-amber-500/30 flex items-center gap-1">
+                                    ★ Copertina
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </section>
+                    );
+                  })()}
 
                   {/* SECTION 4: Audio Logs (if present) */}
                   {selectedSession.audioLogs && selectedSession.audioLogs.length > 0 && (
@@ -1528,8 +1558,8 @@ export function Sessions() {
                                     }`}
                                     style={{ backgroundColor: p.color || '#6366f1' }}
                                   >
-                                    {p.avatarUrl && p.avatarUrl.trim() ? (
-                                      <img src={p.avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
+                                    {CampaignManager.cleanAvatarString(p.avatarUrl) ? (
+                                      <img src={CampaignManager.cleanAvatarString(p.avatarUrl)} alt="Avatar" className="w-full h-full object-cover" />
                                     ) : (
                                       p.characterName?.charAt(0).toUpperCase() || 'P'
                                     )}

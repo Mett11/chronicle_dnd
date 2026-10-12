@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import {
   BookOpen,
@@ -56,6 +56,7 @@ import { formatLoreDate } from '../../lib/loreDateUtils';
 
 interface CharacterBackgroundTabProps {
   player: Player;
+  characterBio?: CharacterBio | null;
   onBioUpdated?: (bio: CharacterBio) => void;
   isOtherPlayerView?: boolean;
   activeSectionMode?: 'all' | 'bio' | 'mind' | 'party';
@@ -111,6 +112,7 @@ const MEMORY_CATEGORY_LABELS: Record<TimelineMemoryEntry['category'], { label: s
 
 export function CharacterBackgroundTab({
   player,
+  characterBio: propBio,
   onBioUpdated,
   isOtherPlayerView = false,
   activeSectionMode = 'all',
@@ -128,57 +130,9 @@ export function CharacterBackgroundTab({
   const [isBackstoryExpanded, setIsBackstoryExpanded] = useState(false);
   const [expandedRelationPlayerId, setExpandedRelationPlayerId] = useState<string | null>(null);
 
-  const [bio, setBio] = useState<CharacterBio>(() => {
-    return (
-      CampaignManager.getCharacterBio(player._id) || {
-        playerId: player._id,
-        characterTitle: '',
-        characterClass: '',
-        characterRace: '',
-        characterAlignment: 'Neutrale Buono',
-        deityOrPatron: '',
-        hometown: '',
-        birthDateFormatted: '',
-        backstoryMarkdown: '',
-        personalityTraits: [],
-        ideals: '',
-        bonds: '',
-        flaws: '',
-        secrets: '',
-        appearanceDescription: '',
-        timelineMemories: [],
-        evolvingBeliefs: [],
-        interPartyRelations: {},
-      }
-    );
-  });
-
-  const [isEditing, setIsEditing] = useState(false);
-  const [draft, setDraft] = useState<CharacterBio>(bio);
-  const [newTraitInput, setNewTraitInput] = useState('');
-  const [saveSuccessNotice, setSaveSuccessNotice] = useState(false);
-  const [isSaving, setIsSaving] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
-
-  // Sync calendar and players updates
-  useEffect(() => {
-    const handleCalUpdate = () => {
-      setCalendar(CampaignManager.getCalendar());
-      setAllPlayers(CampaignManager.getPlayers());
-    };
-    window.addEventListener('chronicle_calendar_updated', handleCalUpdate);
-    window.addEventListener('chronicle_data_updated', handleCalUpdate);
-    window.addEventListener('chronicle_players_updated', handleCalUpdate);
-    return () => {
-      window.removeEventListener('chronicle_calendar_updated', handleCalUpdate);
-      window.removeEventListener('chronicle_data_updated', handleCalUpdate);
-      window.removeEventListener('chronicle_players_updated', handleCalUpdate);
-    };
-  }, []);
-
-  useEffect(() => {
-    const loaded = CampaignManager.getCharacterBio(player._id);
-    const resolvedBio: CharacterBio = {
+  const resolveBioData = useCallback((externalBio?: CharacterBio | null): CharacterBio => {
+    const loaded = externalBio || propBio || CampaignManager.getCharacterBio(player._id || (player as any).id);
+    return {
       characterTitle: '',
       characterClass: '',
       characterRace: '',
@@ -197,16 +151,60 @@ export function CharacterBackgroundTab({
       evolvingBeliefs: [],
       interPartyRelations: {},
       ...(loaded || {}),
-      playerId: player._id,
+      playerId: player._id || (player as any).id,
       characterName: loaded?.characterName || loaded?.name || player.characterName || 'Personaggio',
       name: loaded?.name || loaded?.characterName || player.characterName || 'Personaggio',
-      avatarUrl: loaded?.avatarUrl || player.avatarUrl || '',
+      avatarUrl: (!player.isDm && CampaignManager.isDmAvatar(CampaignManager.cleanAvatarString(loaded?.avatarUrl || player.avatarUrl)))
+        ? ''
+        : CampaignManager.cleanAvatarString(loaded?.avatarUrl || player.avatarUrl),
       color: loaded?.color || player.color || '#6366f1',
     };
-    setBio(resolvedBio);
-    setDraft(resolvedBio);
-    setIsEditing(false);
-  }, [player._id, player.avatarUrl, player.characterName, player.color]);
+  }, [propBio, player._id, (player as any).id, player.characterName, player.avatarUrl, player.color]);
+
+  const [bio, setBio] = useState<CharacterBio>(() => resolveBioData());
+  const [isEditing, setIsEditing] = useState(false);
+  const [draft, setDraft] = useState<CharacterBio>(bio);
+  const [newTraitInput, setNewTraitInput] = useState('');
+  const [saveSuccessNotice, setSaveSuccessNotice] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  // Sync calendar, players, and character bios updates dynamically
+  useEffect(() => {
+    const handleCalUpdate = () => {
+      setCalendar(CampaignManager.getCalendar());
+      setAllPlayers(CampaignManager.getPlayers());
+    };
+    const handleBioUpdate = () => {
+      if (!isEditing) {
+        const fresh = resolveBioData();
+        setBio(fresh);
+        setDraft(fresh);
+      }
+    };
+
+    window.addEventListener('chronicle_calendar_updated', handleCalUpdate);
+    window.addEventListener('chronicle_data_updated', handleCalUpdate);
+    window.addEventListener('chronicle_players_updated', handleCalUpdate);
+    window.addEventListener('chronicle_character_bio_updated', handleBioUpdate);
+    window.addEventListener('chronicle_data_updated', handleBioUpdate);
+
+    return () => {
+      window.removeEventListener('chronicle_calendar_updated', handleCalUpdate);
+      window.removeEventListener('chronicle_data_updated', handleCalUpdate);
+      window.removeEventListener('chronicle_players_updated', handleCalUpdate);
+      window.removeEventListener('chronicle_character_bio_updated', handleBioUpdate);
+      window.removeEventListener('chronicle_data_updated', handleBioUpdate);
+    };
+  }, [isEditing, resolveBioData]);
+
+  useEffect(() => {
+    if (!isEditing) {
+      const fresh = resolveBioData(propBio);
+      setBio(fresh);
+      setDraft(fresh);
+    }
+  }, [propBio, player._id, player.avatarUrl, player.characterName, player.color, isEditing, resolveBioData]);
 
   const handleStartEdit = () => {
     setDraft({ ...bio });
@@ -222,12 +220,25 @@ export function CharacterBackgroundTab({
     setIsSaving(true);
     setSaveError(null);
     const toSave: CharacterBio = {
+      ...bio,
       ...draft,
-      playerId: player._id,
+      playerId: player._id || (player as any).id,
       characterName: draft.characterName || draft.name || player.characterName || 'Personaggio',
       name: draft.name || draft.characterName || player.characterName || 'Personaggio',
-      avatarUrl: draft.avatarUrl || bio.avatarUrl || player.avatarUrl || '',
+      avatarUrl: (!player.isDm && CampaignManager.isDmAvatar(CampaignManager.cleanAvatarString(draft.avatarUrl || bio.avatarUrl || player.avatarUrl)))
+        ? ''
+        : CampaignManager.cleanAvatarString(draft.avatarUrl || bio.avatarUrl || player.avatarUrl),
       color: draft.color || bio.color || player.color || '#6366f1',
+      // Preserve timelineMemories and evolvingBeliefs so they are never wiped out when saving from other tabs
+      timelineMemories: (draft.timelineMemories && draft.timelineMemories.length > 0)
+        ? draft.timelineMemories
+        : (bio.timelineMemories || []),
+      evolvingBeliefs: (draft.evolvingBeliefs && draft.evolvingBeliefs.length > 0)
+        ? draft.evolvingBeliefs
+        : (bio.evolvingBeliefs || []),
+      interPartyRelations: (draft.interPartyRelations && Object.keys(draft.interPartyRelations).length > 0)
+        ? draft.interPartyRelations
+        : (bio.interPartyRelations || {}),
       updatedAt: new Date().toISOString(),
     };
     try {
@@ -697,6 +708,186 @@ export function CharacterBackgroundTab({
               Nessun backstory scritto per questo personaggio.
             </div>
           )}
+        </div>
+      )}
+
+      {/* ======================================================== */}
+      {/* 2B. PERSONALITÀ, COMPETENZE, IDEALI, LEGAMI & DIFETTI   */}
+      {/* ======================================================== */}
+      {showBioSections && (!isOtherPlayerView || (currentPrivacy.traits !== false && currentPrivacy.bondsFlaws !== false)) && (
+        <div className="bg-surface-1 border border-surface-2 rounded-2xl p-5 space-y-4 shadow-sm">
+          <div className="flex items-center justify-between gap-2 border-b border-surface-2 pb-3">
+            <h3 className="font-heading text-sm font-bold text-content-1 flex items-center gap-2">
+              <Award size={16} className="text-indigo-400" />
+              <span>Personalità, Competenze &amp; Tratti Formativi</span>
+            </h3>
+            {renderPrivacyToggle('traits', 'Tratti & Competenze')}
+          </div>
+
+          <div className="space-y-4 text-xs">
+            {/* Tratti della Personalità & Competenze */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] font-semibold text-content-3 uppercase tracking-wider block">
+                  Tratti Distintivi &amp; Competenze Chiave
+                </label>
+                <span className="text-[10px] font-mono text-content-3">
+                  {((isEditing ? draft.personalityTraits : bio.personalityTraits) || []).length} elementi
+                </span>
+              </div>
+
+              {isEditing ? (
+                <div className="space-y-2.5">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={newTraitInput}
+                      onChange={(e) => setNewTraitInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleAddTrait();
+                        }
+                      }}
+                      placeholder="Aggiungi tratto o competenza (es. Percepire Trappole, Sangue Freddo...)"
+                      className="flex-1 bg-surface-2/60 border border-surface-3 focus:border-primary rounded-xl px-3 py-1.5 text-xs text-content-1 outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleAddTrait}
+                      className="px-3 py-1.5 bg-primary/20 text-primary border border-primary/30 hover:bg-primary/30 rounded-xl text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+                    >
+                      <Plus size={13} /> Aggiungi
+                    </button>
+                  </div>
+
+                  <div className="flex flex-wrap gap-1.5 pt-1">
+                    {((draft.personalityTraits || []).map((t, idx) => (
+                      <span
+                        key={idx}
+                        className="px-2.5 py-1 rounded-lg bg-surface-2 border border-surface-3 text-content-1 text-xs flex items-center gap-1.5 group"
+                      >
+                        <span>{t}</span>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveTrait(idx)}
+                          className="text-content-3 hover:text-rose-400 transition-colors p-0.5"
+                          title="Rimuovi"
+                        >
+                          <X size={12} />
+                        </button>
+                      </span>
+                    )))}
+                    {(!draft.personalityTraits || draft.personalityTraits.length === 0) && (
+                      <span className="text-content-3 italic text-xs">Nessun tratto inserito.</span>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-wrap gap-1.5">
+                  {(bio.personalityTraits && bio.personalityTraits.length > 0) ? (
+                    bio.personalityTraits.map((t, idx) => (
+                      <span
+                        key={idx}
+                        className="px-2.5 py-1 rounded-lg bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 font-medium text-xs shadow-2xs"
+                      >
+                        ✨ {t}
+                      </span>
+                    ))
+                  ) : (
+                    <p className="text-content-3 italic py-1 bg-surface-2/30 px-3 rounded-xl border border-surface-3 w-full">
+                      Nessun tratto o competenza specificata.
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Ideali, Legami, Difetti & Segreti Grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 pt-2 border-t border-surface-2/60">
+              {/* Ideali */}
+              <div className="space-y-1">
+                <label className="text-[11px] font-semibold text-content-3 uppercase tracking-wider block flex items-center gap-1">
+                  <Sparkles size={11} className="text-amber-400" /> Ideali &amp; Principi
+                </label>
+                {isEditing ? (
+                  <textarea
+                    rows={2}
+                    value={draft.ideals || ''}
+                    onChange={(e) => setDraft({ ...draft, ideals: e.target.value })}
+                    placeholder="In cosa crede ciecamente? (es. Libertà, Giustizia, Conoscenza ancestrale...)"
+                    className="w-full bg-surface-2/60 border border-surface-3 focus:border-primary rounded-xl p-2.5 text-xs text-content-1 outline-none"
+                  />
+                ) : (
+                  <p className="text-content-1 bg-surface-2/30 p-2.5 rounded-xl border border-surface-3 leading-relaxed">
+                    {bio.ideals || <span className="text-content-3 italic">Nessun ideale registrato</span>}
+                  </p>
+                )}
+              </div>
+
+              {/* Legami */}
+              <div className="space-y-1">
+                <label className="text-[11px] font-semibold text-content-3 uppercase tracking-wider block flex items-center gap-1">
+                  <Heart size={11} className="text-rose-400" /> Legami d&apos;Onore &amp; Debiti
+                </label>
+                {isEditing ? (
+                  <textarea
+                    rows={2}
+                    value={draft.bonds || ''}
+                    onChange={(e) => setDraft({ ...draft, bonds: e.target.value })}
+                    placeholder="A chi o a cosa è legato? (es. Famiglia scomparsa, il proprio maestro...)"
+                    className="w-full bg-surface-2/60 border border-surface-3 focus:border-primary rounded-xl p-2.5 text-xs text-content-1 outline-none"
+                  />
+                ) : (
+                  <p className="text-content-1 bg-surface-2/30 p-2.5 rounded-xl border border-surface-3 leading-relaxed">
+                    {bio.bonds || <span className="text-content-3 italic">Nessun legame registrato</span>}
+                  </p>
+                )}
+              </div>
+
+              {/* Difetti */}
+              <div className="space-y-1">
+                <label className="text-[11px] font-semibold text-content-3 uppercase tracking-wider block flex items-center gap-1">
+                  <Skull size={11} className="text-orange-400" /> Difetti &amp; Debolezze
+                </label>
+                {isEditing ? (
+                  <textarea
+                    rows={2}
+                    value={draft.flaws || ''}
+                    onChange={(e) => setDraft({ ...draft, flaws: e.target.value })}
+                    placeholder="Quali sono i suoi vizi o paure? (es. Superbia, sete di vendetta, avidità...)"
+                    className="w-full bg-surface-2/60 border border-surface-3 focus:border-primary rounded-xl p-2.5 text-xs text-content-1 outline-none"
+                  />
+                ) : (
+                  <p className="text-content-1 bg-surface-2/30 p-2.5 rounded-xl border border-surface-3 leading-relaxed">
+                    {bio.flaws || <span className="text-content-3 italic">Nessun difetto registrato</span>}
+                  </p>
+                )}
+              </div>
+
+              {/* Segreti (solo utente o se esplicitamente condivisi) */}
+              {(!isOtherPlayerView || currentPrivacy.secrets !== false) && (
+                <div className="space-y-1">
+                  <label className="text-[11px] font-semibold text-content-3 uppercase tracking-wider block flex items-center gap-1">
+                    <Lock size={11} className="text-purple-400" /> Segreti Personali &amp; Ombre
+                  </label>
+                  {isEditing ? (
+                    <textarea
+                      rows={2}
+                      value={draft.secrets || ''}
+                      onChange={(e) => setDraft({ ...draft, secrets: e.target.value })}
+                      placeholder="Cose mai rivelate a nessuno..."
+                      className="w-full bg-surface-2/60 border border-surface-3 focus:border-primary rounded-xl p-2.5 text-xs text-content-1 outline-none"
+                    />
+                  ) : (
+                    <p className="text-content-1 bg-surface-2/30 p-2.5 rounded-xl border border-surface-3 leading-relaxed">
+                      {bio.secrets || <span className="text-content-3 italic">Nessun segreto registrato</span>}
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
@@ -1246,13 +1437,39 @@ export function CharacterBackgroundTab({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
             {partyCompanions.map((comp) => {
               const relMap = (isEditing ? draft.interPartyRelations : bio.interPartyRelations) || {};
-              const rel = relMap[comp._id] || {
+              const compCleanId = comp._id ? String(comp._id).toLowerCase() : '';
+              const compCleanEmail = comp.email ? String(comp.email).toLowerCase() : '';
+              const compCleanName = comp.characterName ? comp.characterName.trim().toLowerCase() : '';
+
+              // Find matching relation in interPartyRelations dictionary by id, email or targetCharacterName
+              let matchedRelKey = Object.keys(relMap).find((k) => {
+                if (!k) return false;
+                const cleanKey = k.toLowerCase();
+                if (compCleanId && cleanKey === compCleanId) return true;
+                if (compCleanEmail && cleanKey === compCleanEmail) return true;
+                const item = relMap[k];
+                if (item?.targetPlayerId && compCleanId && String(item.targetPlayerId).toLowerCase() === compCleanId) return true;
+                if (item?.targetCharacterName && compCleanName && item.targetCharacterName.trim().toLowerCase() === compCleanName) return true;
+                return false;
+              });
+
+              const resolvedCompanion = CampaignManager.resolveCompanionRelation(
+                isEditing ? draft : bio,
+                comp,
+                undefined,
+                null
+              );
+
+              const existingRel = matchedRelKey ? relMap[matchedRelKey] : null;
+              const isGenericType = !existingRel?.relationType || ['compagno', "compagno d'armi", "compagno d'avventura"].includes(existingRel.relationType.toLowerCase().trim());
+
+              const rel = {
                 targetPlayerId: comp._id,
                 targetCharacterName: comp.characterName,
-                attitude: 'neutral',
-                trustLevel: 5,
-                relationType: "Compagno d'Armi",
-                notes: '',
+                attitude: existingRel?.attitude || (resolvedCompanion.attitude as any) || 'neutral',
+                trustLevel: existingRel?.trustLevel !== undefined ? existingRel.trustLevel : resolvedCompanion.trustLevel,
+                relationType: (existingRel?.relationType && !isGenericType) ? existingRel.relationType : resolvedCompanion.relationType,
+                notes: existingRel?.notes || resolvedCompanion.notes || '',
               };
               const attLabel = ATTITUDE_LABELS[rel.attitude || 'neutral'];
 

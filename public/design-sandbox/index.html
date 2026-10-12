@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="it" data-theme="dungeon-master-dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chronicle D&D — Visual Design Sandbox (Contemporary Arcane Instrument)</title>
+
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            'surface-0': 'var(--bg-surface-0)',
+            'surface-1': 'var(--bg-surface-1)',
+            'surface-2': 'var(--bg-surface-2)',
+            'surface-3': 'var(--bg-surface-3)',
+            'surface-4': 'var(--bg-surface-4)',
+            'content-1': 'var(--text-content-1)',
+            'content-2': 'var(--text-content-2)',
+            'content-3': 'var(--text-content-3)',
+            'primary': 'var(--primary)',
+            'primary-hover': 'var(--primary-hover)',
+            'primary-muted': 'var(--primary-muted)',
+            'primary-glow': 'var(--primary-glow)',
+          },
+          fontFamily: {
+            'display': ['Cinzel', 'Georgia', 'serif'],
+            'heading': ['Space Grotesk', 'system-ui', 'sans-serif'],
+            'body': ['Plus Jakarta Sans', 'system-ui', 'sans-serif'],
+            'serif-reading': ['Newsreader', 'Georgia', 'serif'],
+            'mono-tech': ['JetBrains Mono', 'monospace'],
+          }
+        }
+      }
+    }
+  </script>
+
+  <!-- Google Fonts & Custom CSS -->
+  <link rel="stylesheet" href="/design-sandbox/sandbox.css">
+
+  <!-- React 18 & Babel Standalone CDN -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <!-- Lucide Icons CDN -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body class="bg-surface-0 text-content-1 font-body antialiased min-h-screen arcane-grid-bg selection:bg-primary/30">
+  <div id="root"></div>
+
+  <!-- Sandbox Dataset -->
+  <script src="/design-sandbox/data.js"></script>
+
+  <!-- Interactive Sandbox Application Script -->
+  <script type="text/babel" src="/design-sandbox/app.jsx"></script>
+</body>
+</html>

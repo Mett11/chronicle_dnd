@@ -50,36 +50,42 @@ export function CharacterNotesTab({
   }
 
   return (
-    <div className="space-y-4 animate-in fade-in duration-200">
+    <div className="space-y-5 animate-in fade-in duration-200">
       {/* Header bar with count & privacy control */}
-      <div className="bg-surface-1 border border-surface-2 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
-        <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center text-primary shrink-0">
-            <BookOpen size={16} />
+      <div
+        className="border rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-md backdrop-blur-md relative overflow-hidden"
+        style={{
+          borderColor: 'rgba(255, 255, 255, 0.08)',
+          backgroundColor: 'rgba(15, 23, 42, 0.65)',
+        }}
+      >
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center text-primary shrink-0">
+            <BookOpen size={18} />
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="font-heading font-bold text-sm text-content-1">
-                {isOtherPlayerView ? `Taccuino di ${characterName}` : 'Taccuino Personale'}
+              <h2 className="font-cinzel font-bold text-sm text-content-1">
+                {isOtherPlayerView ? `CHRONO-TAPE // ${characterName.toUpperCase()}` : 'CHRONO-TAPE // TACCUINO PERSONALE'}
               </h2>
-              <span className="px-1.5 py-0.5 text-[10px] font-mono rounded bg-surface-2 border border-surface-3 text-content-2">
-                {notes.length}
+              <span className="px-2 py-0.5 text-[10px] font-mono rounded-md bg-surface-2 border border-surface-3 text-content-2 font-bold">
+                {notes.length} LOGS
               </span>
             </div>
-            <p className="text-[11px] text-content-3">
+            <p className="text-[11px] font-mono text-content-3">
               {isOtherPlayerView
-                ? 'Appunti e memorie condivise con il party'
-                : 'Annotazioni private, pensieri di sessione e cronache personali'}
+                ? 'Tracce di sessione e memorie condivise con la compagnia'
+                : 'Registrazioni arcanatroniche, pensieri di sessione e cronache private'}
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-2 self-end sm:self-center">
+        <div className="flex items-center gap-2 self-end sm:self-center font-heading">
           {!isOtherPlayerView && onTogglePrivacy && (
             <button
               type="button"
               onClick={() => onTogglePrivacy('personalNotes')}
-              className={`px-2.5 py-1.5 rounded-lg text-xs font-medium border flex items-center gap-1.5 transition-colors cursor-pointer shrink-0 ${
+              className={`px-3 py-1.5 rounded-xl text-xs font-semibold border flex items-center gap-1.5 transition-colors cursor-pointer shrink-0 font-mono ${
                 isSectionVisibleToParty
                   ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20'
                   : 'bg-amber-500/10 text-amber-400 border-amber-500/30 hover:bg-amber-500/20'
@@ -100,9 +106,9 @@ export function CharacterNotesTab({
               type="button"
               id="notes-tab-create-btn"
               onClick={onOpenCreateNote}
-              className="px-3 py-1.5 bg-primary text-surface-0 hover:bg-primary-hover rounded-lg text-xs font-medium inline-flex items-center gap-1.5 shadow-xs cursor-pointer transition-colors shrink-0"
+              className="px-3.5 py-1.5 bg-primary text-surface-0 hover:bg-primary-hover rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 shadow-sm cursor-pointer transition-colors shrink-0"
             >
-              <Plus size={13} />
+              <Plus size={14} />
               <span>Nuovo Appunto</span>
             </button>
           )}
@@ -111,78 +117,96 @@ export function CharacterNotesTab({
 
       {/* Notes Grid or Empty state */}
       {notes.length === 0 ? (
-        <div className="bg-surface-1 border border-surface-2 rounded-xl p-10 text-center space-y-3">
-          <BookOpen size={32} className="mx-auto text-content-3 opacity-50" />
-          <h3 className="font-heading text-sm font-semibold text-content-1">
+        <div className="bg-surface-1/90 border border-surface-2 rounded-2xl p-12 text-center space-y-3 relative overflow-hidden backdrop-blur-md">
+          <BookOpen size={36} className="mx-auto text-content-3 opacity-40" />
+          <h3 className="font-cinzel text-sm font-bold text-content-1">
             {isOtherPlayerView
-              ? 'Nessun appunto condiviso disponibile'
-              : 'Nessun appunto personale ancora presente'}
+              ? 'NESSUNA REGISTRAZIONE CONDIVISA'
+              : 'NESSUN LOG PERSONALE REGISTRATO'}
           </h3>
-          <p className="text-xs text-content-3 max-w-md mx-auto leading-relaxed">
+          <p className="text-xs text-content-3 max-w-md mx-auto leading-relaxed font-mono">
             {isOtherPlayerView
               ? `${characterName} non ha registrato appunti visibili in questo momento.`
-              : 'Questo taccuino è riservato alle tue annotazioni private, i tuoi segreti e i tuoi spunti di gioco.'}
+              : 'Il nastro cronologico è pronto per accogliere le tue annotazioni private, riflessioni e segreti di campagna.'}
           </p>
           {!isOtherPlayerView && (
             <button
               type="button"
               onClick={onOpenCreateNote}
-              className="px-3.5 py-1.5 bg-primary text-surface-0 rounded-lg text-xs font-medium inline-flex items-center gap-1.5 mt-1 cursor-pointer shadow-xs"
+              className="px-4 py-2 bg-primary text-surface-0 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 mt-2 cursor-pointer shadow-md font-heading"
             >
-              <Plus size={13} /> Scrivi il tuo primo appunto
+              <Plus size={14} /> Incidi il tuo primo appunto
             </button>
           )}
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
-          {notes.map((note) => (
-            <div
-              key={note._id}
-              onClick={() => onSelectNote(note)}
-              className="bg-surface-1 border border-surface-2 hover:border-surface-3 rounded-xl p-4 space-y-3 transition-all cursor-pointer group hover:shadow-xs relative overflow-hidden flex flex-col justify-between"
-            >
-              <div className="space-y-2">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className="p-1 rounded-md bg-surface-2 text-primary shrink-0">
-                      {isSectionVisibleToParty ? <Eye size={12} /> : <Lock size={12} />}
-                    </span>
-                    <h3 className="font-heading font-semibold text-sm text-content-1 group-hover:text-primary transition-colors truncate">
-                      {note.title}
-                    </h3>
+        <div className="relative pl-0 sm:pl-4">
+          {/* Vertical Graduated Chrono-Tape Scale Axis */}
+          <div className="hidden sm:block absolute left-0 top-3 bottom-3 w-[2px] bg-gradient-to-b from-primary/60 via-surface-3 to-transparent">
+            <div className="absolute -top-1 -left-[3px] w-2 h-2 rounded-full bg-primary" />
+            <div className="absolute -bottom-1 -left-[3px] w-2 h-2 rounded-full bg-surface-3" />
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {notes.map((note, idx) => (
+              <div
+                key={note._id}
+                onClick={() => onSelectNote(note)}
+                className="bg-surface-1/90 border border-surface-2 hover:border-primary/50 rounded-2xl p-4 sm:p-5 space-y-3 transition-all cursor-pointer group hover:shadow-lg relative overflow-hidden flex flex-col justify-between backdrop-blur-md"
+              >
+                {/* Optical Corner Brackets */}
+                <span className="absolute top-1.5 left-1.5 text-[8px] font-mono text-content-3/40 pointer-events-none">┌</span>
+                <span className="absolute top-1.5 right-1.5 text-[8px] font-mono text-content-3/40 pointer-events-none">┐</span>
+                <span className="absolute bottom-1.5 left-1.5 text-[8px] font-mono text-content-3/40 pointer-events-none">└</span>
+                <span className="absolute bottom-1.5 right-1.5 text-[8px] font-mono text-content-3/40 pointer-events-none">┘</span>
+
+                <div className="space-y-2">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="p-1 rounded-md bg-surface-2 text-primary shrink-0 border border-surface-3">
+                        {isSectionVisibleToParty ? <Eye size={12} /> : <Lock size={12} />}
+                      </span>
+                      <h3 className="font-heading font-semibold text-sm text-content-1 group-hover:text-primary transition-colors truncate">
+                        {note.title}
+                      </h3>
+                    </div>
+                    {note.category && (
+                      <span
+                        className="px-2 py-0.5 text-[10px] font-mono font-medium rounded-md border shrink-0"
+                        style={{
+                          backgroundColor: `${note.category.color || '#6366f1'}15`,
+                          borderColor: `${note.category.color || '#6366f1'}30`,
+                          color: note.category.color || '#6366f1',
+                        }}
+                      >
+                        {note.category.title}
+                      </span>
+                    )}
                   </div>
-                  {note.category && (
-                    <span
-                      className="px-2 py-0.5 text-[10px] font-medium rounded-md border shrink-0"
-                      style={{
-                        backgroundColor: `${note.category.color || '#6366f1'}15`,
-                        borderColor: `${note.category.color || '#6366f1'}30`,
-                        color: note.category.color || '#6366f1',
-                      }}
-                    >
-                      {note.category.title}
+
+                  <p className="text-xs text-content-3 line-clamp-3 leading-relaxed">
+                    {note.content || 'Nessun testo esteso...'}
+                  </p>
+                </div>
+
+                <div className="flex items-center justify-between text-[11px] text-content-3 pt-2.5 border-t border-surface-2/60 font-mono">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] text-primary/70">TAPE-{String(idx + 1).padStart(2, '0')}</span>
+                    <span aria-hidden="true" className="opacity-40">·</span>
+                    <span className="flex items-center gap-1">
+                      <Clock size={11} />
+                      {new Date(note._createdAt).toLocaleDateString('it-IT')}
+                    </span>
+                  </div>
+                  {note.askDm && (
+                    <span className="px-1.5 py-0.5 rounded-md bg-amber-500/10 text-amber-400 border border-amber-500/20 text-[10px] font-medium flex items-center gap-1">
+                      <HelpCircle size={10} /> DM
                     </span>
                   )}
                 </div>
-
-                <p className="text-xs text-content-3 line-clamp-3 leading-relaxed">
-                  {note.content || 'Nessun testo esteso...'}
-                </p>
               </div>
-
-              <div className="flex items-center justify-between text-[11px] text-content-3 pt-2.5 border-t border-surface-2/60">
-                <span className="flex items-center gap-1 font-mono">
-                  <Clock size={11} />
-                  {new Date(note._createdAt).toLocaleDateString('it-IT')}
-                </span>
-                {note.askDm && (
-                  <span className="px-1.5 py-0.5 rounded-md bg-amber-500/10 text-amber-400 border border-amber-500/20 text-[10px] font-medium flex items-center gap-1">
-                    <HelpCircle size={10} /> DM
-                  </span>
-                )}
-              </div>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
       )}
     </div>
