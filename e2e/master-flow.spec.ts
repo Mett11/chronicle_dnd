@@ -38,7 +38,7 @@ test.describe('E2E Suite: Flow Completo Dungeon Master (Master)', () => {
       await captureStep(page, testInfo, '1_master_campaign_gate.png');
     });
 
-    await test.step('WHEN 2: Il Master crea una nuova campagna "Cronache del Drago d\'Oro"', async () => {
+    await test.step('WHEN 2: Il Master crea una nuova campagna "Cronache del Drago d\'Oro" (Codice: DRAGO-999)', async () => {
       const openCreateModalBtn = page.locator('#btn-open-create-modal');
       if (await openCreateModalBtn.isVisible()) {
         await openCreateModalBtn.click();
@@ -46,6 +46,9 @@ test.describe('E2E Suite: Flow Completo Dungeon Master (Master)', () => {
 
         const nameInput = page.locator('#create-camp-name-input');
         await nameInput.fill('Cronache del Drago d\'Oro');
+
+        const codeInput = page.locator('#create-camp-code-input');
+        await codeInput.fill('DRAGO-999');
 
         const submitBtn = page.locator('#btn-submit-create-campaign');
         await submitBtn.click();

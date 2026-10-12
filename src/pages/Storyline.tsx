@@ -2199,7 +2199,7 @@ export function Storyline() {
           imageUrl: chapterCover,
           nodeId: `chap_${chapKey}`,
           nodeTitle: `Copertina: ${chapObj?.name || chapObj?.title || s.chapterName || 'Capitolo'}`,
-          nodeDescription: chapObj?.description || (chapObj as any)?.summary || `Apertura e Copertina del Capitolo "${chapObj?.name || s.chapterName || ''}".`,
+          nodeDescription: chapObj?.description || chapObj?.summary || `Apertura e Copertina del Capitolo "${chapObj?.name || s.chapterName || ''}".`,
           nodeType: 'chapter',
           loreDate: s.loreDate?.trim() || (s.date ? `Sessione del ${s.date}` : ''),
           sessionNumber: s.number,

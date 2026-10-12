@@ -5806,14 +5806,7 @@ export class CampaignManager {
 
       found = {
         ...found,
-        timelineMemories: Array.from(combinedMemories.values()).filter((m) => {
-          if (!m || !m.title) return false;
-          const t = m.title.trim().toLowerCase();
-          const s = (m.summary || '').trim().toLowerCase();
-          if (t.includes('la direzione della campagna') || t.match(/^sessione\s+\d+/i) || t.includes('sessione 22')) return false;
-          if (s.includes('il dm gestisce il racconto') || s.includes('sessione di campagna registrata')) return false;
-          return true;
-        }),
+        timelineMemories: Array.from(combinedMemories.values()),
         evolvingBeliefs: Array.from(combinedBeliefs.values()),
         interPartyRelations: combinedInterParty,
         backstoryMarkdown: found.backstoryMarkdown || matchedBios.find((b) => Boolean(b.backstoryMarkdown))?.backstoryMarkdown || '',
@@ -6068,28 +6061,6 @@ export class CampaignManager {
       interPartyRelations: currentRelations,
     };
     this.saveCharacterBio(updatedBio);
-
-    // Sync inverse relation on target player for symmetric trustLevel
-    if (relation.targetPlayerId) {
-      const targetBio = this.getCharacterBio(relation.targetPlayerId);
-      if (targetBio) {
-        const targetInter = { ...(targetBio.interPartyRelations || {}) };
-        const myName = bio.characterName || bio.name || 'Compagno';
-        const myKey = playerId;
-        const existingInv = targetInter[myKey] || Object.values(targetInter).find((r) => r.targetCharacterName?.toLowerCase().trim() === myName.toLowerCase().trim());
-        targetInter[myKey] = {
-          targetPlayerId: playerId,
-          targetCharacterName: myName,
-          relationType: existingInv?.relationType || relation.relationType || "Compagno d'Avventura",
-          attitude: existingInv?.attitude || relation.attitude || 'friendly',
-          trustLevel: relation.trustLevel ?? existingInv?.trustLevel ?? 5,
-          notes: existingInv?.notes || relation.notes || '',
-          progression: existingInv?.progression || relation.progression || [],
-        };
-        this.saveCharacterBio({ ...targetBio, interPartyRelations: targetInter });
-      }
-    }
-
     return updatedBio;
   }
 
@@ -6176,36 +6147,6 @@ export class CampaignManager {
       }
       if (customPartyRel.progression && customPartyRel.progression.length > 0) {
         progression = customPartyRel.progression;
-      }
-    }
-
-    // Check inverse relation on target player's bio if trust level is default 5 or relation missing
-    if ((!customPartyRel || trustLevel === 5) && (targetPlayer._id || targetPlayer.id || targetPlayer.email)) {
-      const targetBio = this.getCharacterBio(targetPlayer._id || targetPlayer.id || targetPlayer.email || '');
-      if (targetBio?.interPartyRelations) {
-        const myId = characterBio?.playerId?.toLowerCase().trim();
-        const myName = (characterBio?.characterName || characterBio?.name || '').toLowerCase().trim();
-        const invMatch = Object.values(targetBio.interPartyRelations).find((r) => {
-          if (!r) return false;
-          const rPId = String(r.targetPlayerId || '').toLowerCase().trim();
-          const rPName = String(r.targetCharacterName || '').toLowerCase().trim();
-          if (myId && rPId === myId) return true;
-          if (myName && rPName === myName) return true;
-          return false;
-        });
-        if (invMatch) {
-          if (!customPartyRel) {
-            attitude = invMatch.attitude || attitude;
-            if (invMatch.notes) notes = invMatch.notes;
-            if (invMatch.relationType && !isGenericLabel(invMatch.relationType)) {
-              relationType = invMatch.relationType.trim();
-              isCustom = true;
-            }
-          }
-          if (invMatch.trustLevel !== undefined) {
-            trustLevel = invMatch.trustLevel;
-          }
-        }
       }
     }
 

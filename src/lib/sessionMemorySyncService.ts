@@ -1225,30 +1225,29 @@ export class SessionMemorySyncService {
         // 2.4 Inter-Party Relations
         if (Array.isArray(pp.interPartyRelationUpdates) && pp.interPartyRelationUpdates.length > 0) {
           const currentInter = { ...(updatedBio.interPartyRelations || {}) };
-          const allPlayers = CampaignManager.getStoredPlayers() || [];
           pp.interPartyRelationUpdates.forEach((rel) => {
             if (!rel.applied) return;
             const rawTargetId = (rel.targetPlayerId || '').trim();
             const targetCharName = (rel.targetCharacterName || '').trim().toLowerCase();
 
             const matchedPlayer = allPlayers.find((p) => {
-              if (rawTargetId && (p._id === rawTargetId || (p as any).id === rawTargetId)) return true;
+              if (rawTargetId && (p._id === rawTargetId || p.id === rawTargetId)) return true;
               if (targetCharName && p.characterName && p.characterName.trim().toLowerCase() === targetCharName) return true;
               if (targetCharName && p.aliases && p.aliases.some((a) => a.trim().toLowerCase() === targetCharName)) return true;
               return false;
             });
 
-            const resolvedTargetId = matchedPlayer?._id || (matchedPlayer as any)?.id || rawTargetId || rel.targetCharacterName;
+            const resolvedTargetId = matchedPlayer?._id || matchedPlayer?.id || rawTargetId || rel.targetCharacterName;
             if (!resolvedTargetId) return;
 
             const existingKey = Object.keys(currentInter).find((k) => {
               const low = k.toLowerCase().trim();
               if (low === resolvedTargetId.toLowerCase().trim()) return true;
-              if (targetCharName && (currentInter[k] as any)?.targetCharacterName?.trim().toLowerCase() === targetCharName) return true;
+              if (targetCharName && currentInter[k]?.targetCharacterName?.trim().toLowerCase() === targetCharName) return true;
               return false;
             });
 
-            const prev: any = (existingKey ? currentInter[existingKey] : null) || {
+            const prev = (existingKey ? currentInter[existingKey] : null) || {
               targetPlayerId: resolvedTargetId,
               targetCharacterName: matchedPlayer?.characterName || rel.targetCharacterName || 'Compagno',
               attitude: 'neutral',

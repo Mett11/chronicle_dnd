@@ -166,25 +166,6 @@ export function CharacterProfile() {
       ) || null
     );
   }, [entities, targetPlayer?.characterName]);
-
-  const validMemoriesCount = useMemo(() => {
-    const mems = characterBio?.timelineMemories || [];
-    return mems.filter((m) => {
-      if (!m || !m.title) return false;
-      const t = m.title.trim().toLowerCase();
-      const s = (m.summary || '').trim().toLowerCase();
-      if (t.includes('la direzione della campagna') || t.match(/^sessione\s+\d+/i) || t.includes('sessione 22')) return false;
-      if (s.includes('il dm gestisce il racconto') || s.includes('sessione di campagna registrata')) return false;
-      return true;
-    }).length;
-  }, [characterBio?.timelineMemories]);
-
-  const avgTrustLevel = useMemo(() => {
-    const rels = Object.values(characterBio?.interPartyRelations || {});
-    if (rels.length === 0) return 8;
-    const sum = rels.reduce((acc, r) => acc + (r.trustLevel ?? 5), 0);
-    return Math.round(sum / rels.length);
-  }, [characterBio?.interPartyRelations]);
   
   // Search states
   const [searchQuery, setSearchQuery] = useState('');
@@ -1387,302 +1368,265 @@ export function CharacterProfile() {
         </div>
       )}
 
-      {/* DOSSIER PG SIDE-BY-SIDE LAYOUT (MIRRORING MOCKUP SCREENSHOT WITH REAL APP DATA) */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* LEFT COLUMN: HERO CHARACTER PORTRAIT & REAL DATA TILES CARD */}
-        <div className="lg:col-span-5 space-y-4">
-          <div className="bg-surface-1/90 border border-amber-500/25 rounded-2xl p-5 space-y-4 shadow-xl relative overflow-hidden backdrop-blur-md">
-            {/* Top Canon Badge Bar */}
-            <div className="flex items-center justify-between gap-2 border-b border-surface-2 pb-3 text-[10px] font-mono tracking-wider">
-              <div className="flex items-center gap-1.5 text-amber-400 font-bold uppercase">
-                <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-                <span>CANONE ATTIVO // SFERA DI OPERAM</span>
+      {/* Top Dossier Header Card */}
+      <div className="bg-surface-1 border border-surface-2 rounded-xl p-5 sm:p-6 shadow-xs">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-5">
+          <div className="flex items-center gap-4 sm:gap-5">
+            {(() => {
+              const isGeneric = (n?: string | null) => !n || ['personaggio', 'avventuriero', 'player', 'giocatore'].includes(n.trim().toLowerCase());
+              const rawBioName = characterBio?.characterName?.trim() || characterBio?.name?.trim();
+              const validBioName = !isGeneric(rawBioName) ? rawBioName : null;
+              const rawAvatar = CampaignManager.cleanAvatarString(characterBio?.avatarUrl) || CampaignManager.cleanAvatarString(targetPlayer.avatarUrl) || '';
+              const displayAvatar = (!targetPlayer.isDm && CampaignManager.isDmAvatar(rawAvatar)) ? '' : rawAvatar;
+              const displayName = validBioName || (!isGeneric(targetPlayer.characterName) ? targetPlayer.characterName : (!isGeneric(account?.characterName) ? account?.characterName : 'Personaggio'));
+              const displayColor = characterBio?.color || targetPlayer.color || '#6366f1';
+
+              return (
+                <div className="relative group shrink-0">
+                  {displayAvatar ? (
+                    <img
+                      src={displayAvatar}
+                      alt={displayName}
+                      className="w-16 h-16 sm:w-20 sm:h-20 rounded-lg object-cover border-2 shadow-xs shrink-0 transition-colors"
+                      style={{ borderColor: displayColor }}
+                    />
+                  ) : (
+                    <div
+                      className="w-16 h-16 sm:w-20 sm:h-20 rounded-lg flex items-center justify-center font-heading font-bold text-2xl sm:text-3xl text-surface-0 shadow-xs shrink-0 transition-colors"
+                      style={{ backgroundColor: displayColor }}
+                    >
+                      {displayName.charAt(0).toUpperCase()}
+                    </div>
+                  )}
+                  {isOwnProfile && (
+                    <button
+                      type="button"
+                      id="edit-profile-btn"
+                      onClick={handleOpenEditProfile}
+                      className="absolute -bottom-1 -right-1 p-1.5 bg-surface-2 hover:bg-surface-3 text-content-1 rounded-md border border-surface-3 shadow-xs transition-colors cursor-pointer"
+                      title="Modifica Identità & Colore Personaggio"
+                    >
+                      <Edit3 size={13} />
+                    </button>
+                  )}
+                </div>
+              );
+            })()}
+
+            <div className="space-y-1 min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <h1 className="text-xl sm:text-2xl font-heading font-bold text-content-1 truncate">
+                  {(() => {
+                    const isGeneric = (n?: string | null) => !n || ['personaggio', 'avventuriero', 'player', 'giocatore'].includes(n.trim().toLowerCase());
+                    const rawBioName = characterBio?.characterName?.trim() || characterBio?.name?.trim();
+                    const validBioName = !isGeneric(rawBioName) ? rawBioName : null;
+                    return validBioName || (!isGeneric(targetPlayer.characterName) ? targetPlayer.characterName : (!isGeneric(account?.characterName) ? account?.characterName : 'Personaggio'));
+                  })()}
+                </h1>
+                {targetPlayer.isDm ? (
+                  <span className="px-2 py-0.5 bg-primary/10 text-primary text-xs font-semibold rounded-md border border-primary/20 flex items-center gap-1">
+                    <Crown size={12} /> Dungeon Master
+                  </span>
+                ) : (
+                  <span className="px-2 py-0.5 bg-surface-2 text-content-2 text-xs font-medium rounded-md border border-surface-3 flex items-center gap-1">
+                    <Shield size={12} className="text-primary" /> {isOwnProfile ? 'Tuo PG' : 'PG del Party'}
+                  </span>
+                )}
+                <span
+                  className="w-2.5 h-2.5 rounded-full border border-surface-0 shadow-xs shrink-0"
+                  style={{ backgroundColor: targetPlayer.color || '#6366f1' }}
+                  title={`Emblema: ${targetPlayer.color || '#6366f1'}`}
+                />
               </div>
-              <div className="text-content-3 font-medium">
-                REF_009_KC // REGISTRO AUREO
+
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-content-3">
+                {characterBio?.characterClass || characterBio?.characterRace ? (
+                  <span className="text-content-2 font-medium">
+                    {[characterBio.characterRace, characterBio.characterClass, characterBio.characterTitle]
+                      .filter(Boolean)
+                      .join(' • ')}
+                  </span>
+                ) : null}
+                <span className="flex items-center gap-1">
+                  <User size={12} /> {targetPlayer.email || account.email}
+                </span>
               </div>
             </div>
+          </div>
 
-            {/* Character Artwork Frame */}
-            <div className="relative w-full h-[400px] sm:h-[460px] rounded-xl overflow-hidden border border-amber-500/30 bg-surface-0 shadow-2xl group">
-              {(() => {
-                const isGeneric = (n?: string | null) => !n || ['personaggio', 'avventuriero', 'player', 'giocatore'].includes(n.trim().toLowerCase());
-                const rawBioName = characterBio?.characterName?.trim() || characterBio?.name?.trim();
-                const validBioName = !isGeneric(rawBioName) ? rawBioName : null;
-                const rawAvatar = CampaignManager.cleanAvatarString(characterBio?.avatarUrl) || CampaignManager.cleanAvatarString(targetPlayer.avatarUrl) || '';
-                const displayAvatar = (!targetPlayer.isDm && CampaignManager.isDmAvatar(rawAvatar)) ? '' : rawAvatar;
-                const displayName = validBioName || (!isGeneric(targetPlayer.characterName) ? targetPlayer.characterName : (!isGeneric(account?.characterName) ? account?.characterName : 'Personaggio'));
-                const displayColor = characterBio?.color || targetPlayer.color || '#6366f1';
+          {/* Direct Actions & View Mode Toolbar */}
+          <div className="flex flex-wrap items-center gap-2 shrink-0 pt-3 md:pt-0 border-t md:border-t-0 border-surface-2">
+            {isOwnProfile ? (
+              <>
+                {/* View Mode Toggle: Modifica (Proprietario) vs Lettura (Altri Giocatori) */}
+                <div className="flex items-center p-0.5 bg-surface-2 border border-surface-3 rounded-lg mr-1">
+                  <button
+                    type="button"
+                    id="view-mode-edit-btn"
+                    onClick={() => {
+                      setViewMode('edit');
+                      CampaignManager.saveUserPreferences({ reading: { dossierViewMode: 'edit' } });
+                    }}
+                    className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors flex items-center gap-1.5 cursor-pointer ${
+                      viewMode === 'edit'
+                        ? 'bg-surface-1 text-content-1 shadow-xs font-semibold'
+                        : 'text-content-3 hover:text-content-1'
+                    }`}
+                    title="Vista Proprietario (Modifica & impostazioni privacy)"
+                  >
+                    <Edit3 size={13} className={viewMode === 'edit' ? 'text-primary' : ''} />
+                    <span>Modifica</span>
+                  </button>
+                  <button
+                    type="button"
+                    id="view-mode-read-btn"
+                    onClick={() => {
+                      setViewMode('read');
+                      CampaignManager.saveUserPreferences({ reading: { dossierViewMode: 'read' } });
+                    }}
+                    className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors flex items-center gap-1.5 cursor-pointer ${
+                      viewMode === 'read'
+                        ? 'bg-surface-1 text-content-1 shadow-xs font-semibold'
+                        : 'text-content-3 hover:text-content-1'
+                    }`}
+                    title="Anteprima Vista Party (Come appare agli altri giocatori)"
+                  >
+                    <Eye size={13} className={viewMode === 'read' ? 'text-primary' : ''} />
+                    <span>Lettura</span>
+                  </button>
+                </div>
 
-                return (
+                {viewMode === 'edit' && (
                   <>
-                    {displayAvatar ? (
-                      <img
-                        src={displayAvatar}
-                        alt={displayName}
-                        className="w-full h-full object-cover object-top transition-transform duration-700 group-hover:scale-105"
-                      />
-                    ) : (
-                      <div
-                        className="w-full h-full flex flex-col items-center justify-center font-heading font-black text-6xl text-white/90"
-                        style={{ backgroundColor: displayColor }}
-                      >
-                        {displayName.charAt(0).toUpperCase()}
-                      </div>
-                    )}
+                    <button
+                      type="button"
+                      id="new-personal-note-btn"
+                      onClick={() => {
+                        setIsAskDm(false);
+                        setIsNoteModalOpen(true);
+                      }}
+                      className="px-3 py-1.5 bg-primary text-surface-0 hover:bg-primary-hover rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5 shadow-xs cursor-pointer"
+                    >
+                      <Plus size={14} />
+                      <span>Nuova Nota</span>
+                    </button>
 
-                    {isOwnProfile && (
-                      <button
-                        type="button"
-                        id="edit-profile-btn"
-                        onClick={handleOpenEditProfile}
-                        className="absolute top-3 left-3 p-2 bg-surface-0/80 hover:bg-surface-0 text-white rounded-lg border border-amber-500/30 shadow-lg backdrop-blur-md transition-colors cursor-pointer"
-                        title="Modifica Identità & Colore Personaggio"
-                      >
-                        <Edit3 size={14} />
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      id="ask-dm-btn"
+                      onClick={() => {
+                        setIsAskDm(true);
+                        setIsNoteModalOpen(true);
+                      }}
+                      className="px-3 py-1.5 bg-surface-2 hover:bg-surface-3 text-content-1 border border-surface-3 rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <HelpCircle size={14} className="text-amber-400" />
+                      <span>Chiedi al DM</span>
+                    </button>
 
-                    {/* Dark Overlay Gradients */}
-                    <div className="absolute inset-0 bg-gradient-to-t from-surface-0 via-surface-0/35 to-transparent opacity-95" />
-                    <div className="absolute inset-0 bg-gradient-to-b from-surface-0/50 via-transparent to-transparent opacity-60" />
+                    <button
+                      type="button"
+                      id="new-quest-btn"
+                      onClick={() => setIsQuestModalOpen(true)}
+                      className="px-3 py-1.5 bg-surface-2 hover:bg-surface-3 text-content-1 border border-surface-3 rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Target size={14} className="text-cyan-400" />
+                      <span>Nuova Quest</span>
+                    </button>
 
-                    {/* Top Right Resonator Metric Badge */}
-                    <div className="absolute top-3 right-3 px-3 py-1.5 rounded-lg bg-surface-0/80 backdrop-blur-md border border-amber-500/30 text-[10px] font-mono text-amber-300 flex items-center gap-2 shadow-lg">
-                      <Sparkles size={12} className="text-amber-400" />
-                      <span>RISONANZA SENDIPIETRA 893.8 Arc/Hz</span>
-                    </div>
-
-                    {/* Bottom Artwork Info Overlay */}
-                    <div className="absolute bottom-0 left-0 right-0 p-5 space-y-2.5">
-                      {/* Tag Pills */}
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <span className="px-2.5 py-0.5 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[10px] font-mono uppercase font-bold tracking-wider">
-                          {characterBio?.characterRace || 'ELFO ALTO SOLARE'}
-                        </span>
-                        <span className="px-2.5 py-0.5 rounded-md bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 text-[10px] font-mono uppercase font-bold tracking-wider">
-                          LIVELLO {(characterBio as any)?.level || 14}
-                        </span>
-                        <span className="px-2.5 py-0.5 rounded-md bg-purple-500/20 text-purple-300 border border-purple-500/40 text-[10px] font-mono uppercase font-bold tracking-wider">
-                          {targetPlayer.isDm ? 'DM PRIVILEGIATO' : 'IN PARTY'}
-                        </span>
-                      </div>
-
-                      {/* Big Character Name & Titles */}
-                      <div className="space-y-0.5">
-                        <h1 className="font-heading font-black text-2xl sm:text-3xl text-white tracking-wide uppercase leading-tight drop-shadow-md">
-                          {displayName}
-                        </h1>
-                        <p className="text-xs font-medium text-amber-200/90 truncate">
-                          {characterBio?.characterTitle || [characterBio?.characterRace, characterBio?.characterClass].filter(Boolean).join(' • ') || 'Custode del Tramonto Solare • Arconte della Breccia'}
-                        </p>
-                      </div>
-                    </div>
+                    <button
+                      type="button"
+                      id="new-memory-btn"
+                      onClick={() => setIsMemoryModalOpen(true)}
+                      className="px-3 py-1.5 bg-surface-2 hover:bg-surface-3 text-content-1 border border-surface-3 rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <ImageIcon size={14} className="text-purple-400" />
+                      <span>Memoria</span>
+                    </button>
                   </>
-                );
-              })()}
+                )}
+              </>
+            ) : (
+              <div className="flex items-center gap-2">
+                <span className="px-3 py-1.5 bg-surface-2 text-content-2 border border-surface-3 rounded-lg text-xs font-medium flex items-center gap-1.5">
+                  <Eye size={13} className="text-primary" /> Vista Membro del Party
+                </span>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* 1.5 Codex Sync & AI Persona Card */}
+      <div className="bg-surface-1 border border-surface-2 rounded-xl p-4 sm:p-5 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="flex items-center gap-3.5 min-w-0">
+          <div
+            className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 border ${
+              matchedCodexEntity
+                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                : 'bg-primary/10 text-primary border-primary/30'
+            }`}
+          >
+            <Brain size={20} />
+          </div>
+          <div className="min-w-0 space-y-0.5">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h3 className="font-heading font-bold text-sm text-content-1">
+                {matchedCodexEntity
+                  ? 'Scheda Sincronizzata nel Codex'
+                  : 'Crea Scheda nel Codex & Abilita Persona IA'}
+              </h3>
+              {matchedCodexEntity && (
+                <span className="px-2 py-0.2 text-[10px] font-mono bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 rounded-full font-semibold flex items-center gap-1">
+                  <CheckCircle2 size={10} /> Persona IA Attiva
+                </span>
+              )}
             </div>
-
-            {/* REAL APP DATA TILES GRID (Replaces fake D&D stats as requested) */}
-            <div className="grid grid-cols-3 gap-2 pt-1">
-              <div className="bg-surface-2/60 border border-surface-3 rounded-xl p-2.5 text-center">
-                <div className="text-[9px] font-mono uppercase text-content-3 font-semibold">STATO</div>
-                <div className="text-xs font-bold text-amber-300 truncate mt-0.5">
-                  {characterBio?.currentStatus || 'Attivo in Party'}
-                </div>
-              </div>
-
-              <div className="bg-surface-2/60 border border-surface-3 rounded-xl p-2.5 text-center">
-                <div className="text-[9px] font-mono uppercase text-content-3 font-semibold">MEMORIE IA</div>
-                <div className="text-xs font-bold text-emerald-400 truncate mt-0.5">
-                  {validMemoriesCount}
-                </div>
-              </div>
-
-              <div className="bg-surface-2/60 border border-surface-3 rounded-xl p-2.5 text-center">
-                <div className="text-[9px] font-mono uppercase text-content-3 font-semibold">FIDUCIA PARTY</div>
-                <div className="text-xs font-bold text-cyan-300 truncate mt-0.5">
-                  {avgTrustLevel}/10
-                </div>
-              </div>
-
-              <div className="bg-surface-2/60 border border-surface-3 rounded-xl p-2.5 text-center">
-                <div className="text-[9px] font-mono uppercase text-content-3 font-semibold">RUOLO</div>
-                <div className="text-xs font-bold text-indigo-300 truncate mt-0.5">
-                  {targetPlayer.isDm ? 'Dungeon Master' : 'Avventuriero'}
-                </div>
-              </div>
-
-              <div className="bg-surface-2/60 border border-surface-3 rounded-xl p-2.5 text-center">
-                <div className="text-[9px] font-mono uppercase text-content-3 font-semibold">CREDENZE</div>
-                <div className="text-xs font-bold text-purple-300 truncate mt-0.5">
-                  {(characterBio?.evolvingBeliefs || []).length} Teorie
-                </div>
-              </div>
-
-              <div className="bg-surface-2/60 border border-surface-3 rounded-xl p-2.5 text-center">
-                <div className="text-[9px] font-mono uppercase text-content-3 font-semibold">SEGRETI</div>
-                <div className="text-xs font-bold text-rose-300 truncate mt-0.5">
-                  {characterBio?.secrets ? '1 Registrato' : 'Riservato'}
-                </div>
-              </div>
-            </div>
-
-            {/* Quick Actions Row */}
-            <div className="grid grid-cols-3 gap-2 pt-1">
-              <button
-                type="button"
-                onClick={() => {
-                  if (matchedCodexEntity) {
-                    navigate(`/oracle?entityId=${matchedCodexEntity._id}`);
-                  } else {
-                    handleSyncToCodex();
-                  }
-                }}
-                className="col-span-3 sm:col-span-1 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-surface-0 font-bold px-3 py-2.5 rounded-xl shadow-md flex items-center justify-center gap-1.5 cursor-pointer text-xs transition-all uppercase tracking-wider"
-              >
-                <Sparkles size={14} />
-                <span>SENDIPIETRA</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setIsAskDm(true);
-                  setIsNoteModalOpen(true);
-                }}
-                className="bg-surface-2 hover:bg-surface-3 border border-surface-3 text-content-1 font-semibold px-3 py-2.5 rounded-xl flex items-center justify-center gap-1.5 cursor-pointer text-xs transition-all"
-              >
-                <Plus size={14} className="text-amber-400" />
-                <span>+ NOTA DM</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setViewMode(viewMode === 'read' ? 'edit' : 'read')}
-                className="bg-surface-2 hover:bg-surface-3 border border-surface-3 text-content-1 font-semibold px-3 py-2.5 rounded-xl flex items-center justify-center gap-1.5 cursor-pointer text-xs transition-all"
-              >
-                <Eye size={14} className="text-cyan-400" />
-                <span>{viewMode === 'read' ? 'VISTA EDIT' : 'VISTA LETTURA'}</span>
-              </button>
-            </div>
-
-            {/* Footer Matrix Status Line */}
-            <div className="border-t border-surface-2 pt-3 flex items-center justify-between text-[9px] font-mono text-content-3">
-              <span>● AETHER-MATRIX LINK: SYNCHRONIZED</span>
-              <span>LATENCY: 4MS</span>
-            </div>
+            <p className="text-xs text-content-3 leading-relaxed">
+              {matchedCodexEntity
+                ? `Allinea memorie cronologiche (${(characterBio?.timelineMemories || []).length}), credenze evolutive, stato presente, quest personali e relazioni (PNG e party) con la Persona IA nel Codex per la Sendipietra.`
+                : `Crea la scheda di ${targetPlayer.characterName} nel Codex trasferendo biografia, memorie storiche, credenze, quest attive e legami per abilitare la Persona IA e la Sendipietra.`}
+            </p>
           </div>
         </div>
 
-        {/* RIGHT COLUMN: HUB NAVIGATION TABS & ACTIVE DOSSIER CONTENT */}
-        <div className="lg:col-span-7 space-y-5">
-          {/* Top Hub Navigation Bar (Matching Screenshot Tabs) */}
-          <div className="flex items-center gap-2 overflow-x-auto pb-1 custom-scrollbar">
-            <button
-              type="button"
-              onClick={() => {
-                setActiveTab('biography');
-                if (isSearchActive) clearSearch();
-              }}
-              className={`px-4 py-2.5 rounded-xl font-heading text-xs font-bold uppercase tracking-wider transition-all shrink-0 cursor-pointer ${
-                activeTab === 'biography' && !isSearchActive
-                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-xs'
-                  : 'bg-surface-1 hover:bg-surface-2 border border-surface-2 text-content-3 hover:text-content-1'
-              }`}
-            >
-              IDENTITÀ &amp; ORIGINI
-            </button>
+        <div className="flex items-center gap-2 shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-surface-2 flex-wrap">
+          <button
+            type="button"
+            onClick={handleRebuildMemoriesFromSessions}
+            disabled={isRebuildingMemories}
+            className="px-3 py-1.5 bg-surface-2 hover:bg-surface-3 text-content-1 border border-surface-3 rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs disabled:opacity-50"
+            title="Scansiona tutte le 25 sessioni della campagna e ripristina la cronologia memorie per questo personaggio"
+          >
+            <Sparkles size={13} className="text-amber-400" />
+            <span>{isRebuildingMemories ? 'Recupero in corso...' : 'Recupera Memorie dalle Sessioni'}</span>
+          </button>
 
-            <button
-              type="button"
-              onClick={() => {
-                setActiveTab('mind');
-                if (isSearchActive) clearSearch();
-              }}
-              className={`px-4 py-2.5 rounded-xl font-heading text-xs font-bold uppercase tracking-wider transition-all shrink-0 cursor-pointer ${
-                activeTab === 'mind' && !isSearchActive
-                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-xs'
-                  : 'bg-surface-1 hover:bg-surface-2 border border-surface-2 text-content-3 hover:text-content-1'
-              }`}
+          {matchedCodexEntity && (
+            <Link
+              to={`/entities?select=${matchedCodexEntity._id}`}
+              className="px-3 py-1.5 bg-surface-2 hover:bg-surface-3 text-content-1 border border-surface-3 rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
+              title="Apri la scheda nel Codex ed esplora le relazioni o chatta con la Persona IA"
             >
-              PSICOLOGIA &amp; FEDE
-            </button>
+              <BookOpen size={13} className="text-primary" />
+              <span>Vedi nel Codex</span>
+            </Link>
+          )}
 
-            <button
-              type="button"
-              onClick={() => {
-                setActiveTab('notes');
-                if (isSearchActive) clearSearch();
-              }}
-              className={`px-4 py-2.5 rounded-xl font-heading text-xs font-bold uppercase tracking-wider transition-all shrink-0 cursor-pointer flex items-center gap-1.5 ${
-                (activeTab === 'notes' || activeTab === 'dm_questions') && !isSearchActive
-                  ? 'bg-primary/20 text-primary border border-primary/40 shadow-xs'
-                  : 'bg-surface-1 hover:bg-surface-2 border border-surface-2 text-content-3 hover:text-content-1'
-              }`}
-            >
-              <Lock size={12} className="text-amber-400" />
-              <span>SEGRETI DM</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                setActiveTab('quests');
-                if (isSearchActive) clearSearch();
-              }}
-              className={`px-4 py-2.5 rounded-xl font-heading text-xs font-bold uppercase tracking-wider transition-all shrink-0 cursor-pointer ${
-                activeTab === 'quests' && !isSearchActive
-                  ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-xs'
-                  : 'bg-surface-1 hover:bg-surface-2 border border-surface-2 text-content-3 hover:text-content-1'
-              }`}
-            >
-              QUEST &amp; RELIQUIE
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                setActiveTab('memories');
-                if (isSearchActive) clearSearch();
-              }}
-              className={`px-4 py-2.5 rounded-xl font-heading text-xs font-bold uppercase tracking-wider transition-all shrink-0 cursor-pointer ${
-                activeTab === 'memories' && !isSearchActive
-                  ? 'bg-purple-500/20 text-purple-300 border border-purple-500/40 shadow-xs'
-                  : 'bg-surface-1 hover:bg-surface-2 border border-surface-2 text-content-3 hover:text-content-1'
-              }`}
-            >
-              CAMPAIGN-SYNC // ONLINE
-            </button>
-          </div>
-
-          {/* Persona IA Active Banner Card */}
-          <div className="bg-surface-1 border border-surface-2 rounded-2xl p-4 sm:p-5 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div className="flex items-center gap-3.5 min-w-0">
-              <div className="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 flex items-center justify-center shrink-0">
-                <Brain size={20} />
-              </div>
-              <div className="space-y-0.5 min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-[10px] font-mono uppercase text-emerald-400 font-bold tracking-wider">
-                    PERSONA IA ATTIVA • MATRIX NODE #09
-                  </span>
-                </div>
-                <h3 className="font-heading font-bold text-sm text-content-1 truncate">
-                  {validMemoriesCount} Memorie Narrative Sincronizzate
-                </h3>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={handleSyncToCodex}
-              className="px-4 py-2 bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/30 rounded-xl text-xs font-bold transition-all flex items-center gap-2 shrink-0 cursor-pointer"
-            >
-              <RefreshCw size={13} />
-              <span>SINCRONIZZA ORA</span>
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={handleSyncToCodex}
+            className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs ${
+              matchedCodexEntity
+                ? 'bg-primary/10 hover:bg-primary/20 text-primary border border-primary/30'
+                : 'bg-primary text-surface-0 hover:bg-primary-hover border border-primary'
+            }`}
+          >
+            <RefreshCw size={13} className={matchedCodexEntity ? 'text-primary' : 'text-surface-0'} />
+            <span>{matchedCodexEntity ? 'Sincronizza Memoria & Scheda Codex' : 'Crea Scheda Codex & Abilita IA'}</span>
+          </button>
+        </div>
+      </div>
 
       {syncStatusMsg && (
         <div className="p-3 bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs rounded-xl flex items-center justify-between gap-2 animate-fade-in">
@@ -2334,8 +2278,6 @@ export function CharacterProfile() {
           )}
         </AnimatePresence>
       )}
-        </div>
-      </div>
 
       {/* ========================================================================= */}
       {/* MODALS */}

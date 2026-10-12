@@ -12,119 +12,65 @@
 # Error details
 
 ```
-Test timeout of 60000ms exceeded.
-```
+Error: expect(locator).toBeVisible() failed
 
-```
-Error: locator.fill: Test timeout of 60000ms exceeded.
+Locator: locator('a[href*="character"], a[href*="notes"]').first()
+Expected: visible
+Timeout: 10000ms
+Error: element(s) not found
+
 Call log:
-  - waiting for locator('#create-camp-code-input')
-    - locator resolved to <input readonly type="text" id="create-camp-code-input" value="CHR-JAQH-V7CW-DALG-DS7A" class="w-full rounded-xl px-4 py-2.5 text-xs font-mono font-bold uppercase tracking-wider outline-none border cursor-not-allowed select-all"/>
-    - fill("DRAGO-999")
-  - attempting fill action
-    2 × waiting for element to be visible, enabled and editable
-      - element is not editable
-    - retrying fill action
-    - waiting 20ms
-    2 × waiting for element to be visible, enabled and editable
-      - element is not editable
-    - retrying fill action
-      - waiting 100ms
-    108 × waiting for element to be visible, enabled and editable
-        - element is not editable
-      - retrying fill action
-        - waiting 500ms
-    - waiting for element to be visible, enabled and editable
+  - Expect "toBeVisible" locator('a[href*="character"], a[href*="notes"]').first() with timeout 10000ms
+  - waiting for locator('a[href*="character"], a[href*="notes"]').first()
 
 ```
-
-# Page snapshot
 
 ```yaml
-- generic [ref=e3]:
-  - banner [ref=e4]:
-    - generic [ref=e5]:
-      - generic [ref=e6]:
-        - generic [ref=e7]: Chronicle
-        - generic [ref=e8]: Tavolo delle Campagne
-      - generic [ref=e9]:
-        - generic "master@test.com" [ref=e10]
-        - button "Disconnetti account" [ref=e15] [cursor=pointer]
-  - main [ref=e19]:
-    - generic [ref=e20]:
-      - generic [ref=e21]:
-        - paragraph [ref=e22]: ✦ Liber Campagnarum · I Tomi Attivi
-        - heading "Il Tavolo delle Cronache" [level=1] [ref=e23]
-        - paragraph [ref=e24]: Seleziona un tomo per entrare nella cronaca del tuo party, consulta i tuoi compagni d’avventura o forgia una nuova saga.
-      - generic [ref=e25]:
-        - button "Inserisci Codice Invito" [ref=e26] [cursor=pointer]
-        - button "Aggiorna elenco campagne" [ref=e34] [cursor=pointer]
-        - button "Forgia Nuova Campagna" [ref=e40] [cursor=pointer]
-    - generic [ref=e44]:
-      - heading "I Tuoi Tomi Registrati (1)" [level=2] [ref=e46]
-      - generic [ref=e51] [cursor=pointer]:
-        - generic [ref=e52]: ⌜
-        - generic [ref=e53]: ⌝
-        - generic [ref=e54]: ⌞
-        - generic [ref=e55]: ⌟
-        - generic [ref=e56]:
-          - generic [ref=e57]:
-            - generic [ref=e58]: Dungeon Master
-            - generic "Copia codice campagna" [ref=e61]: DRAGO-999
-          - heading "Cronache del Drago d'Oro" [level=3] [ref=e66]
-        - generic [ref=e67]:
-          - generic [ref=e68]:
-            - button "Invito" [ref=e69]
-            - button "Elimina definitivamente campagna (Solo Master)" [ref=e77]
-          - generic [ref=e81]: Apri Tomo
-    - generic [ref=e86]:
-      - heading "Unisciti a un Party Esistente" [level=2] [ref=e94]
-      - paragraph [ref=e95]: Hai ricevuto un link d'invito o un codice dal tuo Dungeon Master? Incolla qui il codice per registrare il tuo personaggio nel compendio di quel tavolo.
-      - generic [ref=e96]:
-        - textbox "Incolla Link o Codice (es. WATERDEEP)" [ref=e97]
-        - button "Entra nel Party" [disabled] [ref=e98] [cursor=pointer]
-    - generic [ref=e104]:
-      - generic [ref=e110]:
-        - generic [ref=e111]:
-          - generic [ref=e112]: Account Connesso
-          - generic "Sincronizzato" [ref=e113]
-        - paragraph [ref=e114]: master@test.com
-      - button "Disconnetti Account" [ref=e115] [cursor=pointer]
-  - generic [ref=e121]:
-    - button [ref=e122] [cursor=pointer]
-    - generic [ref=e130]:
-      - heading "Forgia Nuova Campagna" [level=3] [ref=e131]
-      - text: Creerai come Dungeon Master (DM)
-    - paragraph [ref=e132]: Verrà generato un codice esclusivo da condividere con i tuoi giocatori per farli accedere al tuo tavolo.
-    - generic [ref=e133]:
-      - generic [ref=e134]:
-        - generic [ref=e135]: Nome della Campagna *
-        - textbox "Es. La Maledizione di Strahd" [active] [ref=e136]: Cronache del Drago d'Oro
-      - generic [ref=e137]:
-        - generic [ref=e138]: Codice Campagna Assegnato (Permanente)
-        - textbox [ref=e140]: CHR-JAQH-V7CW-DALG-DS7A
-        - paragraph [ref=e141]: Codice univoco generato automaticamente dal sistema. Non modificabile.
-      - generic [ref=e142] [cursor=pointer]:
-        - generic [ref=e147]:
-          - paragraph [ref=e148]: Sono il Dungeon Master (DM)
-          - paragraph [ref=e149]: Sarai il Master ufficiale con pieni poteri di gestione del tavolo
-        - checkbox [checked] [ref=e150]
-      - generic [ref=e151]:
-        - button "Annulla" [ref=e152] [cursor=pointer]
-        - button "Crea & Entra come Master" [ref=e153] [cursor=pointer]
-  - contentinfo [ref=e157]:
-    - generic [ref=e158]:
-      - generic [ref=e159]:
-        - generic [ref=e160]: Chronicle
-        - generic [ref=e161]: •
-        - generic [ref=e162]: Portale delle Campagne
-      - generic [ref=e163]:
-        - button "Privacy Policy" [ref=e164] [cursor=pointer]
-        - generic [ref=e165]: •
-        - button "Cookie Policy" [ref=e166] [cursor=pointer]
-        - generic [ref=e167]: •
-        - button "Termini & GDPR" [ref=e168] [cursor=pointer]
-      - generic [ref=e169]: Tavolo di Ruolo Attivo • D&D 5E
+- banner:
+  - text: Chronicle Tavolo delle Campagne master@test.com
+  - button "Disconnetti account"
+- main:
+  - paragraph: ✦ Liber Campagnarum · I Tomi Attivi
+  - heading "Il Tavolo delle Cronache" [level=1]
+  - paragraph: Seleziona un tomo per entrare nella cronaca del tuo party, consulta i tuoi compagni d’avventura o forgia una nuova saga.
+  - button "Inserisci Codice Invito"
+  - button "Aggiorna elenco campagne"
+  - button "Forgia Nuova Campagna"
+  - heading "I Tuoi Tomi Registrati (1)" [level=2]
+  - text: ⌜ ⌝ ⌞ ⌟ Dungeon Master DRAGO-999
+  - heading "Cronache del Drago d'Oro" [level=3]
+  - button "Invito"
+  - button "Elimina definitivamente campagna (Solo Master)"
+  - text: Apri Tomo
+  - heading "Unisciti a un Party Esistente" [level=2]
+  - paragraph: Hai ricevuto un link d'invito o un codice dal tuo Dungeon Master? Incolla qui il codice per registrare il tuo personaggio nel compendio di quel tavolo.
+  - textbox "Incolla Link o Codice (es. WATERDEEP)"
+  - button "Entra nel Party" [disabled]
+  - text: Account Connesso
+  - paragraph: master@test.com
+  - button "Disconnetti Account"
+- button
+- heading "Forgia Nuova Campagna" [level=3]
+- text: Creerai come Dungeon Master (DM)
+- paragraph: Verrà generato un codice esclusivo da condividere con i tuoi giocatori per farli accedere al tuo tavolo.
+- text: Questo codice è già in uso. Generane uno diverso. Nome della Campagna *
+- textbox "Es. La Maledizione di Strahd": Cronache del Drago d'Oro
+- text: Codice Campagna Generato
+- button "Rigenera"
+- textbox "Es. STRAHD-4821": DRAGO-999
+- paragraph: Sono il Dungeon Master (DM)
+- paragraph: Sarai il Master ufficiale con pieni poteri di gestione del tavolo
+- checkbox [checked]
+- button "Annulla"
+- button "Crea & Entra come Master"
+- contentinfo:
+  - text: Chronicle • Portale delle Campagne
+  - button "Privacy Policy"
+  - text: •
+  - button "Cookie Policy"
+  - text: •
+  - button "Termini & GDPR"
+  - text: Tavolo di Ruolo Attivo • D&D 5E
 ```
 
 # Test source
@@ -180,8 +126,7 @@ Call log:
   48  |         await nameInput.fill('Cronache del Drago d\'Oro');
   49  | 
   50  |         const codeInput = page.locator('#create-camp-code-input');
-> 51  |         await codeInput.fill('DRAGO-999');
-      |                         ^ Error: locator.fill: Test timeout of 60000ms exceeded.
+  51  |         await codeInput.fill('DRAGO-999');
   52  | 
   53  |         const submitBtn = page.locator('#btn-submit-create-campaign');
   54  |         await submitBtn.click();
@@ -193,7 +138,8 @@ Call log:
   60  | 
   61  |     await test.step('THEN 3: L\'interfaccia accede al Tomo della campagna e mostra i moduli del Master', async () => {
   62  |       const characterLink = page.locator('a[href*="character"], a[href*="notes"]').first();
-  63  |       await expect(characterLink).toBeVisible();
+> 63  |       await expect(characterLink).toBeVisible();
+      |                                   ^ Error: expect(locator).toBeVisible() failed
   64  |       await captureStep(page, testInfo, '3_master_dashboard_loaded.png');
   65  |     });
   66  | 
@@ -282,4 +228,8 @@ Call log:
   149 |       }
   150 | 
   151 |       await captureStep(page, testInfo, '7_master_campaign_settings_and_qr.png');
+  152 |     });
+  153 |   });
+  154 | });
+  155 | 
 ```

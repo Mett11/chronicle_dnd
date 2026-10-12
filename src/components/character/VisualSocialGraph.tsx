@@ -1,5 +1,4 @@
 import React, { useState, useMemo, useRef } from 'react';
-import { CampaignManager } from '../../store/campaignStore';
 import {
   Users,
   User,
