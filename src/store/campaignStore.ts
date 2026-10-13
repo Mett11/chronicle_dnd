@@ -2160,6 +2160,41 @@ export class CampaignManager {
     });
   }
 
+  static getCampaignMembershipsForUser(userId?: string, email?: string): string[] {
+    if (!userId && !email) return [];
+    const cleanId = (userId || '').trim().toLowerCase();
+    const cleanEmail = (email || '').trim().toLowerCase();
+    const foundCodes = new Set<string>();
+
+    const allCampaigns = this.getCampaigns();
+    allCampaigns.forEach((camp) => {
+      if (!camp || !camp.code) return;
+      const cCode = camp.code.trim().toUpperCase();
+      // Check local campaign_members
+      const members = this.getCampaignMembers(cCode);
+      const isMem = members.some((m) => {
+        if (!m || m.status === 'expelled') return false;
+        const mUid = String(m.userId || '').toLowerCase().trim();
+        return (cleanId && mUid === cleanId) || (cleanEmail && mUid === cleanEmail);
+      });
+      if (isMem) {
+        foundCodes.add(cCode);
+      }
+      // Check character_bios for this campaign
+      const bios = this.getAllCharacterBios(cCode);
+      const hasBio = bios.some((b) => {
+        if (!b) return false;
+        const bPid = String(b.playerId || (b as any).player_id || '').toLowerCase().trim();
+        return (cleanId && bPid === cleanId) || (cleanEmail && bPid === cleanEmail);
+      });
+      if (hasBio) {
+        foundCodes.add(cCode);
+      }
+    });
+
+    return Array.from(foundCodes);
+  }
+
   static saveCampaignMembersLocalOnly(code: string, members: CampaignMemberRecord[]) {
     if (!code) return;
     const cleanCode = code.trim().toUpperCase();

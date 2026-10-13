@@ -243,9 +243,6 @@ export function WorldMap() {
       setMaps(CampaignManager.getMaps());
     };
     const handleFoldersUpdated = (e?: any) => {
-      if (e?.detail?.folders && Array.isArray(e.detail.folders)) {
-        CampaignManager.saveMapFoldersLocalOnly(e.detail.folders);
-      }
       setFolders(CampaignManager.getMapFolders());
     };
     const handleEntitiesUpdated = () => {

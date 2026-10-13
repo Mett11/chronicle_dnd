@@ -84,9 +84,13 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
     );
     const joined = (acc.joinedCampaigns || []).filter((c) => !expelledCodes.has(c.toUpperCase()));
     const dmList = (acc.dmCampaigns || []).filter((c) => !expelledCodes.has(c.toUpperCase()));
+    const memberCampaigns = CampaignManager.getCampaignMembershipsForUser(acc.id, acc.email).filter(
+      (c) => !expelledCodes.has(c.toUpperCase())
+    );
     const validCodesSet = new Set([
       ...joined.map((c) => c.toUpperCase()),
       ...dmList.map((c) => c.toUpperCase()),
+      ...memberCampaigns.map((c) => c.toUpperCase()),
     ]);
     const campMap = new Map<string, CampaignMeta>();
     const userEmail = (acc.email || '').toLowerCase().trim();
@@ -96,7 +100,11 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
         const cDmEmail = (c.dmEmail || '').toLowerCase().trim();
         const isUserDm = c.dmId === acc.id || (cDmEmail && userEmail && cDmEmail === userEmail);
         const isUserActivePlayer = Array.isArray((c as any).activePlayerEmails) && (c as any).activePlayerEmails.includes(userEmail);
-        if (validCodesSet.has(clean) || isUserDm || isUserActivePlayer) {
+        const member = CampaignManager.getCampaignMember(clean, acc.id, acc.email);
+        const isCampaignMember = Boolean(member && member.status !== 'expelled');
+        const bio = CampaignManager.getCharacterBio(acc.id, clean);
+        const hasCampaignBio = Boolean(bio && (bio.characterName || bio.name));
+        if (validCodesSet.has(clean) || isUserDm || isUserActivePlayer || isCampaignMember || hasCampaignBio) {
           campMap.set(clean, c);
         }
       }
@@ -268,9 +276,13 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
       }
 
       const userEmail = (account.email || '').toLowerCase().trim();
+      const memberCampaigns = CampaignManager.getCampaignMembershipsForUser(account.id, account.email).filter(
+        (c) => !expelledCodes.has(c.toUpperCase())
+      );
       const validCodesSet = new Set([
         ...(account.joinedCampaigns || []).map((c) => c.toUpperCase()),
         ...(account.dmCampaigns || []).map((c) => c.toUpperCase()),
+        ...memberCampaigns.map((c) => c.toUpperCase()),
       ]);
 
       const campMap = new Map<string, CampaignMeta>();
@@ -280,9 +292,13 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
           const cDmEmail = (c.dmEmail || '').toLowerCase().trim();
           const isUserDm = c.dmId === account.id || (cDmEmail && userEmail && cDmEmail === userEmail);
           const isUserActivePlayer = Array.isArray((c as any).activePlayerEmails) && (c as any).activePlayerEmails.includes(userEmail);
+          const member = CampaignManager.getCampaignMember(clean, account.id, account.email);
+          const isCampaignMember = Boolean(member && member.status !== 'expelled');
+          const bio = CampaignManager.getCharacterBio(account.id, clean);
+          const hasCampaignBio = Boolean(bio && (bio.characterName || bio.name));
 
           // Only display campaigns the user is actually DM of or member of
-          if (validCodesSet.has(clean) || isUserDm || isUserActivePlayer) {
+          if (validCodesSet.has(clean) || isUserDm || isUserActivePlayer || isCampaignMember || hasCampaignBio) {
             campMap.set(clean, c);
           }
         }
@@ -323,9 +339,11 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
     };
     window.addEventListener('chronicle_campaigns_updated', handleUpdate);
     window.addEventListener('chronicle_accounts_updated', handleUpdate);
+    window.addEventListener('chronicle_character_bio_updated', handleUpdate);
     return () => {
       window.removeEventListener('chronicle_campaigns_updated', handleUpdate);
       window.removeEventListener('chronicle_accounts_updated', handleUpdate);
+      window.removeEventListener('chronicle_character_bio_updated', handleUpdate);
     };
   }, [account?.id, account?.email, account?.joinedCampaigns?.length, account?.dmCampaigns?.length]);
 
@@ -352,10 +370,17 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
     if (account.campaignProfiles && account.campaignProfiles[clean]) {
       return account.campaignProfiles[clean];
     }
-    // Also check if account is already marked as joined
-    const isJoined = account.joinedCampaigns?.some((c) => c.toUpperCase() === clean);
-    // Also check character_bios
-    const bio = CampaignManager.getCharacterBio(account.id);
+    // Also check campaign_members (SSOT)
+    const member = CampaignManager.getCampaignMember(clean, account.id, account.email);
+    if (member && member.characterName?.trim()) {
+      return {
+        characterName: member.characterName.trim(),
+        avatarUrl: account.avatarUrl || '',
+        color: account.color || '#6366f1',
+      };
+    }
+    // Also check character_bios for this campaign (SSOT)
+    const bio = CampaignManager.getCharacterBio(account.id, clean);
     if (bio && (bio.characterName || bio.name)) {
       return {
         characterName: bio.characterName || bio.name || account.characterName,
@@ -363,6 +388,8 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
         color: bio.color || account.color,
       };
     }
+    // Also check if account is already marked as joined
+    const isJoined = account.joinedCampaigns?.some((c) => c.toUpperCase() === clean);
     if (isJoined && account.characterName) {
       return {
         characterName: account.characterName,

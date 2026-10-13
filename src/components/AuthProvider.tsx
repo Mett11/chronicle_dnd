@@ -129,10 +129,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           userAccount = {
             id: existingSupa.id || uid,
             email: existingSupa.email || userEmail,
-            characterName: existingSupa.characterName || existingSupa.character_name || displayName || (userEmail ? userEmail.split('@')[0] : 'Player'),
+            characterName: existingSupa.characterName || displayName || (userEmail ? userEmail.split('@')[0] : 'Player'),
             color: existingSupa.color || '#6366f1',
             avatarUrl: existingSupa.avatarUrl || existingSupa.avatar_url || photoURL || '',
-            isDm: Boolean(existingSupa.isDm || existingSupa.is_dm || (existingSupa.dmCampaigns && existingSupa.dmCampaigns.length > 0)),
+            isDm: Boolean(existingSupa.isDm || (existingSupa.dmCampaigns && existingSupa.dmCampaigns.length > 0)),
             dmCampaigns: Array.isArray(existingSupa.dmCampaigns) ? existingSupa.dmCampaigns : [],
             joinedCampaigns: Array.isArray(existingSupa.joinedCampaigns) ? existingSupa.joinedCampaigns : [],
             campaignProfiles: existingSupa.campaignProfiles || existingSupa.campaign_profiles || {},
