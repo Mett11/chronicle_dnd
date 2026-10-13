@@ -18,7 +18,7 @@ async function startServer() {
   const args = process.argv.slice(2);
   const portArgIndex = args.indexOf('--port');
   const cliPort = portArgIndex !== -1 && args[portArgIndex + 1] ? parseInt(args[portArgIndex + 1], 10) : undefined;
-  const PORT = Number(process.env.PORT) || cliPort || 3000;
+  const PORT = cliPort || (process.env.PORT && process.env.PORT !== '8080' ? Number(process.env.PORT) : 3000);
   const hostArgIndex = args.indexOf('--host');
   const cliHost = hostArgIndex !== -1 && args[hostArgIndex + 1] ? args[hostArgIndex + 1] : undefined;
   const HOST = process.env.HOST || cliHost || '0.0.0.0';

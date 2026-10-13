@@ -681,7 +681,6 @@ export function CharacterProfile() {
 
     if (isOwnProfile && account) {
       updateAccountProfile({
-        characterName: cleanName || undefined,
         color: cleanColor,
       });
     }

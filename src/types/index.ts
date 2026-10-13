@@ -71,6 +71,7 @@ export interface CampaignProfile {
 
 export interface UserPreferences {
   theme: {
+    themeId?: string;
     colorPalette: string;
     darkMode: boolean;
     campaignTitleFont?: CampaignTitleFont;

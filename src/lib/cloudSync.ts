@@ -1083,7 +1083,9 @@ export class CloudSyncService {
                 CampaignManager.saveCampaignMembersLocalOnly(activeCode, supaData.campaignMembers);
               }
               if (Array.isArray(supaData.activePlayers)) {
-                try { this.mergeRemoteAccounts(supaData.activePlayers); } catch (e) { console.warn(e); }
+                CampaignManager.updateCampaignMetaLocalOnly(activeCode, {
+                  activePlayers: supaData.activePlayers,
+                });
               }
 
               CampaignManager.updateCampaignMetaLocalOnly(activeCode, {

@@ -829,10 +829,20 @@ export function getStoredTheme(): ClassTheme {
 
 export function applyTheme(themeId: string) {
   const theme = CLASS_THEMES.find((t) => t.id === themeId) || CLASS_THEMES[0];
-  localStorage.setItem(THEME_STORAGE_KEY, theme.id);
+  try {
+    localStorage.setItem(THEME_STORAGE_KEY, theme.id);
+  } catch {}
 
   const root = document.documentElement;
   root.setAttribute('data-theme', theme.id);
+
+  if (theme.isLight) {
+    root.classList.remove('dark');
+    root.classList.add('light');
+  } else {
+    root.classList.remove('light');
+    root.classList.add('dark');
+  }
 
   // Set individual CSS variables for guaranteed instant styling across all browsers and Tailwind
   root.style.setProperty('--color-surface-0', theme.colors.surface0);

@@ -29,6 +29,7 @@ import {
   CharacterBio,
 } from '../../types';
 import { useNavigate } from 'react-router-dom';
+import { CampaignManager } from '../../store/campaignStore';
 
 interface VisualSocialGraphProps {
   player: Player;

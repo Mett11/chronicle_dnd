@@ -1165,6 +1165,7 @@ export class SessionMemorySyncService {
 
     // 2. Process Player Character proposals in memory
     const allBios = [...CampaignManager.getAllCharacterBios()];
+    const allPlayers = CampaignManager.getPlayers();
     const changedBios: CharacterBio[] = [];
 
     if (Array.isArray(playerProposals)) {
@@ -1247,11 +1248,12 @@ export class SessionMemorySyncService {
               return false;
             });
 
-            const prev = (existingKey ? currentInter[existingKey] : null) || {
+            const prev: any = (existingKey ? currentInter[existingKey] : null) || {
               targetPlayerId: resolvedTargetId,
               targetCharacterName: matchedPlayer?.characterName || rel.targetCharacterName || 'Compagno',
               attitude: 'neutral',
               trustLevel: 5,
+              progression: [],
             };
 
             const newProgression = [...(prev.progression || [])];

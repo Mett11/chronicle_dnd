@@ -1,8 +1,10 @@
 import { UserPreferences, CampaignTitleFont, CampaignTitleEffect } from '../types';
 import { SupabaseSyncService } from './supabaseSyncService';
+import { applyTheme } from './theme';
 
 export const DEFAULT_USER_PREFERENCES: UserPreferences = {
   theme: {
+    themeId: (typeof localStorage !== 'undefined' ? localStorage.getItem('chronicle_theme_class') : null) || 'warlock',
     colorPalette: '#6366f1',
     darkMode: true,
     campaignTitleFont: 'cinzel',
@@ -65,7 +67,17 @@ export function normalizeUserPreferences(raw: any, existingFallback: UserPrefere
 
   // Deep merge theme
   const rawTheme = raw.theme || {};
+  const storedClassTheme = typeof localStorage !== 'undefined' ? localStorage.getItem('chronicle_theme_class') : null;
+  const resolvedThemeId =
+    rawTheme.themeId ||
+    raw.themeId ||
+    rawTheme.id ||
+    storedClassTheme ||
+    existingFallback?.theme?.themeId ||
+    'warlock';
+
   const theme: UserPreferences['theme'] = {
+    themeId: resolvedThemeId,
     colorPalette: rawTheme.colorPalette || raw.colorPalette || existingFallback.theme.colorPalette,
     darkMode: rawTheme.darkMode !== undefined ? Boolean(rawTheme.darkMode) : (raw.darkMode !== undefined ? Boolean(raw.darkMode) : existingFallback.theme.darkMode),
     campaignTitleFont: (rawTheme.campaignTitleFont || raw.campaignTitleFont || existingFallback.theme.campaignTitleFont) as CampaignTitleFont,
@@ -163,14 +175,22 @@ export class UserPreferencesService {
    */
   static applyThemeToDOM(theme: UserPreferences['theme']) {
     if (typeof document === 'undefined') return;
-    const root = document.documentElement;
+    const targetThemeId = theme.themeId || (typeof localStorage !== 'undefined' ? localStorage.getItem('chronicle_theme_class') : null) || 'warlock';
+    try {
+      applyTheme(targetThemeId);
+    } catch (e) {
+      console.warn('[UserPreferencesService] applyTheme failed, fallbacking:', e);
+    }
 
-    if (theme.darkMode) {
-      root.classList.add('dark');
-      root.classList.remove('light');
-    } else {
-      root.classList.remove('dark');
-      root.classList.add('light');
+    const root = document.documentElement;
+    if (theme.darkMode !== undefined) {
+      if (theme.darkMode) {
+        root.classList.add('dark');
+        root.classList.remove('light');
+      } else {
+        root.classList.remove('dark');
+        root.classList.add('light');
+      }
     }
 
     if (theme.colorPalette) {
@@ -194,8 +214,15 @@ export class UserPreferencesService {
     const norm = normalizeUserId(userId);
     const current = this.getLocalPreferences(norm);
 
+    const mergedTheme = { ...current.theme, ...(updates.theme || {}) };
+    if (mergedTheme.themeId) {
+      try {
+        localStorage.setItem('chronicle_theme_class', mergedTheme.themeId);
+      } catch {}
+    }
+
     const merged: UserPreferences = {
-      theme: { ...current.theme, ...(updates.theme || {}) },
+      theme: mergedTheme,
       ai: { ...current.ai, ...(updates.ai || {}) },
       reading: { ...current.reading, ...(updates.reading || {}) },
       notifications: {

@@ -34,6 +34,7 @@ export function ThemeSelectorModal({ isOpen, onClose }: ThemeSelectorModalProps)
     setCurrentTheme(theme);
     CampaignManager.saveUserPreferences({
       theme: {
+        themeId: theme.id,
         colorPalette: theme.mainColor,
         darkMode: !theme.isLight,
       },

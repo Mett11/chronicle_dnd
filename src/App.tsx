@@ -19,6 +19,7 @@ import { Oracle } from './pages/Oracle';
 import { WorldLore } from './pages/WorldLore';
 import { Clarifications } from './pages/Clarifications';
 import { Tutorial } from './pages/Tutorial';
+import { D20Menu } from './pages/D20Menu';
 import { SanityLogin } from './components/SanityLogin';
 import { CampaignGate } from './components/CampaignGate';
 import { CampaignManager } from './store/campaignStore';
@@ -166,7 +167,7 @@ function AppContent() {
         try {
           const uId = player?._id || (player as any)?.id || CampaignManager.getCurrentAccount()?.id || 'anon';
           const hasSeen = localStorage.getItem(`chronicle_tutorial_seen_${uId}`) === 'true';
-          const target = hasSeen ? '/character' : '/tutorial';
+          const target = hasSeen ? '/table' : '/tutorial';
           if (window.location.pathname === '/' || window.location.pathname === '/notes') {
             window.history.replaceState(null, '', target);
           }
@@ -186,13 +187,17 @@ function AppContent() {
 
   const currentUId = player?._id || (player as any)?.id || CampaignManager.getCurrentAccount()?.id || 'anon';
   const hasSeenTutorial = typeof localStorage !== 'undefined' ? localStorage.getItem(`chronicle_tutorial_seen_${currentUId}`) === 'true' : true;
-  const defaultEntryPath = hasSeenTutorial ? '/character' : '/tutorial';
+  const defaultEntryPath = hasSeenTutorial ? '/table' : '/tutorial';
 
   return (
     <BrowserRouter>
       <Routes>
         <Route element={<Layout />}>
           <Route path="/" element={<Navigate to={defaultEntryPath} replace />} />
+          <Route path="/table" element={<D20Menu />} />
+          <Route path="/d20" element={<D20Menu />} />
+          <Route path="/hub" element={<D20Menu />} />
+          <Route path="/menu" element={<D20Menu />} />
           <Route path="/tutorial" element={<Tutorial />} />
           <Route path="/guida" element={<Tutorial />} />
           <Route path="/manuale" element={<Tutorial />} />

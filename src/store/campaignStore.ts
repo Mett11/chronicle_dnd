@@ -1775,9 +1775,33 @@ export class CampaignManager {
 
     accounts[index] = account;
     this.saveAccounts(accounts);
+
+    // Keep campaign_members in sync
+    if (profile.characterName) {
+      const members = this.getCampaignMembers(cleanCode);
+      const memIdx = members.findIndex((m) => String(m.userId).toLowerCase() === accountId.toLowerCase());
+      if (memIdx !== -1) {
+        members[memIdx] = {
+          ...members[memIdx],
+          characterName: profile.characterName.trim(),
+        };
+        this.saveCampaignMembersLocalOnly(cleanCode, members);
+      }
+      if (isSupabaseConfigured()) {
+        SupabaseSyncService.joinCampaignMember(cleanCode, accountId, undefined, profile.characterName.trim()).catch(() => {});
+      }
+    }
+
     if (profile.characterName) {
       this.reconcileUnregisteredRelations(accountId, profile.characterName);
     }
+
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("chronicle_accounts_updated"));
+      window.dispatchEvent(new CustomEvent("chronicle_campaign_updated"));
+      window.dispatchEvent(new CustomEvent("chronicle_data_updated"));
+    }
+
     return accounts[index];
   }
 
@@ -2568,8 +2592,13 @@ export class CampaignManager {
     };
 
     // Map legacy flat properties if passed
-    if (updates.themeId) {
-      import("../lib/theme").then(({ applyTheme }) => applyTheme(updates.themeId));
+    const effectiveThemeId = updates.theme?.themeId || updates.themeId;
+    if (effectiveThemeId) {
+      nestedUpdates.theme!.themeId = effectiveThemeId;
+      try {
+        localStorage.setItem('chronicle_theme_class', effectiveThemeId);
+      } catch {}
+      import("../lib/theme").then(({ applyTheme }) => applyTheme(effectiveThemeId));
     }
     if (updates.aiProvider) {
       nestedUpdates.ai!.preferredProvider = updates.aiProvider;
@@ -2781,44 +2810,53 @@ export class CampaignManager {
 
     const isGenericFallback = (n?: string | null) => !n || ['personaggio', 'avventuriero', 'player', 'giocatore'].includes(n.trim().toLowerCase()) || (Boolean(emailPrefix) && n.trim().toLowerCase() === emailPrefix);
 
+    const charBio = this.getCharacterBio(account.id, cleanCode || undefined);
+    const matchPid = (bPid?: string, aId?: string) => {
+      if (!bPid || !aId) return false;
+      const b = bPid.trim().toLowerCase();
+      const a = aId.trim().toLowerCase();
+      if (b === a) return true;
+      if (b.replace(/^usr_g_/, '').replace(/^usr_/, '') === a.replace(/^usr_g_/, '').replace(/^usr_/, '')) return true;
+      return false;
+    };
+
+    const isBioBelongingToAccount = Boolean(
+      charBio &&
+      (matchPid(charBio.playerId, account.id) ||
+       (account.email && charBio.playerId?.toLowerCase() === account.email.toLowerCase()) ||
+       (account.previousAccountIds && account.previousAccountIds.some((pid) => matchPid(charBio.playerId, pid))))
+    );
+
+    const bioName = isBioBelongingToAccount ? (charBio?.characterName?.trim() || (charBio as any)?.name?.trim()) : null;
+    const validBioName = bioName && !isGenericFallback(bioName) ? bioName : null;
     const validMemName = memName && !isGenericFallback(memName) ? memName : null;
     const validProfName = profName && !isGenericFallback(profName) ? profName : null;
     const validAccName = accName && !isGenericFallback(accName) && accName !== 'Dungeon Master' ? accName : null;
 
-    // 1. Authoritative Character Name (Member / Profile / Account SSOT)
+    // 1. Authoritative Character Name (Character Bio SSOT -> Member -> Campaign Profile -> Fallback)
+    // NEVER allow account.characterName from a different campaign to pollute this campaign's character name!
     const resolvedCharName =
-      validProfName ||
+      validBioName ||
       validMemName ||
-      validAccName ||
-      profName ||
+      validProfName ||
+      bioName ||
       memName ||
-      accName ||
-      'Avventuriero';
+      profName ||
+      (cleanCode ? 'Avventuriero' : (validAccName || accName || 'Avventuriero'));
 
-    // 2. Authoritative Avatar (Campaign Profile / Character Bio SSOT)
-    // Never fallback to global user account avatar for other players or from the DM
-    let profAvatar = CampaignManager.cleanAvatarString(profile?.avatarUrl);
-    if (!isDm && CampaignManager.isDmAvatar(profAvatar)) {
-      profAvatar = '';
-    }
-
-    const charBio = this.getCharacterBio(account.id);
-    const isBioBelongingToAccount = Boolean(
-      charBio &&
-      (charBio.playerId === account.id ||
-       charBio.playerId === account.email ||
-       (account.previousAccountIds && account.previousAccountIds.includes(charBio.playerId)) ||
-       (charBio.characterName && charBio.characterName.trim().toLowerCase() === resolvedCharName.toLowerCase()))
-    );
-
+    // 2. Authoritative Avatar (Character Bio SSOT -> Campaign Profile -> Fallback)
     let bioAvatar = isBioBelongingToAccount ? CampaignManager.cleanAvatarString(charBio?.avatarUrl) : '';
     if (!isDm && CampaignManager.isDmAvatar(bioAvatar)) {
       bioAvatar = '';
     }
 
-    // Prioritize campaign-specific avatar (profile in campaign or character bio).
-    // If none exists, keep blank so initials placeholder is displayed rather than another user's avatar.
-    const resolvedAvatar = profAvatar || bioAvatar || (isDm ? CampaignManager.cleanAvatarString(account.avatarUrl) : '');
+    let profAvatar = CampaignManager.cleanAvatarString(profile?.avatarUrl);
+    if (!isDm && CampaignManager.isDmAvatar(profAvatar)) {
+      profAvatar = '';
+    }
+
+    // A player's character avatar NEVER falls back to the central user account avatar across campaigns
+    const resolvedAvatar = bioAvatar || profAvatar || (isDm ? CampaignManager.cleanAvatarString(account.avatarUrl) : '');
 
     const resolvedColorFinal = (isBioBelongingToAccount && charBio?.color) || profile?.color || resolvedColor;
     const role: CampaignRole = isDm ? 'dm' : (isCoDm ? 'co_dm' : 'player');
@@ -2883,11 +2921,17 @@ export class CampaignManager {
       const isDm = a.dmCampaigns?.some((c) => c.toUpperCase() === cleanActiveCode) || (campaign?.dmId && (campaign.dmId === a.id || (campaign.dmEmail && a.email && campaign.dmEmail.toLowerCase() === a.email.toLowerCase())));
 
       if (!isMember && (isJoined || isDm)) {
+        const charBio = this.getCharacterBio(a.id, cleanActiveCode);
+        const bioName = (charBio?.characterName || (charBio as any)?.name || '').trim();
+        const profile = cleanActiveCode && a.campaignProfiles ? a.campaignProfiles[cleanActiveCode] : null;
+        const profName = (profile?.characterName || '').trim();
+        const resolvedInitialName = bioName || profName || (isDm ? 'Dungeon Master' : 'Avventuriero');
+
         const newRecord: CampaignMemberRecord = {
           campaignCode: cleanActiveCode,
           userId: a.id,
           role: isDm ? 'dm' : 'player',
-          characterName: a.characterName || 'Avventuriero',
+          characterName: resolvedInitialName,
           status: 'active',
           createdAt: new Date().toISOString(),
         };
@@ -5656,8 +5700,10 @@ export class CampaignManager {
   }
 
   // === CHARACTER BIOGRAPHY & LORE ===
-  static getAllCharacterBios(): CharacterBio[] {
-    const key = this.getStorageKey("character_bios");
+  static getAllCharacterBios(campaignCode?: string): CharacterBio[] {
+    const key = campaignCode
+      ? `chronicle_${campaignCode.trim().toUpperCase()}_character_bios`
+      : this.getStorageKey("character_bios");
     return getCached(key, () => {
       const saved = localStorage.getItem(key);
       if (saved) {
@@ -5696,12 +5742,12 @@ export class CampaignManager {
     }
   }
 
-  static getCharacterBio(playerId: string): CharacterBio | null {
+  static getCharacterBio(playerId: string, targetCampaignCode?: string): CharacterBio | null {
     if (!playerId) return null;
-    const bios = this.getAllCharacterBios();
+    const activeCode = (targetCampaignCode || this.getActiveCampaignCode() || '').trim().toUpperCase();
+    const bios = activeCode ? this.getAllCharacterBios(activeCode) : this.getAllCharacterBios();
     const accounts = this.getAccounts();
     const cleanPlayerId = playerId.trim().toLowerCase();
-    const activeCode = (this.getActiveCampaignCode() || '').trim().toUpperCase();
     const campaign = activeCode ? this.getCampaigns().find((c) => c.code.toUpperCase() === activeCode) : null;
 
     // Helper: is a character name a generic placeholder?
@@ -5970,11 +6016,18 @@ export class CampaignManager {
     // Return the matched bio directly WITHOUT auto-saving/overwriting cloud DB on read operations
     if (found) {
       const canonicalTargetId = targetAccount?.id || playerId;
-      const bestName = !isGeneric(targetAccount?.characterName)
-        ? targetAccount!.characterName
-        : (!isGeneric(profile?.characterName) ? profile!.characterName : null);
+      const rawFoundName = (found.characterName || (found as any).name || '').trim();
+      const validBioName = rawFoundName && !isGeneric(rawFoundName) ? rawFoundName : null;
+      const validProfName = profile?.characterName && !isGeneric(profile.characterName) ? profile.characterName.trim() : null;
 
-      let resolvedBioAvatar = this.cleanAvatarString(profile?.avatarUrl) || this.cleanAvatarString(found.avatarUrl) || '';
+      // Authoritative Single Source of Truth: CharacterBio name comes FIRST
+      const bestName = validBioName || validProfName || rawFoundName || 'Personaggio';
+
+      const rawFoundAvatar = this.cleanAvatarString(found.avatarUrl);
+      const rawProfAvatar = this.cleanAvatarString(profile?.avatarUrl);
+
+      // A character's bio avatar in a campaign never falls back to targetAccount.avatarUrl unless user is DM
+      let resolvedBioAvatar = rawFoundAvatar || rawProfAvatar || (isUserDm ? this.cleanAvatarString(targetAccount?.avatarUrl) : '');
       if (!isUserDm && this.isDmAvatar(resolvedBioAvatar)) {
         resolvedBioAvatar = '';
       }
@@ -5982,8 +6035,8 @@ export class CampaignManager {
       return {
         ...found,
         playerId: canonicalTargetId,
-        characterName: bestName || found.characterName || 'Personaggio',
-        name: bestName || found.name || found.characterName || 'Personaggio',
+        characterName: bestName,
+        name: bestName,
         avatarUrl: resolvedBioAvatar,
       };
     }
@@ -5995,9 +6048,18 @@ export class CampaignManager {
     if (!bio.playerId) return { success: false, error: "playerId non valido." };
     const bios = this.getAllCharacterBios();
     const idx = bios.findIndex((b) => b.playerId === bio.playerId);
+    const activeCode = (this.getActiveCampaignCode() || 'default').trim().toUpperCase();
+    const resolvedName = (bio.characterName || (bio as any).name || '').trim();
+    const resolvedAvatar = this.cleanAvatarString(bio.avatarUrl);
+    const resolvedColor = bio.color || '#6366f1';
+
     const updatedBio: CharacterBio = {
       ...bio,
-      campaignCode: this.getActiveCampaignCode() || undefined,
+      characterName: resolvedName,
+      name: resolvedName,
+      avatarUrl: resolvedAvatar,
+      color: resolvedColor,
+      campaignCode: activeCode !== 'DEFAULT' ? activeCode : undefined,
       updatedAt: new Date().toISOString(),
     };
 
@@ -6008,13 +6070,52 @@ export class CampaignManager {
     }
     this.saveAllCharacterBiosLocalOnly(bios);
 
+    // Keep campaign_members table in sync (SSOT)
+    if (activeCode && activeCode !== 'DEFAULT' && resolvedName) {
+      const members = this.getCampaignMembers(activeCode);
+      const memIdx = members.findIndex((m) => String(m.userId).toLowerCase() === String(bio.playerId).toLowerCase());
+      if (memIdx !== -1) {
+        members[memIdx] = {
+          ...members[memIdx],
+          characterName: resolvedName,
+        };
+        this.saveCampaignMembersLocalOnly(activeCode, members);
+      }
+      if (isSupabaseConfigured()) {
+        SupabaseSyncService.joinCampaignMember(activeCode, bio.playerId, undefined, resolvedName).catch(() => {});
+      }
+    }
+
+    // Keep account campaignProfiles in sync
+    const accounts = this.getAccounts();
+    const accIdx = accounts.findIndex((a) => a.id === bio.playerId || (a.email && a.email.toLowerCase() === String(bio.playerId).toLowerCase()));
+    if (accIdx !== -1 && activeCode && activeCode !== 'DEFAULT') {
+      const acc = { ...accounts[accIdx] };
+      if (!acc.campaignProfiles) acc.campaignProfiles = {};
+      acc.campaignProfiles[activeCode] = {
+        ...(acc.campaignProfiles[activeCode] || {}),
+        characterName: resolvedName,
+        avatarUrl: resolvedAvatar,
+        color: resolvedColor,
+      };
+      accounts[accIdx] = acc;
+      this.saveAccounts(accounts);
+    }
+
     if (isSupabaseConfigured()) {
-      const code = this.getActiveCampaignCode() || 'default';
-      const ok = await SupabaseSyncService.saveCharacterBio(code, updatedBio);
+      const ok = await SupabaseSyncService.saveCharacterBio(activeCode, updatedBio);
       if (!ok) {
         return { success: false, error: "Errore di salvataggio del personaggio su Supabase." };
       }
     }
+
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("chronicle_character_bio_updated"));
+      window.dispatchEvent(new CustomEvent("chronicle_accounts_updated"));
+      window.dispatchEvent(new CustomEvent("chronicle_campaign_updated"));
+      window.dispatchEvent(new CustomEvent("chronicle_data_updated"));
+    }
+
     return { success: true };
   }
 

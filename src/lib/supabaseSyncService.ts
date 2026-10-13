@@ -756,11 +756,22 @@ export class SupabaseSyncService {
             }
             return true;
           }).map((p: any) => {
-            const mem = campaignMembers.find((m) => m.userId === p.id || (p.email && m.userId === p.email));
-            if (mem && mem.characterName) {
-              return { ...p, characterName: mem.characterName, role: mem.role, isDm: mem.role === 'dm', isCoDm: mem.role === 'co-dm' || mem.role === 'comaster' };
-            }
-            return p;
+            const pId = String(p.id || p._id || '').toLowerCase();
+            const mem = campaignMembers.find((m) => String(m.userId).toLowerCase() === pId || (p.email && String(m.userId).toLowerCase() === p.email.toLowerCase()));
+            const bio = characterBios.find((b: any) => String(b.playerId || b.player_id || '').toLowerCase() === pId || (p.email && String(b.playerId || b.player_id || '').toLowerCase() === p.email.toLowerCase()));
+            const charName = (bio?.characterName || bio?.name || mem?.characterName || p.characterName || 'Avventuriero').trim();
+            const avatarUrl = bio?.avatarUrl || p.avatarUrl || '';
+            const color = bio?.color || p.color || '#6366f1';
+            const role = mem?.role || (p.isDm ? 'dm' : (p.role || 'player'));
+            return {
+              ...p,
+              characterName: charName,
+              avatarUrl,
+              color,
+              role,
+              isDm: role === 'dm',
+              isCoDm: role === 'co-dm' || role === 'comaster',
+            };
           });
 
           // Include any members from campaign_members not in existingFiltered
@@ -768,14 +779,19 @@ export class SupabaseSyncService {
           campaignMembers.forEach((m) => {
             const mId = String(m.userId).toLowerCase();
             if (m.status !== 'expelled' && m.status !== 'inactive' && !coveredIds.has(mId)) {
+              const bio = characterBios.find((b: any) => String(b.playerId || b.player_id || '').toLowerCase() === mId);
+              const charName = (bio?.characterName || bio?.name || m.characterName || 'Avventuriero').trim();
+              const avatarUrl = bio?.avatarUrl || '';
+              const color = bio?.color || '#6366f1';
               existingFiltered.push({
                 id: m.userId,
                 _id: m.userId,
-                characterName: m.characterName || 'Avventuriero',
+                characterName: charName,
+                avatarUrl,
+                color,
                 role: m.role || 'player',
                 isDm: m.role === 'dm',
                 isCoDm: m.role === 'co-dm' || m.role === 'comaster',
-                color: '#6366f1',
               });
               coveredIds.add(mId);
             }
@@ -1402,10 +1418,12 @@ export class SupabaseSyncService {
         campaign_code: cleanCode,
         user_id: userId,
         role: normRole,
-        character_name: characterName || null,
         status: 'active',
         created_at: new Date().toISOString(),
       };
+      if (characterName) {
+        payload.character_name = characterName;
+      }
       const { error } = await supabase.from('campaign_members').upsert(payload, { onConflict: 'id' });
 
       // Clean user from expelled_accounts in campaigns table if present
@@ -2083,6 +2101,7 @@ export class SupabaseSyncService {
       }
 
       // Ensure all joined/dm campaigns are registered in campaign_members as Single Source of Truth
+      // Do NOT overwrite existing character_name in campaign_members with account.characterName
       if (account.id) {
         const joined = Array.isArray(account.joinedCampaigns) ? account.joinedCampaigns : [];
         const dm = Array.isArray(account.dmCampaigns) ? account.dmCampaigns : [];
@@ -2096,7 +2115,6 @@ export class SupabaseSyncService {
               campaign_code: clean,
               user_id: account.id,
               role: isDm ? 'dm' : 'player',
-              character_name: account.characterName || 'Avventuriero',
               status: 'active',
               created_at: new Date().toISOString(),
             };
@@ -2945,28 +2963,13 @@ export class SupabaseSyncService {
     try {
       const code = campaignCode.trim().toUpperCase();
 
-      // 1. Update campaigns table JSON
-      await supabase.from('campaigns').update({
+      // Persist calendar system to campaigns table calendar_system JSONB column (Single Source of Truth)
+      const { error } = await supabase.from('campaigns').update({
         calendar_system: calendar,
         updated_at: new Date().toISOString(),
       }).or(`code.eq.${code},code.eq.${campaignCode.trim()}`);
 
-      // 2. Upsert to calendars relational table
-      const calendarRow = {
-        campaign_code: code,
-        system_name: calendar.name || calendar.system_name || 'Harptos',
-        months: calendar.months || [],
-        current_day: calendar.currentDay || 1,
-        current_month: calendar.currentMonth || 1,
-        current_year: calendar.currentYear || 1492,
-        events: calendar.events || [],
-        updated_at: new Date().toISOString(),
-      };
-      try {
-        await supabase.from('calendars').upsert(calendarRow, { onConflict: 'campaign_code' });
-      } catch {}
-
-      return true;
+      return !error;
     } catch (err) {
       return false;
     }
