@@ -100,7 +100,7 @@ export function AudioOptimizerModal({ file, onConfirm, onCancel }: AudioOptimize
   const formatSecs = (secs: number) => {
     const m = Math.floor(secs / 60);
     const s = Math.floor(secs % 60);
-    return `${m}:${s < 10 ? '0' : ''}${s}`;
+    return m + ':' + (s < 10 ? '0' : '') + s;
   };
 
   const handleConfirm = () => {
@@ -366,6 +366,8 @@ export function AudioRecorder({
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const timerIntervalRef = useRef<any>(null);
+  const startTimeRef = useRef<number>(0);
+  const recordingTimeRef = useRef<number>(0);
   const previewAudioRef = useRef<HTMLAudioElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -373,8 +375,12 @@ export function AudioRecorder({
   useEffect(() => {
     if (isRecording) {
       setRecordingTime(0);
+      recordingTimeRef.current = 0;
+      startTimeRef.current = Date.now();
       timerIntervalRef.current = setInterval(() => {
-        setRecordingTime((prev) => prev + 1);
+        const elapsed = Math.max(1, Math.round((Date.now() - startTimeRef.current) / 1000));
+        recordingTimeRef.current = elapsed;
+        setRecordingTime(elapsed);
       }, 1000);
     } else {
       if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
@@ -422,6 +428,7 @@ export function AudioRecorder({
       };
 
       mediaRecorder.onstop = () => {
+        const actualDuration = Math.max(1, Math.round((Date.now() - startTimeRef.current) / 1000)) || recordingTimeRef.current || 1;
         const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
         setAudioSizeBytes(audioBlob.size);
         const reader = new FileReader();
@@ -429,7 +436,7 @@ export function AudioRecorder({
         reader.onloadend = () => {
           const base64data = reader.result as string;
           setAudioUrl(base64data);
-          setAudioDuration(recordingTime);
+          setAudioDuration(actualDuration);
         };
         // Stop all audio tracks
         stream.getTracks().forEach((track) => track.stop());
@@ -480,7 +487,7 @@ export function AudioRecorder({
         setAudioUrl(res.dataUrl);
         setAudioSizeBytes(res.optimizedSize);
         setAudioDuration(res.durationSeconds || audioDuration);
-        setOptimizationNote(`Ottimizzato: risparmiato ${res.reductionPercentage}%`);
+        setOptimizationNote('Ottimizzato: risparmiato ' + res.reductionPercentage + '%');
       } else {
         setOptimizationNote('Audio già al massimo livello di compressione (Opus 24 kbps).');
       }
@@ -522,7 +529,7 @@ export function AudioRecorder({
       const cdnUrl = await FirebaseStorageService.uploadMedia(
         code,
         'audio',
-        `${title.trim()}.webm`,
+        title.trim() + '.webm',
         audioUrl
       );
 
@@ -555,7 +562,7 @@ export function AudioRecorder({
   const formatTimer = (secs: number) => {
     const m = Math.floor(secs / 60);
     const s = Math.floor(secs % 60);
-    return `${m}:${s < 10 ? '0' : ''}${s}`;
+    return m + ':' + (s < 10 ? '0' : '') + s;
   };
 
   return (

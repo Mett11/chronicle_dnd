@@ -216,10 +216,7 @@ export class SupabaseStorageService {
       return input;
     }
 
-    const fallbackValue = typeof input === 'string' ? input : '';
     const sanitizedCode = (campaignCode || 'default').replace(/[^a-zA-Z0-9_-]/g, '_');
-    const uniqueName = `${Date.now()}_${filename.replace(/[^a-zA-Z0-9_.-]/g, '_')}`;
-    const storagePath = `campaigns/${sanitizedCode}/${folder}/${uniqueName}`;
 
     // Supabase Storage (bucket chronicle-media)
     if (isSupabaseConfigured()) {
@@ -228,7 +225,7 @@ export class SupabaseStorageService {
 
       if (input instanceof File || input instanceof Blob) {
         fileBlob = input;
-        mimeType = input.type || 'application/octet-stream';
+        mimeType = input.type || 'image/png';
       } else if (typeof input === 'string') {
         if (input.startsWith('data:')) {
           const mimeMatch = input.match(/:(.*?);/);
@@ -244,6 +241,29 @@ export class SupabaseStorageService {
           }
         }
       }
+
+      // Automatic client-side WebP image optimization for non-audio uploads
+      if (folder !== 'audio' && (mimeType.startsWith('image/') || typeof input === 'string')) {
+        try {
+          const { optimizeImage, MAP_IMAGE_OPTIONS, DEFAULT_IMAGE_OPTIONS } = await import('./imageOptimizer');
+          const optOptions = folder === 'maps' ? MAP_IMAGE_OPTIONS : DEFAULT_IMAGE_OPTIONS;
+          const optResult = await optimizeImage(input, optOptions);
+          if (optResult?.dataUrl) {
+            const optBlob = this.dataURLtoBlob(optResult.dataUrl);
+            if (optBlob) {
+              fileBlob = optBlob;
+              mimeType = 'image/webp';
+            }
+          }
+        } catch (optErr) {
+          console.warn('[Supabase Storage] Image optimization fallback:', optErr);
+        }
+      }
+
+      const cleanBaseName = filename.replace(/\.[^/.]+$/, '').replace(/[^a-zA-Z0-9_-]/g, '_');
+      const ext = mimeType === 'image/webp' ? '.webp' : (filename.includes('.') ? filename.substring(filename.lastIndexOf('.')) : '.png');
+      const uniqueName = `${Date.now()}_${cleanBaseName}${ext}`;
+      const storagePath = `campaigns/${sanitizedCode}/${folder}/${uniqueName}`;
 
       if (fileBlob) {
         const { error: uploadError } = await supabase.storage

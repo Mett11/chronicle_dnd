@@ -20,6 +20,7 @@ import { WorldLore } from './pages/WorldLore';
 import { Clarifications } from './pages/Clarifications';
 import { Tutorial } from './pages/Tutorial';
 import { D20Menu } from './pages/D20Menu';
+import { PartyRoster } from './pages/PartyRoster';
 import { SanityLogin } from './components/SanityLogin';
 import { CampaignGate } from './components/CampaignGate';
 import { CampaignManager } from './store/campaignStore';
@@ -222,9 +223,14 @@ function AppContent() {
           <Route path="/sendipietra" element={<Oracle />} />
           <Route path="/prismalink" element={<Oracle />} />
           <Route path="/oracolo" element={<Navigate to="/sendipietra" replace />} />
+          <Route path="/social-feed" element={<Navigate to="/table" replace />} />
+          <Route path="/eco-delle-lande" element={<Navigate to="/table" replace />} />
+          <Route path="/cronache-social" element={<Navigate to="/table" replace />} />
           <Route path="/clarifications" element={<Clarifications />} />
           <Route path="/chiarimenti" element={<Clarifications />} />
           <Route path="/character" element={<CharacterProfile />} />
+          <Route path="/party" element={<PartyRoster />} />
+          <Route path="/compagnia" element={<PartyRoster />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/presentation/:campaignName/:reversedCode" element={<PublicPresentationView />} />
           <Route path="/presentation/:campaignCode" element={<PublicPresentationView />} />
@@ -233,7 +239,7 @@ function AppContent() {
           <Route path="/share/:campaignCode" element={<PublicPresentationView />} />
           <Route path="/storyline/presentation/:campaignName/:reversedCode" element={<PublicPresentationView />} />
           <Route path="/storyline/presentation/:campaignCode" element={<PublicPresentationView />} />
-          <Route path="*" element={<Navigate to="/character" replace />} />
+          <Route path="*" element={<Navigate to={defaultEntryPath} replace />} />
         </Route>
       </Routes>
     </BrowserRouter>

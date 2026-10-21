@@ -14,7 +14,6 @@
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
-    "@huggingface/inference": "^4.13.30",
     "@supabase/supabase-js": "^2.117.2",
     "@tailwindcss/typography": "^0.5.20",
     "@tailwindcss/vite": "^4.1.14",
@@ -27,7 +26,6 @@
     "dompurify": "^3.4.16",
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
-    "firebase": "^12.18.0",
     "framer-motion": "^12.4.10",
     "html2canvas": "^1.4.1",
     "jspdf": "^4.2.1",
@@ -40,7 +38,6 @@
     "react-router-dom": "^7.18.2",
     "remark-gfm": "^4.0.1",
     "tailwind-merge": "^3.6.0",
-    "tesseract.js": "^7.0.0",
     "three": "^0.186.1",
     "vite": "^6.2.3"
   },

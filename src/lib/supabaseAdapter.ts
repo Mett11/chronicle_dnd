@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { CampaignManager } from '../store/campaignStore';
 import {
   CampaignChapter,
   Session,
@@ -6,9 +7,11 @@ import {
   Entity,
   Note,
   WorldMap,
+  MapFolder,
   ScrapbookItem,
   AudioLog,
   CharacterBio,
+  CharacterRelationship,
   CampaignMemberRecord,
   CampaignMemberPermissions,
   CampaignRole,
@@ -21,6 +24,49 @@ import {
  * Single Source of Truth for Data Conversion between Supabase and Frontend
  * =========================================================================
  */
+
+/**
+ * Helper to convert optional foreign keys that are empty, "unknown", "none", etc. into null
+ * to satisfy strict PostgreSQL foreign key constraints (ERROR 23503).
+ */
+export function toNullableFk(
+  val: any,
+  validIdsSet?: Set<string>
+): string | null {
+  if (val === null || val === undefined) return null;
+  if (typeof val !== 'string' && typeof val !== 'number') return null;
+  const s = String(val).trim();
+  if (
+    !s ||
+    s === '' ||
+    s.toLowerCase() === 'unknown' ||
+    s.toLowerCase() === 'unassigned' ||
+    s.toLowerCase() === 'none' ||
+    s.toLowerCase() === 'null' ||
+    s.toLowerCase() === 'undefined' ||
+    s.toLowerCase().startsWith('unregistered_')
+  ) {
+    return null;
+  }
+  if (validIdsSet && validIdsSet.size > 0 && !validIdsSet.has(s)) {
+    return null;
+  }
+  return s;
+}
+
+/**
+ * Validates user foreign keys (referencing public.user_accounts).
+ * Rejects local non-registered player IDs starting with 'usr_pg_' or 'unregistered_'.
+ */
+export function toValidUserFk(
+  id: any,
+  validUserIdsSet?: Set<string>
+): string | null {
+  const fk = toNullableFk(id, validUserIdsSet);
+  if (!fk) return null;
+  if (fk.toLowerCase().startsWith('usr_pg_')) return null;
+  return fk;
+}
 
 /**
  * Resolves any Supabase storage path or external URL to a fully qualified public URL.
@@ -105,9 +151,9 @@ export function resolveStorageUrlArray(
 }
 
 // =========================================================================
-// 1. CHAPTERS ADAPTER (campaign_chapters)
+// 1. CHAPTERS ADAPTER (chapters)
 // =========================================================================
-export function chapterRowToModel(
+export function fromDbChapter(
   row: any,
   metaOverrides?: Record<string, any>
 ): CampaignChapter {
@@ -123,7 +169,7 @@ export function chapterRowToModel(
   const title = String(row.title || row.name || 'Capitolo').trim();
   const metaObj = metaOverrides?.[rowId] || metaOverrides?.[title] || {};
   const synopsis = String(row.synopsis || row.description || metaObj.description || '').trim();
-  const orderIndex = Number(row.order_index ?? row.number ?? row.order ?? metaObj.order ?? 1);
+  const orderNum = Number(row.number ?? row.order_index ?? row.order ?? metaObj.order ?? 1);
 
   const rawCover =
     row.cover_image_url ||
@@ -141,42 +187,44 @@ export function chapterRowToModel(
     name: title, // Legacy alias for backward compatibility
     synopsis,
     description: synopsis, // Legacy alias for backward compatibility
-    orderIndex,
-    order: orderIndex, // Legacy alias for order_index
+    orderIndex: orderNum,
+    order: orderNum, // Legacy alias for orderIndex
     color: row.color || metaObj.color || '#6366f1',
     status: row.status || 'in_progress',
     coverImageUrl: resolveStorageUrl(rawCover, 'campaign-assets'),
     createdAt: row.created_at || metaObj.createdAt || new Date().toISOString(),
   };
 }
+export const chapterRowToModel = fromDbChapter;
 
-export function chapterModelToRow(
+export function toDbChapter(
   chapter: CampaignChapter,
   campaignCode: string
 ): Record<string, any> {
   const cleanCode = campaignCode.trim().toUpperCase();
   const chapterTitle = chapter.title || chapter.name || 'Capitolo';
   const chapterSynopsis = chapter.synopsis || chapter.description || '';
-  const chapterOrder = Number(chapter.orderIndex ?? chapter.order ?? 1);
+  const chapterNumber = Number(chapter.orderIndex ?? chapter.order ?? (chapter as any).number ?? 1);
 
   return {
     id: chapter.id,
     campaign_code: cleanCode,
-    number: chapterOrder,
+    number: chapterNumber,
     title: chapterTitle,
     synopsis: chapterSynopsis,
     status: chapter.status || 'in_progress',
-    order_index: chapterOrder,
     cover_image_url: chapter.coverImageUrl || '',
     color: chapter.color || '#6366f1',
+    created_at: (chapter as any).createdAt || (chapter as any)._createdAt || new Date().toISOString(),
     updated_at: new Date().toISOString(),
   };
 }
+export const chapterModelToRow = toDbChapter;
 
 // =========================================================================
-// 2. SESSIONS ADAPTER (sessions)
+// 2. SESSIONS ADAPTER (sessions + session_attendees)
 // =========================================================================
-export function sessionRowToModel(
+export function fromDbSession(
   row: any,
   sessionsMeta?: Record<string, any>
 ): Session {
@@ -192,137 +240,126 @@ export function sessionRowToModel(
 
   const rowId = String(row.id || row._id || '');
   const meta = sessionsMeta?.[rowId] || {};
+  const calendarMeta = row.calendar_meta && typeof row.calendar_meta === 'object' ? row.calendar_meta : {};
 
-  // Prompt 4.2 & 4.3: Date alignment & Summary/Recap consolidation
   let summaryText = typeof row.summary === 'string' ? row.summary.trim() : '';
-  let extractedRecapText = '';
-  if (typeof row.recap === 'string' && row.recap.trim()) {
-    extractedRecapText = row.recap.trim();
-  } else if (Array.isArray(row.recap)) {
-    extractedRecapText = row.recap
-      .map((item) => (typeof item === 'string' ? item : (item?.children?.[0]?.text || '')))
-      .filter(Boolean)
-      .join('\n')
-      .trim();
+  if (!summaryText && typeof row.recap === 'string') {
+    summaryText = row.recap.trim();
   }
 
-  if (!summaryText && extractedRecapText) {
-    summaryText = extractedRecapText;
-  } else if (summaryText && extractedRecapText && !summaryText.includes(extractedRecapText)) {
-    summaryText = `${summaryText}\n\n${extractedRecapText}`;
-  }
-
-  let parsedLoreDate: string | undefined = undefined;
-  if (typeof row.calendar_date === 'string' && row.calendar_date.trim()) {
-    parsedLoreDate = row.calendar_date.trim();
-  } else if (typeof row.lore_date === 'string' && row.lore_date.trim()) {
-    parsedLoreDate = row.lore_date.trim();
-  } else if (row.lore_date && typeof row.lore_date === 'object') {
-    parsedLoreDate = row.lore_date.formatted || JSON.stringify(row.lore_date);
-  } else if (row.lore_formatted && String(row.lore_formatted).trim()) {
-    parsedLoreDate = String(row.lore_formatted).trim();
-  } else if (meta.loreDate) {
-    parsedLoreDate = meta.loreDate;
-  }
-
+  const parsedLoreDate: string | undefined = row.calendar_date || calendarMeta.calendar_date || row.lore_date || meta.loreDate || undefined;
   const realDate = row.date_str || row.date || meta.date || new Date().toISOString().split('T')[0];
 
-  // Prompt 4.2: Events inherit session calendar_date unless event explicitly specifies a different timeline day
-  const rawEvents = Array.isArray(row.plot_events)
-    ? row.plot_events
-    : (Array.isArray(row.events) ? row.events : (meta.events || []));
+  let rawEvents: any[] = [];
+  if (Array.isArray(row.plot_events)) {
+    rawEvents = row.plot_events;
+  } else if (Array.isArray(row.events)) {
+    rawEvents = row.events;
+  } else if (typeof row.notes === 'string' && row.notes.trim().startsWith('[')) {
+    try {
+      rawEvents = JSON.parse(row.notes);
+    } catch {
+      rawEvents = meta.events || [];
+    }
+  } else {
+    rawEvents = meta.events || [];
+  }
 
-  const events: SessionEvent[] = rawEvents.map((evt: any) => ({
+  const events: SessionEvent[] = Array.isArray(rawEvents) ? rawEvents.map((evt: any) => ({
     ...evt,
     id: evt.id || `evt_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
     title: evt.title || 'Evento',
     description: evt.description || '',
     loreDate: (evt.loreDate || evt.calendar_date || parsedLoreDate || '').trim(),
-  }));
+  })) : [];
 
-  const excludedPlayerIds = Array.isArray(row.excluded_player_ids)
-    ? row.excluded_player_ids
-    : (meta.excludedPlayerIds || []);
+  const attendees: any[] = Array.isArray(calendarMeta.attendees) ? [...calendarMeta.attendees] : (Array.isArray(meta.attendees) ? [...meta.attendees] : []);
+  const attendeePlayerIds: string[] = Array.isArray(calendarMeta.attendeePlayerIds) ? [...calendarMeta.attendeePlayerIds] : [];
+  const excludedPlayerIds: string[] = Array.isArray(calendarMeta.excludedPlayerIds) ? [...calendarMeta.excludedPlayerIds] : (Array.isArray(meta.excludedPlayerIds) ? [...meta.excludedPlayerIds] : []);
 
-  const attendeePlayerIds = Array.isArray(row.attendee_player_ids)
-    ? row.attendee_player_ids
-    : (meta.attendeePlayerIds || []);
+  if (Array.isArray(row.session_attendees) && row.session_attendees.length > 0) {
+    row.session_attendees.forEach((sa: any) => {
+      const uId = String(sa.player_id || sa.user_id || '').trim();
+      if (!uId) return;
+      if (sa.status === 'present') {
+        if (!attendeePlayerIds.includes(uId)) {
+          attendees.push({ _id: uId, id: uId });
+          attendeePlayerIds.push(uId);
+        }
+      } else if (sa.status === 'absent') {
+        if (!excludedPlayerIds.includes(uId)) {
+          excludedPlayerIds.push(uId);
+        }
+      }
+    });
+  }
 
-  const attendees = Array.isArray(row.attendees)
-    ? row.attendees
-    : (meta.attendees || []);
-
-  const rawCover = row.cover_image_url || meta.coverImageUrl || (typeof row.cover_image === 'string' ? row.cover_image : null);
+  const rawCover = row.cover_image_url || calendarMeta.coverImageUrl || meta.coverImageUrl || (typeof row.cover_image === 'string' ? row.cover_image : null);
   const coverImageUrl = rawCover ? resolveStorageUrl(rawCover, 'campaign-assets') : undefined;
 
-  let galleryImages = Array.isArray(row.images) ? resolveStorageUrlArray(row.images) : (meta.images || []);
+  let galleryImages = Array.isArray(row.images) ? resolveStorageUrlArray(row.images) : (Array.isArray(calendarMeta.images) ? resolveStorageUrlArray(calendarMeta.images) : (meta.images || []));
   if (coverImageUrl) {
     galleryImages = galleryImages.filter((img) => img !== coverImageUrl && img !== rawCover);
   }
 
-  const audioLogs: AudioLog[] = Array.isArray(row.audio_logs) ? [...row.audio_logs] : (meta.audioLogs ? [...meta.audioLogs] : []);
-  if (row.audio_url && typeof row.audio_url === 'string' && row.audio_url.trim()) {
-    const cleanAudioUrl = resolveStorageUrl(row.audio_url, 'audio-logs');
-    if (!audioLogs.some((l) => l.audioUrl === cleanAudioUrl || l.audioUrl === row.audio_url)) {
-      audioLogs.push({
-        id: `aud_legacy_${rowId}`,
-        title: `Audio Sessione #${row.number || 1}`,
-        audioUrl: cleanAudioUrl,
-        createdAt: row.created_at || new Date().toISOString(),
-        associatedType: 'session',
-        associatedId: rowId,
-      });
-    }
-  }
+  const sessNumber = Number(row.number ?? meta.number ?? 1);
 
   return {
     _id: rowId,
     id: rowId,
-    number: Number(row.number || meta.number || 1),
+    number: sessNumber,
     date_str: realDate,
     date: realDate,
-    title: String(row.title || meta.title || `Sessione ${row.number || 1}`).trim(),
-    sessionType: row.session_type || meta.sessionType || 'mixed',
-    chapterId: row.chapter_id || meta.chapterId || undefined,
-    chapterName: row.chapter_name || undefined,
-    linkedEntityIds: Array.isArray(row.linked_entity_ids) ? row.linked_entity_ids : (meta.linkedEntityIds || []),
+    title: String(row.title || meta.title || `Sessione ${sessNumber}`).trim(),
+    sessionType: row.session_type || calendarMeta.sessionType || meta.sessionType || 'mixed',
+    chapterId: row.chapter_id || calendarMeta.chapterId || meta.chapterId || undefined,
+    chapterName: calendarMeta.chapterName || row.chapter_name || undefined,
+    linkedEntityIds: Array.isArray(calendarMeta.linkedEntityIds) ? calendarMeta.linkedEntityIds : (Array.isArray(row.linked_entity_ids) ? row.linked_entity_ids : (meta.linkedEntityIds || [])),
     calendar_date: parsedLoreDate,
     loreDate: parsedLoreDate,
-    loreStartDay: row.lore_day || meta.loreStartDay || undefined,
-    loreMonth: row.lore_month ? String(row.lore_month) : meta.loreMonth || undefined,
-    loreYear: row.lore_year || meta.loreYear || undefined,
+    loreStartDay: calendarMeta.loreStartDay ?? row.lore_day ?? meta.loreStartDay ?? undefined,
+    loreEndDay: calendarMeta.loreEndDay ?? undefined,
+    loreMonth: calendarMeta.loreMonth ?? (row.lore_month ? String(row.lore_month) : meta.loreMonth) ?? undefined,
+    loreEndMonth: calendarMeta.loreEndMonth ?? undefined,
+    loreYear: calendarMeta.loreYear ?? row.lore_year ?? meta.loreYear ?? undefined,
+    loreEndYear: calendarMeta.loreEndYear ?? undefined,
     summary: summaryText,
-    recap: Array.isArray(row.recap) ? row.recap : (summaryText ? [{ _type: 'block', children: [{ _type: 'span', text: summaryText }] }] : []),
+    recap: summaryText ? [{ _type: 'block', children: [{ _type: 'span', text: summaryText }] }] : [],
     plot_events: events,
     events,
     images: galleryImages,
     coverImage: coverImageUrl,
-    audioLogs,
+    coverImageUrl,
+    audioLogs: [],
     excludedPlayerIds,
     attendeePlayerIds,
     attendees,
-    entitiesExtracted: Boolean(row.entities_extracted ?? meta.entitiesExtracted),
-    memorySynced: Boolean(row.memory_synced ?? meta.memorySynced),
-    quotes: Array.isArray(row.quotes) ? row.quotes : [],
-    tags: Array.isArray(row.tags) ? row.tags : [],
-    gazetteConfig: row.gazette_config || undefined,
+    entitiesExtracted: Boolean(row.entities_extracted_at ?? calendarMeta.entitiesExtracted ?? meta.entitiesExtracted),
     entitiesExtractedAt: row.entities_extracted_at || undefined,
+    memorySynced: Boolean(row.memory_synced_at ?? calendarMeta.memorySynced ?? meta.memorySynced),
     memorySyncedAt: row.memory_synced_at || undefined,
+    quotes: Array.isArray(row.quotes) ? row.quotes : (Array.isArray(calendarMeta.quotes) ? calendarMeta.quotes : []),
+    tags: Array.isArray(row.tags) ? row.tags : (Array.isArray(calendarMeta.tags) ? calendarMeta.tags : []),
+    gazetteConfig: calendarMeta.gazetteConfig || row.gazette_config || undefined,
     createdAt: row.created_at || undefined,
     updatedAt: row.updated_at || undefined,
   };
 }
+export const sessionRowToModel = fromDbSession;
 
-export function sessionModelToRow(
+export function toDbSession(
   session: Session,
-  campaignCode: string
+  campaignCode: string,
+  validIds?: { chapterIds?: Set<string> }
 ): Record<string, any> {
   const cleanCode = campaignCode.trim().toUpperCase();
   const sessionDate = session.date_str || session.date || new Date().toISOString().split('T')[0];
 
   let summaryStr = session.summary || '';
   if (!summaryStr) {
-    if (typeof (session as any).recap === 'string') {
+    if (typeof (session as any).recapText === 'string') {
+      summaryStr = (session as any).recapText;
+    } else if (typeof (session as any).recap === 'string') {
       summaryStr = (session as any).recap;
     } else if (Array.isArray(session.recap)) {
       summaryStr = session.recap
@@ -332,65 +369,75 @@ export function sessionModelToRow(
     }
   }
 
-  const rawRecap: any = (session as any).recap;
-  const recapArray = Array.isArray(rawRecap)
-    ? rawRecap
-    : (summaryStr ? [{ _type: 'block', children: [{ _type: 'span', text: summaryStr }] }] : []);
-
-  let calendarDateStr: string | null = null;
-  const fantasyDate = session.calendar_date || session.loreDate;
-  if (fantasyDate) {
-    if (typeof fantasyDate === 'object') {
-      calendarDateStr = (fantasyDate as any).formatted || null;
-    } else {
-      calendarDateStr = String(fantasyDate).trim();
-    }
-  }
-
   const plotEvents = Array.isArray(session.plot_events)
     ? session.plot_events
     : (Array.isArray(session.events) ? session.events : []);
 
-  const excludedPlayerIds = Array.isArray(session.excludedPlayerIds) ? session.excludedPlayerIds : [];
-  const attendees = Array.isArray(session.attendees) ? session.attendees : [];
-  const coverImage = (session as any).coverImageUrl || (session as any).coverImage || null;
+  const notesContent = typeof (session as any).notes === 'string'
+    ? (session as any).notes
+    : JSON.stringify(plotEvents);
 
+  const coverImage = (session as any).coverImageUrl || (session as any).coverImage || null;
   let galleryImages = Array.isArray(session.images) ? session.images : [];
   if (coverImage) {
     galleryImages = galleryImages.filter((img) => img !== coverImage);
   }
 
+  const calendarDate = session.calendar_date || session.loreDate || null;
+
+  const calendarMeta = {
+    excludedPlayerIds: session.excludedPlayerIds || [],
+    attendeePlayerIds: session.attendeePlayerIds || [],
+    attendees: session.attendees || [],
+    chapterName: session.chapterName || null,
+    linkedEntityIds: session.linkedEntityIds || [],
+    loreStartDay: session.loreStartDay ?? null,
+    loreEndDay: session.loreEndDay ?? null,
+    loreMonth: session.loreMonth ?? null,
+    loreEndMonth: session.loreEndMonth ?? null,
+    loreYear: session.loreYear ?? null,
+    loreEndYear: session.loreEndYear ?? null,
+    gazetteConfig: session.gazetteConfig || null,
+    entitiesExtracted: Boolean(session.entitiesExtracted),
+    memorySynced: Boolean(session.memorySynced),
+  };
+
+  const entitiesExtractedAt = session.entitiesExtracted
+    ? (session.entitiesExtractedAt || new Date().toISOString())
+    : null;
+
+  const memorySyncedAt = session.memorySynced
+    ? (session.memorySyncedAt || new Date().toISOString())
+    : null;
+
   return {
     id: session._id || session.id,
     campaign_code: cleanCode,
-    chapter_id: session.chapterId || null,
-    number: session.number || 1,
+    chapter_id: toNullableFk(session.chapterId, validIds?.chapterIds),
+    number: Number(session.number || 1),
     title: session.title || `Sessione ${session.number || 1}`,
     date_str: sessionDate,
-    calendar_date: calendarDateStr,
-    plot_events: plotEvents,
-    recap: recapArray,
+    calendar_date: calendarDate,
+    calendar_meta: calendarMeta,
+    session_type: session.sessionType || 'mixed',
     summary: summaryStr,
+    plot_events: plotEvents,
+    quotes: Array.isArray((session as any).quotes) ? (session as any).quotes : [],
     images: galleryImages,
     cover_image_url: coverImage,
-    session_type: session.sessionType || 'mixed',
-    quotes: Array.isArray((session as any).quotes) ? (session as any).quotes : [],
-    excluded_player_ids: excludedPlayerIds,
-    attendees: attendees,
     tags: Array.isArray((session as any).tags) ? (session as any).tags : [],
-    entities_extracted: Boolean(session.entitiesExtracted),
-    entities_extracted_at: (session as any).entitiesExtractedAt || null,
-    memory_synced: Boolean(session.memorySynced),
-    memory_synced_at: (session as any).memorySyncedAt || null,
+    entities_extracted_at: entitiesExtractedAt,
+    memory_synced_at: memorySyncedAt,
     created_at: (session as any).createdAt || (session as any)._createdAt || new Date().toISOString(),
     updated_at: new Date().toISOString(),
   };
 }
+export const sessionModelToRow = toDbSession;
 
 // =========================================================================
 // 3. ENTITIES (CODEX) ADAPTER (entities)
 // =========================================================================
-export function entityRowToModel(row: any): Entity {
+export function fromDbEntity(row: any): Entity {
   if (!row) {
     const defaultId = `ent_${Date.now()}`;
     return {
@@ -409,20 +456,12 @@ export function entityRowToModel(row: any): Entity {
   const rawAttrs = row.attributes && typeof row.attributes === 'object' ? { ...row.attributes } : {};
   const entityId = String(row.id || rawAttrs.id || rawAttrs._id || '');
 
-  // Read native columns first, fallback to attributes
   const name = row.name || rawAttrs.name || 'Senza Nome';
   const type = row.type || rawAttrs.type || rawAttrs.category || 'npc';
-  const rawProgressDescr = rawAttrs.progressDescr || rawAttrs.progress_descr || rawAttrs.progressNote || '';
-  const description = row.description || rawAttrs.description || rawProgressDescr || '';
-  const status = row.status || rawAttrs.status || 'alive';
+  const description = row.description || rawAttrs.description || '';
 
-  // Clean native duplicates from JSONB attributes to avoid duplication
-  delete rawAttrs.name;
-  delete rawAttrs.type;
-  delete rawAttrs.description;
-  delete rawAttrs.status;
-  delete rawAttrs.id;
-  delete rawAttrs._id;
+  // Recover quest status from attributes if available, otherwise check constraint column status
+  let resolvedStatus = rawAttrs.uiStatus || rawAttrs.questStatus || row.status || 'alive';
 
   const rawImages = Array.isArray(rawAttrs.images) && rawAttrs.images.length > 0
     ? rawAttrs.images
@@ -434,8 +473,6 @@ export function entityRowToModel(row: any): Entity {
   const resolvedImages = resolveStorageUrlArray(rawImages, 'campaign-assets');
   const mainImage = resolveStorageUrl(row.image_url || rawAttrs.imageUrl || resolvedImages[0] || '', 'campaign-assets');
 
-  delete rawAttrs.imageUrl;
-
   return {
     id: entityId,
     _id: entityId,
@@ -444,82 +481,117 @@ export function entityRowToModel(row: any): Entity {
     description,
     imageUrl: mainImage,
     images: resolvedImages,
-    status,
-    color: row.color || rawAttrs.color || '#3B82F6',
-    aliases: Array.isArray(row.aliases) ? row.aliases : (Array.isArray(rawAttrs.aliases) ? rawAttrs.aliases : []),
-    mapId: row.map_id || rawAttrs.mapId || undefined,
-    isSecret: Boolean(row.is_secret ?? rawAttrs.isSecret),
-    isHidden: Boolean(row.is_hidden ?? rawAttrs.isHidden),
-    relatedEntityIds: Array.isArray(row.related_entity_ids) ? row.related_entity_ids : (rawAttrs.relatedEntityIds || []),
-    loreBites: Array.isArray(row.lore_bites) ? row.lore_bites : (rawAttrs.loreBites || []),
-    ...rawAttrs,
-    progressNote: rawAttrs.progressNote || rawProgressDescr || '',
-    aiConfig: rawAttrs.aiConfig || undefined,
-    body: rawAttrs.body || [],
+    status: resolvedStatus,
+    color: rawAttrs.color || '#3B82F6',
+    aliases: Array.isArray(rawAttrs.aliases) ? rawAttrs.aliases : [],
     location: rawAttrs.location || undefined,
+    role: rawAttrs.role || undefined,
+    secretText: rawAttrs.secretText || undefined,
+    isPublic: rawAttrs.isPublic ?? true,
+    isPartyMember: Boolean(rawAttrs.isPartyMember),
+    questScope: rawAttrs.questScope || undefined,
+    assigneePlayerId: rawAttrs.assigneePlayerId || undefined,
+    assigneePlayerName: rawAttrs.assigneePlayerName || undefined,
+    sharedWithDm: rawAttrs.sharedWithDm ?? true,
+    aiConfig: rawAttrs.aiConfig || undefined,
+    tags: Array.isArray(rawAttrs.tags) ? rawAttrs.tags : [],
+    customFields: rawAttrs.customFields || undefined,
+    mapId: rawAttrs.mapId || undefined,
     pinId: rawAttrs.pinId || undefined,
+    pinCategory: rawAttrs.pinCategory || undefined,
+    pinX: rawAttrs.pinX ?? undefined,
+    pinY: rawAttrs.pinY ?? undefined,
+    isMap: Boolean(rawAttrs.isMap),
+    mapImageUrl: rawAttrs.mapImageUrl || undefined,
+    folderId: rawAttrs.folderId || undefined,
+    audioLogs: Array.isArray(rawAttrs.audioLogs) ? rawAttrs.audioLogs : [],
+    progressNote: rawAttrs.progressNote || '',
+    body: rawAttrs.body || [],
     createdAt: row.created_at || rawAttrs.createdAt || new Date().toISOString(),
     updatedAt: row.updated_at || rawAttrs.updatedAt || new Date().toISOString(),
   };
 }
+export const entityRowToModel = fromDbEntity;
 
-export function entityModelToRow(
+export function toDbEntity(
   entity: Entity,
-  campaignCode: string
+  campaignCode: string,
+  validIds?: { folderIds?: Set<string>; mapIds?: Set<string>; userIds?: Set<string> }
 ): Record<string, any> {
   const cleanCode = campaignCode.trim().toUpperCase();
   const entityId = entity.id || entity._id;
-  const { id, _id, name, type, description, imageUrl, images, status, color, aliases, mapId, createdAt, updatedAt, ...restAttributes } = entity as any;
 
-  // Clean native fields from restAttributes before serializing JSONB
-  delete restAttributes.name;
-  delete restAttributes.type;
-  delete restAttributes.description;
-  delete restAttributes.status;
-  delete restAttributes.image_url;
+  // Align status with CHECK constraint ("alive", "dead", "unknown", "archived")
+  let sqlStatus: 'alive' | 'dead' | 'unknown' | 'archived' = 'alive';
+  const entStatus = String(entity.status || '').toLowerCase().trim();
+  if (entStatus === 'open') {
+    sqlStatus = 'alive';
+  } else if (entStatus === 'completed' || entStatus === 'archived') {
+    sqlStatus = 'archived';
+  } else if (entStatus === 'failed' || entStatus === 'destroyed' || entStatus === 'dead' || entStatus === 'deceased') {
+    sqlStatus = 'dead';
+  } else if (entStatus === 'unknown') {
+    sqlStatus = 'unknown';
+  } else {
+    sqlStatus = 'alive';
+  }
 
-  const rawImages = Array.isArray(images) && images.length > 0
-    ? images
-    : imageUrl
-    ? [imageUrl]
+  const rawImages = Array.isArray(entity.images) && entity.images.length > 0
+    ? entity.images
+    : entity.imageUrl
+    ? [entity.imageUrl]
     : [];
-  const mainImage = imageUrl || (rawImages.length > 0 ? rawImages[0] : '') || '';
-  const resolvedColor = color || restAttributes.color || '#3B82F6';
-  const resolvedStatus = status || restAttributes.status || 'alive';
-  const resolvedAliases = Array.isArray(aliases) ? aliases : (restAttributes.aliases || []);
-  const resolvedMapId = mapId || restAttributes.mapId || null;
+  const mainImage = entity.imageUrl || (rawImages.length > 0 ? rawImages[0] : '') || '';
 
-  const resolvedDesc = (description || restAttributes.progressNote || restAttributes.note || '').trim();
-  delete restAttributes.progressNote;
+  const attributes = {
+    aliases: Array.isArray(entity.aliases) ? entity.aliases : [],
+    location: entity.location || null,
+    role: (entity as any).role || null,
+    secretText: (entity as any).secretText || null,
+    isPublic: (entity as any).isPublic ?? true,
+    isPartyMember: Boolean((entity as any).isPartyMember),
+    questScope: entity.questScope || null,
+    assigneePlayerId: toNullableFk(entity.assigneePlayerId, validIds?.userIds),
+    assigneePlayerName: entity.assigneePlayerName || null,
+    sharedWithDm: (entity as any).sharedWithDm ?? true,
+    aiConfig: entity.aiConfig || null,
+    images: rawImages,
+    tags: (entity as any).tags || [],
+    uiStatus: entity.status,
+    questStatus: (entity.type === 'quest' ? entity.status : (entity as any).questStatus) || entity.status,
+    customFields: (entity as any).customFields || null,
+    mapId: toNullableFk(entity.mapId, validIds?.mapIds),
+    pinId: entity.pinId || null,
+    pinCategory: entity.pinCategory || null,
+    pinX: entity.pinX ?? null,
+    pinY: entity.pinY ?? null,
+    isMap: Boolean(entity.isMap),
+    mapImageUrl: entity.mapImageUrl || null,
+    folderId: toNullableFk(entity.folderId, validIds?.folderIds),
+    color: entity.color || '#3B82F6',
+    progressNote: (entity as any).progressNote || '',
+    ...((entity as any).attributes || {}),
+  };
 
   return {
     id: entityId,
     campaign_code: cleanCode,
-    name: name || 'Senza Nome',
-    type: type || 'npc',
-    description: resolvedDesc,
+    name: entity.name || 'Senza Nome',
+    type: entity.type || 'npc',
+    description: (entity.description || (entity as any).progressNote || '').trim(),
     image_url: mainImage || null,
-    status: resolvedStatus,
-    attributes: {
-      ...restAttributes,
-      color: resolvedColor,
-      images: rawImages,
-      aliases: resolvedAliases,
-      mapId: resolvedMapId,
-      isSecret: Boolean((entity as any).isSecret),
-      isHidden: Boolean((entity as any).isHidden),
-      relatedEntityIds: Array.isArray((entity as any).relatedEntityIds) ? (entity as any).relatedEntityIds : [],
-      loreBites: Array.isArray((entity as any).loreBites) ? (entity as any).loreBites : [],
-    },
-    created_at: createdAt || (entity as any)._createdAt || new Date().toISOString(),
-    updated_at: updatedAt || new Date().toISOString(),
+    status: sqlStatus,
+    attributes,
+    created_at: entity.createdAt || (entity as any)._createdAt || new Date().toISOString(),
+    updated_at: entity.updatedAt || new Date().toISOString(),
   };
 }
+export const entityModelToRow = toDbEntity;
 
 // =========================================================================
 // 4. NOTES ADAPTER (notes)
 // =========================================================================
-export function noteRowToModel(
+export function fromDbNote(
   row: any,
   notesMeta?: Record<string, any>
 ): Note {
@@ -533,42 +605,55 @@ export function noteRowToModel(
   const createdAt = row.created_at || meta.createdAt || new Date().toISOString();
   const updatedAt = row.updated_at || meta.updatedAt || new Date().toISOString();
 
-  // Parse structured DM response or string reply
+  // Parse structured DM response or string reply, including packed metadata
+  let metaPayload: any = {};
   let parsedDmResponse: any = undefined;
   if (row.dm_reply) {
+    let parsed: any = null;
     if (typeof row.dm_reply === 'object') {
-      parsedDmResponse = {
-        text: row.dm_reply.text || '',
-        answeredAt: row.dm_reply.answeredAt || updatedAt,
-        answeredBy: row.dm_reply.answeredBy || 'Dungeon Master',
-        isResolved: Boolean(row.dm_reply.isResolved),
-      };
+      parsed = row.dm_reply;
     } else if (typeof row.dm_reply === 'string') {
       const trimmed = row.dm_reply.trim();
       if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
-        try {
-          const parsed = JSON.parse(trimmed);
-          parsedDmResponse = {
-            text: parsed.text || trimmed,
-            answeredAt: parsed.answeredAt || updatedAt,
-            answeredBy: parsed.answeredBy || 'Dungeon Master',
-            isResolved: Boolean(parsed.isResolved),
-          };
-        } catch {
-          parsedDmResponse = {
-            text: trimmed,
-            answeredAt: updatedAt,
-            answeredBy: 'Dungeon Master',
-          };
-        }
-      } else {
-        parsedDmResponse = {
-          text: trimmed,
-          answeredAt: updatedAt,
-          answeredBy: 'Dungeon Master',
-        };
+        try { parsed = JSON.parse(trimmed); } catch {}
       }
     }
+    if (parsed) {
+      metaPayload = parsed;
+      if (parsed.text || parsed.answeredBy) {
+        parsedDmResponse = {
+          text: parsed.text || '',
+          answeredAt: parsed.answeredAt || updatedAt,
+          answeredBy: parsed.answeredBy || 'Dungeon Master',
+          isResolved: Boolean(parsed.isResolved),
+        };
+      }
+    } else if (typeof row.dm_reply === 'string') {
+      parsedDmResponse = {
+        text: row.dm_reply,
+        answeredAt: updatedAt,
+        answeredBy: 'Dungeon Master',
+      };
+    }
+  }
+
+  // Unified visibility resolution
+  const rowVis = String(row.visibility || 'group').toLowerCase();
+  let visibility: 'personal' | 'group' = 'group';
+  let dmOnly = Boolean(metaPayload.dmOnly);
+
+  if (rowVis === 'dm_only') {
+    visibility = 'group';
+    dmOnly = true;
+  } else if (rowVis === 'shared_with_dm') {
+    visibility = 'personal';
+    dmOnly = true;
+  } else if (rowVis === 'private') {
+    visibility = 'personal';
+    dmOnly = false;
+  } else {
+    visibility = 'group';
+    dmOnly = false;
   }
 
   return {
@@ -580,8 +665,8 @@ export function noteRowToModel(
     _updatedAt: updatedAt,
     title: row.title || 'Nota',
     content: row.content || '',
-    visibility: row.visibility === 'personal' ? 'personal' : 'group',
-    dmOnly: meta.dmOnly !== undefined ? Boolean(meta.dmOnly) : Boolean(row.is_dm_only),
+    visibility,
+    dmOnly,
     canonState: meta.canonState || row.canon_state || 'canon',
     pinned: meta.pinned !== undefined ? Boolean(meta.pinned) : Boolean(row.is_pinned),
     tags: Array.isArray(meta.tags) ? meta.tags : Array.isArray(row.tags) ? row.tags : [],
@@ -591,197 +676,416 @@ export function noteRowToModel(
     categoryId: row.category || row.category_id || undefined,
     sessionId: row.session_id || undefined,
     author: {
-      _id: row.author_id || 'unknown',
-      id: row.author_id || 'unknown',
-      characterName: row.author_name || 'Giocatore',
-      isDm: Boolean(row.author_is_dm),
+      _id: row.author_id || metaPayload.authorId || 'unknown',
+      id: row.author_id || metaPayload.authorId || 'unknown',
+      characterName: metaPayload.authorName || meta.authorName || 'Autore',
+      isDm: metaPayload.authorIsDm !== undefined ? Boolean(metaPayload.authorIsDm) : dmOnly,
     },
     dmResponse: parsedDmResponse,
-    hiddenForDm: Boolean(row.hidden_for_dm),
-    hiddenForPlayerIds: Array.isArray(row.hidden_for_player_ids) ? row.hidden_for_player_ids : [],
+    hiddenForDm: Boolean(metaPayload.hiddenForDm || row.hidden_for_dm),
+    hiddenForPlayerIds: Array.isArray(metaPayload.hiddenForPlayerIds) ? metaPayload.hiddenForPlayerIds : (Array.isArray(row.hidden_for_player_ids) ? row.hidden_for_player_ids : []),
   };
 }
+export const noteRowToModel = fromDbNote;
 
-export function noteModelToRow(
+export function toDbNote(
   note: Note,
-  campaignCode: string
+  campaignCode: string,
+  validIds?: { userIds?: Set<string>; sessionIds?: Set<string> }
 ): Record<string, any> {
   const cleanCode = campaignCode.trim().toUpperCase();
-  const categoryVal = (note as any).categoryId || (note as any).category || 'general';
-  let loreDateFormatted: string | null = null;
-  if ((note as any).loreDate) {
-    if (typeof (note as any).loreDate === 'object') {
-      loreDateFormatted = (note as any).loreDate.formatted || JSON.stringify((note as any).loreDate);
-    } else {
-      loreDateFormatted = String((note as any).loreDate);
-    }
+
+  // Standardized visibility column: 'group' | 'private' | 'dm_only' | 'shared_with_dm'
+  let unifiedVisibility: 'group' | 'private' | 'dm_only' | 'shared_with_dm' = 'group';
+  if (note.dmOnly || (note.visibility as any) === 'dm_only' || (note as any).dm_only) {
+    unifiedVisibility = 'dm_only';
+  } else if (note.visibility === 'personal' && note.askDm) {
+    unifiedVisibility = 'shared_with_dm';
+  } else if (note.visibility === 'personal' || (note as any).visibility === 'private') {
+    unifiedVisibility = 'private';
+  } else {
+    unifiedVisibility = 'group';
   }
 
-  let dmReplyPayload: string | null = null;
-  if (note.dmResponse) {
-    dmReplyPayload = JSON.stringify({
-      text: note.dmResponse.text || '',
-      answeredAt: note.dmResponse.answeredAt || note.updatedAt || new Date().toISOString(),
-      answeredBy: note.dmResponse.answeredBy || 'Dungeon Master',
-      isResolved: Boolean(note.dmResponse.isResolved),
-    });
-  }
+  const authorIdVal = toNullableFk(note.author?.id || note.author?._id, validIds?.userIds);
+  const sessionIdVal = toNullableFk((note as any).sessionId || (note as any).session?._id, validIds?.sessionIds);
 
-  const noteId = note.id || note._id;
+  const dmReplyObj = {
+    ...(note.dmResponse || {}),
+    authorId: authorIdVal,
+    authorName: note.author?.characterName || (note.author as any)?.name || 'Autore',
+    authorIsDm: Boolean(note.author?.isDm),
+    dmOnly: Boolean(note.dmOnly),
+    hiddenForDm: Boolean((note as any).hiddenForDm),
+    hiddenForPlayerIds: Array.isArray((note as any).hiddenForPlayerIds) ? (note as any).hiddenForPlayerIds : [],
+  };
 
   return {
-    id: noteId,
+    id: note.id || note._id,
     campaign_code: cleanCode,
-    author_id: note.author?.id || note.author?._id || 'unknown',
+    author_id: authorIdVal,
+    session_id: sessionIdVal,
     title: note.title || 'Nota',
     content: note.content || '',
-    category: categoryVal,
-    session_id: (note as any).sessionId || null,
-    lore_date: loreDateFormatted,
-    visibility: note.visibility || 'group',
-    is_dm_only: Boolean(note.dmOnly),
-    is_pinned: Boolean(note.pinned),
-    canon_state: note.canonState || 'canon',
+    category: (note as any).category?._id || (note as any).categoryId || (note as any).category || null,
+    lore_date: note.loreDate || null,
+    visibility: unifiedVisibility,
+    is_pinned: Boolean(note.pinned || (note as any).is_pinned),
+    canon_state: note.canonState || (note as any).canon_state || 'canon',
+    ask_dm: Boolean(note.askDm || (note as any).ask_dm),
+    dm_reply: JSON.stringify(dmReplyObj),
     tags: Array.isArray(note.tags) ? note.tags : [],
     images: Array.isArray(note.images) ? note.images : [],
-    ask_dm: Boolean(note.askDm),
-    dm_reply: dmReplyPayload,
     created_at: note.createdAt || (note as any)._createdAt || new Date().toISOString(),
-    updated_at: note.updatedAt || new Date().toISOString(),
+    updated_at: new Date().toISOString(),
   };
 }
+export const noteModelToRow = toDbNote;
 
 // =========================================================================
 // 5. WORLD MAPS ADAPTER (maps)
 // =========================================================================
-export function mapRowToModel(
+export function fromDbMap(
   row: any,
   mapsMeta?: Record<string, any>
 ): WorldMap {
   const meta = mapsMeta?.[row.id] || {};
+  const rowVis = String(row.visibility || 'group').toLowerCase();
+
+  let isSecret = false;
+  let sharedWithDm = true;
+  if (rowVis === 'shared_with_dm') {
+    isSecret = true;
+    sharedWithDm = true;
+  } else if (rowVis === 'dm_only' || rowVis === 'private') {
+    isSecret = true;
+    sharedWithDm = false;
+  }
+
   return {
     id: String(row.id || ''),
     title: row.title || 'Mappa',
     description: meta.description || row.description || '',
-    folderId: meta.folderId || row.folder_id || undefined,
+    folderId: row.folder_id || meta.folderId || undefined,
+    entityId: row.entity_id || meta.entityId || undefined,
     imageUrl: resolveStorageUrl(row.image_url || meta.imageUrl || '', 'campaign-assets'),
     pins: Array.isArray(row.pins) ? row.pins : [],
     scaleLabel: row.scale_label || meta.scaleLabel || undefined,
     isDefault: Boolean(row.is_default || meta.isDefault),
+    isSecret,
+    sharedWithDm,
+    visibility: (rowVis === 'shared_with_dm' || rowVis === 'dm_only') ? rowVis : 'group',
     createdAt: row.created_at || new Date().toISOString(),
   };
 }
+export const mapRowToModel = fromDbMap;
 
-export function mapModelToRow(
+export function toDbMap(
   map: WorldMap,
-  campaignCode: string
+  campaignCode: string,
+  validIds?: { folderIds?: Set<string>; entityIds?: Set<string> }
 ): Record<string, any> {
   const cleanCode = campaignCode.trim().toUpperCase();
+
+  // Visibility column: 'group' | 'dm_only' | 'shared_with_dm' (MAI 'public' o 'private')
+  let unifiedVisibility: 'group' | 'dm_only' | 'shared_with_dm' = 'group';
+  const rawVis = String((map as any).visibility || '').toLowerCase();
+  if (rawVis === 'shared_with_dm') {
+    unifiedVisibility = 'shared_with_dm';
+  } else if (rawVis === 'dm_only' || rawVis === 'private' || rawVis === 'personal' || map.isSecret) {
+    unifiedVisibility = 'dm_only';
+  } else {
+    unifiedVisibility = 'group';
+  }
+
+  const rawPins = Array.isArray(map.pins) ? map.pins : [];
+  const rawFog = (map as any).fog_of_war || (map as any).fogOfWar || {};
+
   return {
     id: map.id,
     campaign_code: cleanCode,
+    folder_id: toNullableFk(map.folderId, validIds?.folderIds),
+    entity_id: toNullableFk((map as any).entityId || (map as any).placeEntityId, validIds?.entityIds),
     title: map.title || 'Mappa',
     description: map.description || '',
     image_url: map.imageUrl || '',
     scale_label: map.scaleLabel || '',
-    folder_id: map.folderId || null,
-    entity_id: (map as any).entityId || null,
-    pins: map.pins || [],
-    fog_of_war: (map as any).fogOfWar || {},
-    is_default: Boolean(map.isDefault),
-    is_secret: Boolean((map as any).isSecret || (map as any).sharedWithDm === false),
-    shared_with_dm: Boolean((map as any).sharedWithDm !== false),
+    pins: rawPins,
+    fog_of_war: rawFog,
+    is_default: Boolean((map as any).isDefault),
+    visibility: unifiedVisibility,
     created_at: (map as any).createdAt || new Date().toISOString(),
     updated_at: new Date().toISOString(),
   };
 }
+export const mapModelToRow = toDbMap;
+
+export function fromDbMapFolder(row: any): MapFolder {
+  return {
+    id: String(row.id || ''),
+    name: row.name || 'Cartella',
+    color: row.color || '#3B82F6',
+    description: row.description || '',
+    placeEntityId: row.place_entity_id || undefined,
+    createdAt: row.created_at || new Date().toISOString(),
+  };
+}
+export const mapFolderRowToModel = fromDbMapFolder;
+
+export function toDbMapFolder(
+  folder: any,
+  campaignCode: string,
+  validIds?: { folderIds?: Set<string> }
+): Record<string, any> {
+  const cleanCode = campaignCode.trim().toUpperCase();
+  return {
+    id: folder.id,
+    campaign_code: cleanCode,
+    parent_id: toNullableFk(folder.parentId || folder.parent_id, validIds?.folderIds),
+    name: folder.name || 'Cartella',
+    order_index: typeof folder.orderIndex === 'number' ? folder.orderIndex : (typeof folder.order === 'number' ? folder.order : 0),
+    created_at: folder.createdAt || new Date().toISOString(),
+  };
+}
+export const mapFolderModelToRow = toDbMapFolder;
 
 // =========================================================================
 // 6. SCRAPBOOK ADAPTER (scrapbook)
 // =========================================================================
-export function scrapbookRowToModel(row: any): ScrapbookItem {
+export function fromDbScrapbook(row: any): ScrapbookItem {
+  const rowVis = String(row.visibility || 'group').toLowerCase();
+  let isSecret = false;
+  let sharedWithDm = true;
+
+  if (rowVis === 'shared_with_dm') {
+    isSecret = true;
+    sharedWithDm = true;
+  } else if (rowVis === 'private' || rowVis === 'dm_only') {
+    isSecret = true;
+    sharedWithDm = false;
+  }
+
   return {
     id: String(row.id || ''),
     title: row.title || '',
     imageUrl: resolveStorageUrl(row.image_url || '', 'campaign-assets'),
     caption: row.caption || row.description || '',
-    authorName: row.created_by || row.author_name || '',
+    authorName: row.author_id || '',
     category: row.category || 'moment',
     loreDate: row.lore_date || undefined,
     sessionId: row.session_id || undefined,
     entityId: row.entity_id || undefined,
     tags: Array.isArray(row.tags) ? row.tags : [],
+    isSecret,
+    sharedWithDm,
     createdAt: row.created_at || new Date().toISOString(),
   };
 }
+export const scrapbookRowToModel = fromDbScrapbook;
 
-export function scrapbookModelToRow(
+export function toDbScrapbook(
   item: ScrapbookItem,
-  campaignCode: string
+  campaignCode: string,
+  validIds?: { userIds?: Set<string>; sessionIds?: Set<string>; entityIds?: Set<string> }
 ): Record<string, any> {
   const cleanCode = campaignCode.trim().toUpperCase();
   const desc = item.caption || (item as any).description || '';
+
+  let unifiedVisibility: 'group' | 'private' | 'shared_with_dm' = 'group';
+  if (item.isSecret) {
+    unifiedVisibility = item.sharedWithDm ? 'shared_with_dm' : 'private';
+  }
+
   return {
     id: item.id,
     campaign_code: cleanCode,
+    author_id: null,
     title: item.title || '',
     caption: desc,
     image_url: item.imageUrl || '',
-    created_by: item.authorName || '',
     category: item.category || 'moment',
     aspect_ratio: (item as any).aspectRatio || 'square',
     tags: Array.isArray(item.tags) ? item.tags : [],
-    session_id: item.sessionId || null,
-    entity_id: item.entityId || null,
+    session_id: toNullableFk(item.sessionId, validIds?.sessionIds),
+    entity_id: toNullableFk(item.entityId, validIds?.entityIds),
     lore_date: item.loreDate || null,
-    is_secret: Boolean((item as any).isSecret),
-    shared_with_dm: Boolean((item as any).sharedWithDm !== false),
+    visibility: unifiedVisibility,
     created_at: item.createdAt || new Date().toISOString(),
     updated_at: new Date().toISOString(),
   };
 }
+export const scrapbookModelToRow = toDbScrapbook;
 
 // =========================================================================
 // 7. AUDIO LOGS ADAPTER (audio_logs)
 // =========================================================================
-export function audioLogRowToModel(row: any): AudioLog {
+export function fromDbAudioLog(row: any): AudioLog {
+  const sessId = row.session_id || undefined;
+  const entId = row.entity_id || undefined;
+  const durationSec = Number(row.duration ?? 0);
+
   return {
     id: String(row.id || ''),
     title: row.title || 'Audio Log',
     audioUrl: resolveStorageUrl(row.audio_url || '', 'audio-logs'),
-    durationSeconds: Number(row.duration ?? row.duration_seconds ?? 0),
-    recordedBy: row.recorded_by || undefined,
+    durationSeconds: durationSec,
+    recordedBy: row.author_id || undefined,
     createdAt: row.created_at || new Date().toISOString(),
     loreDate: row.lore_date || undefined,
-    associatedType: row.associated_type || (row.session_id ? 'session' : row.entity_id ? 'entity' : 'general'),
-    associatedId: row.associated_id || row.session_id || row.entity_id || undefined,
+    associatedType: sessId ? 'session' : (entId ? 'entity' : 'general'),
+    associatedId: sessId || entId || undefined,
   };
 }
+export const audioLogRowToModel = fromDbAudioLog;
 
-export function audioLogModelToRow(
+export function toDbAudioLog(
   log: AudioLog,
-  campaignCode: string
+  campaignCode: string,
+  validIds?: { sessionIds?: Set<string>; entityIds?: Set<string>; userIds?: Set<string> }
 ): Record<string, any> {
   const cleanCode = campaignCode.trim().toUpperCase();
+  const sessId = log.associatedType === 'session' ? toNullableFk(log.associatedId, validIds?.sessionIds) : null;
+  const entId = log.associatedType === 'entity' ? toNullableFk(log.associatedId, validIds?.entityIds) : null;
+
   return {
     id: log.id,
     campaign_code: cleanCode,
+    author_id: null,
+    session_id: sessId,
+    entity_id: entId,
     title: log.title || 'Audio Log',
     audio_url: log.audioUrl || '',
-    duration: log.durationSeconds || (log as any).duration || 0,
-    recorded_by: log.recordedBy || '',
+    duration: Number(log.durationSeconds || (log as any).duration || 0),
     lore_date: log.loreDate || null,
-    associated_type: log.associatedType || 'general',
-    associated_id: log.associatedId || null,
     created_at: log.createdAt || new Date().toISOString(),
     updated_at: new Date().toISOString(),
   };
 }
+export const audioLogModelToRow = toDbAudioLog;
 
 // =========================================================================
-// 8. CHARACTER BIOS ADAPTER (character_bios)
+// 8. FAMILY RELATIONS ADAPTER (family_relations)
 // =========================================================================
-export function characterBioRowToModel(row: any): CharacterBio {
+export function fromDbFamilyRelation(
+  row: any,
+  entitiesMap?: Map<string, Entity>
+): CharacterRelationship {
+  const targetId = row.target_entity_id || '';
+  let targetEnt = targetId ? entitiesMap?.get(targetId) : null;
+  if (!targetEnt && targetId) {
+    try {
+      targetEnt = CampaignManager.getEntities().find((e) => (e.id || e._id) === targetId) || null;
+    } catch {}
+  }
+
+  // Unpack relMeta from tags JSONB
+  let relMeta: any = null;
+  let userTags: string[] = [];
+  if (row.tags && typeof row.tags === 'object') {
+    if (row.tags.__relMeta) {
+      relMeta = row.tags;
+      userTags = Array.isArray(row.tags.userTags) ? row.tags.userTags : [];
+    } else if (Array.isArray(row.tags)) {
+      const metaObj = row.tags.find((t: any) => t && typeof t === 'object' && t.__relMeta);
+      if (metaObj) {
+        relMeta = metaObj;
+        userTags = row.tags.filter((t: any) => typeof t === 'string');
+      } else {
+        userTags = row.tags.filter((t: any) => typeof t === 'string');
+      }
+    }
+  }
+
+  const resolvedName = relMeta?.name || targetEnt?.name || 'Parente';
+  const resolvedAvatar = relMeta?.avatarUrl || targetEnt?.imageUrl || '';
+  let resolvedStatus: 'alive' | 'deceased' | 'missing' | 'undead' | 'unknown' = 'alive';
+  if (relMeta?.status) {
+    resolvedStatus = relMeta.status;
+  } else if (targetEnt) {
+    if (targetEnt.status === 'dead') resolvedStatus = 'deceased';
+    else if (targetEnt.status === 'unknown') resolvedStatus = 'unknown';
+    else resolvedStatus = 'alive';
+  }
+
+  const resolvedRole = relMeta?.titleOrRole || (targetEnt as any)?.role || (targetEnt as any)?.attributes?.titleOrRole || '';
+
+  return {
+    id: row.id,
+    playerId: relMeta?.playerId || row.source_entity_id || row.linked_player_id || '',
+    name: resolvedName,
+    avatarUrl: resolvedAvatar,
+    status: resolvedStatus,
+    titleOrRole: resolvedRole,
+    relationshipType: row.relationship_type || 'family',
+    customRelationshipLabel: row.custom_label || '',
+    customLabel: row.custom_label || '',
+    generationCategory: row.generation_category || 'same_generation',
+    genealogyRole: relMeta?.genealogyRole || undefined,
+    sideOfFamily: row.side_of_family || 'unspecified',
+    bio: row.description || targetEnt?.description || '',
+    secondParentId: row.second_parent_id || undefined,
+    linkedEntityId: relMeta?.linkedEntityId || targetId || undefined,
+    targetEntityId: targetId || undefined,
+    linkedPlayerId: row.linked_player_id || undefined,
+    tags: userTags,
+    order: Number(row.order_index ?? 0),
+    createdAt: row.created_at || row.updated_at,
+    sharedWithParty: !Boolean(row.is_secret),
+    otherParentName: relMeta?.otherParentName || undefined,
+    trustLevel: relMeta?.trustLevel,
+    attitude: relMeta?.attitude,
+  };
+}
+export const familyRelationRowToModel = fromDbFamilyRelation;
+
+export function toDbFamilyRelation(
+  rel: CharacterRelationship,
+  campaignCode: string,
+  validIds?: { entityIds?: Set<string>; playerIds?: Set<string> }
+): Record<string, any> {
+  const cleanCode = campaignCode.trim().toUpperCase();
+  const targetEntityId = rel.targetEntityId || rel.linkedEntityId;
+
+  const relMeta = {
+    __relMeta: true,
+    playerId: rel.playerId,
+    linkedEntityId: rel.linkedEntityId,
+    name: rel.name,
+    avatarUrl: rel.avatarUrl,
+    titleOrRole: rel.titleOrRole,
+    genealogyRole: rel.genealogyRole,
+    status: rel.status,
+    otherParentName: (rel as any).otherParentName,
+    trustLevel: (rel as any).trustLevel,
+    attitude: (rel as any).attitude,
+    userTags: Array.isArray(rel.tags) ? rel.tags : [],
+  };
+
+  return {
+    id: rel.id,
+    campaign_code: cleanCode,
+    source_entity_id: rel.playerId || (rel as any).sourceEntityId || '',
+    target_entity_id: toNullableFk(targetEntityId, validIds?.entityIds),
+    relationship_type: rel.relationshipType || 'family',
+    description: rel.bio || '',
+    is_secret: Boolean(rel.sharedWithParty === false || (rel as any).isSecret),
+    custom_label: rel.customRelationshipLabel || rel.customLabel || '',
+    generation_category: rel.generationCategory || 'same_generation',
+    side_of_family: rel.sideOfFamily || 'unspecified',
+    second_parent_id: toNullableFk(rel.secondParentId),
+    linked_player_id: toNullableFk(rel.playerId || rel.linkedPlayerId, validIds?.playerIds),
+    tags: relMeta,
+    order_index: Number(rel.order ?? 0),
+    created_at: rel.createdAt || new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+}
+export const familyRelationModelToRow = toDbFamilyRelation;
+
+// =========================================================================
+// 9. CHARACTER BIOS ADAPTER (character_bios)
+// =========================================================================
+export function fromDbCharacterBio(row: any): CharacterBio {
   const extra = (row.extra_data && typeof row.extra_data === 'object') ? row.extra_data : {};
   
   let personalityTraits: string[] = [];
@@ -831,9 +1135,19 @@ export function characterBioRowToModel(row: any): CharacterBio {
 
   const resolvedCharName = row.character_name || row.name || extra.characterName || extra.name || '';
 
+  // Calculate runtime birthDateFormatted from start_day, month, year
+  const bDay = row.birth_start_day ?? extra.birthStartDay;
+  const bMonth = row.birth_month || extra.birthMonth || '';
+  const bYear = row.birth_year ?? extra.birthYear;
+  let computedBirthFormatted = '';
+  if (bDay || bMonth || bYear) {
+    computedBirthFormatted = [bDay, bMonth, bYear ? `${bYear} DR` : ''].filter(Boolean).join(' ');
+  }
+
   return {
     playerId: row.player_id,
     campaignCode: row.campaign_code || undefined,
+    entityId: row.entity_id || undefined,
     characterName: resolvedCharName,
     name: resolvedCharName,
     avatarUrl: resolveStorageUrl(row.avatar_url || extra.avatarUrl, 'chronicle-media'),
@@ -846,10 +1160,10 @@ export function characterBioRowToModel(row: any): CharacterBio {
     characterAlignment: row.alignment || row.character_alignment || extra.characterAlignment || '',
     deityOrPatron: row.deity_or_patron || extra.deityOrPatron || '',
     hometown: row.hometown || extra.hometown || '',
-    birthDateFormatted: row.birth_date_formatted || extra.birthDateFormatted || '',
-    birthStartDay: row.birth_start_day ?? extra.birthStartDay ?? 1,
-    birthMonth: row.birth_month || extra.birthMonth || '',
-    birthYear: row.birth_year ?? extra.birthYear ?? 1492,
+    birthDateFormatted: computedBirthFormatted || row.birth_date_formatted || extra.birthDateFormatted || '',
+    birthStartDay: typeof bDay === 'number' ? bDay : 1,
+    birthMonth: bMonth,
+    birthYear: typeof bYear === 'number' ? bYear : 1492,
     backstoryMarkdown: row.background || row.backstory_markdown || extra.backstoryMarkdown || row.notes || row.bio || '',
     personalityTraits,
     ideals: row.ideals || extra.ideals || '',
@@ -868,8 +1182,13 @@ export function characterBioRowToModel(row: any): CharacterBio {
     updatedAt: row.updated_at || extra.updatedAt || new Date().toISOString(),
   };
 }
+export const characterBioRowToModel = fromDbCharacterBio;
 
-export function characterBioModelToRow(bio: CharacterBio, campaignCode?: string): Record<string, any> {
+export function toDbCharacterBio(
+  bio: CharacterBio,
+  campaignCode?: string,
+  validIds?: { entityIds?: Set<string> }
+): Record<string, any> {
   const code = campaignCode || bio.campaignCode || '';
   const cleanCode = code ? code.trim().toUpperCase() : '';
   const charName = bio.characterName || (bio as any).name || '';
@@ -886,6 +1205,7 @@ export function characterBioModelToRow(bio: CharacterBio, campaignCode?: string)
   return {
     player_id: bio.playerId,
     campaign_code: cleanCode,
+    entity_id: toNullableFk(bio.entityId || (bio as any).entity_id, validIds?.entityIds),
     name: charName,
     avatar_url: bio.avatarUrl || null,
     color: bio.color || '#6366f1',
@@ -906,69 +1226,32 @@ export function characterBioModelToRow(bio: CharacterBio, campaignCode?: string)
     character_race: bio.characterRace || '',
     deity_or_patron: bio.deityOrPatron || '',
     hometown: bio.hometown || '',
-    birth_date_formatted: bio.birthDateFormatted || '',
     birth_start_day: typeof bio.birthStartDay === 'number' ? bio.birthStartDay : 1,
     birth_month: bio.birthMonth || '',
     birth_year: typeof bio.birthYear === 'number' ? bio.birthYear : 1492,
     appearance_description: bio.appearanceDescription || '',
     current_status: bio.currentStatus || '',
-    extra_data: (() => {
-      // Keep in extra_data ONLY dynamic metadata not covered by native SQL columns
-      const rawExtra = (bio as any).extra_data && typeof (bio as any).extra_data === 'object'
-        ? { ...(bio as any).extra_data }
-        : {};
-
-      const nativeColumnKeys = new Set([
-        'playerId', 'player_id',
-        'campaignCode', 'campaign_code',
-        'name', 'characterName',
-        'avatarUrl', 'avatar_url',
-        'color',
-        'bio', 'notes', 'background', 'backstoryMarkdown',
-        'class_level', 'characterClass', 'classLevel',
-        'alignment', 'characterAlignment',
-        'personality', 'personalityTraits',
-        'ideals', 'bonds', 'flaws', 'secrets',
-        'privacySettings', 'privacy_settings',
-        'timelineMemories', 'timeline_memories',
-        'evolvingBeliefs', 'evolving_beliefs',
-        'interPartyRelations', 'inter_party_relations',
-        'knownLoreBites', 'known_lore_bites',
-        'characterTitle', 'character_title',
-        'characterRace', 'character_race',
-        'deityOrPatron', 'deity_or_patron',
-        'hometown',
-        'birthDateFormatted', 'birth_date_formatted',
-        'birthStartDay', 'birth_start_day',
-        'birthMonth', 'birth_month',
-        'birthYear', 'birth_year',
-        'appearanceDescription', 'appearance_description',
-        'currentStatus', 'current_status',
-        'createdAt', 'created_at',
-        'updatedAt', 'updated_at',
-      ]);
-
-      for (const k of Object.keys(rawExtra)) {
-        if (nativeColumnKeys.has(k)) {
-          delete rawExtra[k];
-        }
-      }
-
-      return {
-        ...rawExtra,
-        ...(Array.isArray(bio.traits) && bio.traits.length > 0 ? { traits: bio.traits } : {}),
-        ...(bio.stats && typeof bio.stats === 'object' && Object.keys(bio.stats).length > 0 ? { stats: bio.stats } : {}),
-      };
-    })(),
+    extra_data: {
+      ...(bio.birthDateFormatted ? { birthDateFormatted: bio.birthDateFormatted } : {}),
+      ...(Array.isArray(bio.traits) && bio.traits.length > 0 ? { traits: bio.traits } : {}),
+      ...(bio.stats && typeof bio.stats === 'object' && Object.keys(bio.stats).length > 0 ? { stats: bio.stats } : {}),
+    },
     updated_at: new Date().toISOString(),
   };
 }
+export const characterBioModelToRow = toDbCharacterBio;
 
 // =========================================================================
-// 9. WORLD LORE ARTICLES ADAPTER (world_lore_articles)
+// 10. WORLD LORE ARTICLES ADAPTER (world_lore_articles)
 // =========================================================================
-export function worldLoreArticleRowToModel(row: any): any {
+export function fromDbWorldLoreArticle(row: any): any {
   if (!row) return null;
+
+  // Unpack associated entities from article_entities relation
+  const relatedEntityIds: string[] = Array.isArray(row.article_entities)
+    ? row.article_entities.map((ae: any) => ae.entity_id).filter(Boolean)
+    : (Array.isArray(row.related_entity_ids) ? row.related_entity_ids : []);
+
   return {
     _id: String(row.id || ''),
     id: String(row.id || ''),
@@ -982,11 +1265,10 @@ export function worldLoreArticleRowToModel(row: any): any {
     categoryId: row.category_id || 'general',
     dmOnly: Boolean(row.is_draft),
     isDraft: Boolean(row.is_draft),
-    authorId: row.author_player_id || row.author_id || '',
-    authorPlayerId: row.author_player_id || row.author_id || '',
-    authorName: row.author_name || '',
+    authorId: row.author_id || '',
+    authorPlayerId: row.author_id || '',
     tags: Array.isArray(row.tags) ? row.tags : [],
-    relatedEntityIds: Array.isArray(row.related_entity_ids) ? row.related_entity_ids : [],
+    relatedEntityIds,
     images: Array.isArray(row.images) ? resolveStorageUrlArray(row.images) : [],
     bites: Array.isArray(row.bites) ? row.bites : [],
     order: Number(row.order_index ?? 0),
@@ -995,30 +1277,38 @@ export function worldLoreArticleRowToModel(row: any): any {
     updatedAt: row.updated_at || new Date().toISOString(),
   };
 }
+export const worldLoreArticleRowToModel = fromDbWorldLoreArticle;
 
-export function worldLoreArticleModelToRow(art: any, campaignCode: string): Record<string, any> {
+export function toDbWorldLoreArticle(
+  art: any,
+  campaignCode: string,
+  validIds?: { userIds?: Set<string> }
+): Record<string, any> {
   const code = campaignCode.trim().toUpperCase();
   return {
     id: art._id || art.id,
     campaign_code: code,
+    author_id: toNullableFk(art.authorPlayerId || art.authorId, validIds?.userIds),
     title: art.title || 'Senza Titolo',
     subtitle: art.subtitle || '',
     summary: art.summary || '',
     content: art.fullContentMarkdown || art.content || '',
     category_id: art.category || art.categoryId || 'general',
-    is_draft: Boolean(art.dmOnly ?? art.isDraft),
-    author_player_id: art.authorPlayerId || art.authorId || null,
-    tags: Array.isArray(art.tags) ? art.tags : [],
-    related_entity_ids: Array.isArray(art.relatedEntityIds) ? art.relatedEntityIds : [],
     images: Array.isArray(art.images) ? art.images : [],
+    is_draft: Boolean(art.dmOnly ?? art.isDraft),
     bites: Array.isArray(art.bites) ? art.bites : [],
-    order_index: typeof art.order === 'number' ? art.order : (typeof art.orderIndex === 'number' ? art.orderIndex : 0),
+    tags: Array.isArray(art.tags) ? art.tags : [],
+    order_index: Number(art.order ?? art.orderIndex ?? 0),
     created_at: art.createdAt || art._createdAt || new Date().toISOString(),
     updated_at: new Date().toISOString(),
   };
 }
+export const worldLoreArticleModelToRow = toDbWorldLoreArticle;
 
-export function campaignMemberRowToModel(row: any): CampaignMemberRecord {
+// =========================================================================
+// 11. CAMPAIGN MEMBERS ADAPTER (campaign_members)
+// =========================================================================
+export function fromDbCampaignMember(row: any): CampaignMemberRecord {
   const rawPerms = row?.permissions || {};
   const permissions: CampaignMemberPermissions = {
     canCreateSessions: rawPerms.canCreateSessions ?? rawPerms.can_create_sessions ?? true,
@@ -1031,37 +1321,27 @@ export function campaignMemberRowToModel(row: any): CampaignMemberRecord {
     canEditLore: rawPerms.canEditLore ?? rawPerms.can_edit_lore ?? false,
     canDeleteLore: rawPerms.canDeleteLore ?? rawPerms.can_delete_lore ?? false,
     canManageMaps: rawPerms.canManageMaps ?? rawPerms.can_manage_maps ?? false,
-    // Snake_case aliases
-    can_create_sessions: rawPerms.can_create_sessions ?? rawPerms.canCreateSessions ?? true,
-    can_edit_sessions: rawPerms.can_edit_sessions ?? rawPerms.canEditSessions ?? false,
-    can_delete_sessions: rawPerms.can_delete_sessions ?? rawPerms.canDeleteSessions ?? false,
-    can_create_entities: rawPerms.can_create_entities ?? rawPerms.canCreateEntities ?? false,
-    can_edit_entities: rawPerms.can_edit_entities ?? rawPerms.canEditEntities ?? false,
-    can_delete_entities: rawPerms.can_delete_entities ?? rawPerms.canDeleteEntities ?? false,
-    can_create_lore: rawPerms.can_create_lore ?? rawPerms.canCreateLore ?? false,
-    can_edit_lore: rawPerms.can_edit_lore ?? rawPerms.canEditLore ?? false,
-    can_delete_lore: rawPerms.can_delete_lore ?? rawPerms.canDeleteLore ?? false,
-    can_manage_maps: rawPerms.can_manage_maps ?? rawPerms.canManageMaps ?? false,
   };
 
   const role: CampaignRole = normalizeCampaignRole(row?.role);
+  const characterName = rawPerms.character_name || rawPerms.characterName || '';
 
   return {
     campaignCode: (row?.campaign_code || '').trim().toUpperCase(),
     userId: String(row?.user_id || ''),
     role,
-    characterName: row?.character_name || '',
+    characterName: characterName || undefined,
     status: (row?.status || 'active').toLowerCase() as any,
     permissions,
     createdAt: row?.created_at,
   };
 }
+export const campaignMemberRowToModel = fromDbCampaignMember;
 
-export function campaignMemberModelToRow(member: CampaignMemberRecord): Record<string, any> {
+export function toDbCampaignMember(member: CampaignMemberRecord): Record<string, any> {
   const code = (member.campaignCode || '').trim().toUpperCase();
   const perms = member.permissions || {};
   const permissionsJson = {
-    // Standard snake_case in database
     can_create_sessions: perms.can_create_sessions ?? perms.canCreateSessions ?? true,
     can_edit_sessions: perms.can_edit_sessions ?? perms.canEditSessions ?? false,
     can_delete_sessions: perms.can_delete_sessions ?? perms.canDeleteSessions ?? false,
@@ -1072,17 +1352,7 @@ export function campaignMemberModelToRow(member: CampaignMemberRecord): Record<s
     can_edit_lore: perms.can_edit_lore ?? perms.canEditLore ?? false,
     can_delete_lore: perms.can_delete_lore ?? perms.canDeleteLore ?? false,
     can_manage_maps: perms.can_manage_maps ?? perms.canManageMaps ?? false,
-    // CamelCase mirror for non-regression
-    canCreateSessions: perms.canCreateSessions ?? perms.can_create_sessions ?? true,
-    canEditSessions: perms.canEditSessions ?? perms.can_edit_sessions ?? false,
-    canDeleteSessions: perms.canDeleteSessions ?? perms.can_delete_sessions ?? false,
-    canCreateEntities: perms.canCreateEntities ?? perms.can_create_entities ?? false,
-    canEditEntities: perms.canEditEntities ?? perms.can_edit_entities ?? false,
-    canDeleteEntities: perms.canDeleteEntities ?? perms.can_delete_entities ?? false,
-    canCreateLore: perms.canCreateLore ?? perms.can_create_lore ?? false,
-    canEditLore: perms.canEditLore ?? perms.can_edit_lore ?? false,
-    canDeleteLore: perms.canDeleteLore ?? perms.can_delete_lore ?? false,
-    canManageMaps: perms.canManageMaps ?? perms.can_manage_maps ?? false,
+    character_name: member.characterName || (member as any).character_name || '',
   };
 
   const role: CampaignRole = normalizeCampaignRole(member.role);
@@ -1097,4 +1367,4 @@ export function campaignMemberModelToRow(member: CampaignMemberRecord): Record<s
     created_at: member.createdAt || new Date().toISOString(),
   };
 }
-
+export const campaignMemberModelToRow = toDbCampaignMember;

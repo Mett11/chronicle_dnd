@@ -160,6 +160,40 @@ export interface CampaignAiConfig {
   allowedPartyModels?: string[];
 }
 
+export interface PartyBadge {
+  id: string;
+  label: string;
+  icon?: string;
+  description?: string;
+  awardedBy?: string;
+  awardedAt?: string;
+}
+
+export interface PartyMemberStats {
+  playerId: string;
+  characterName?: string;
+  titleOrNickname?: string;
+  wweIntroTitle?: string;
+  roleInParty?: string;
+  catchphrase?: string;
+  mvpCount?: number;
+  enemiesDowned?: number;
+  nat20Count?: number;
+  nat1Count?: number;
+  knockoutsCount?: number;
+  drinksAtTavern?: number;
+  plansRuined?: number;
+  customBadges?: PartyBadge[];
+  notes?: string;
+}
+
+export interface PartyCampaignConfig {
+  themeSongUrl?: string;
+  themeSongTitle?: string;
+  autoPlayIntro?: boolean;
+  membersStats?: Record<string, PartyMemberStats>;
+}
+
 export interface CampaignMeta {
   code: string;
   id?: string; // Canonical identifier alias (id = code)
@@ -180,6 +214,7 @@ export interface CampaignMeta {
   titleUppercase?: boolean;
   titleTracking?: 'tight' | 'normal' | 'wide';
   aiConfig?: CampaignAiConfig;
+  partyConfig?: PartyCampaignConfig;
 }
 
 export interface CampaignPlayer {
@@ -279,6 +314,7 @@ export interface WorldMap {
   createdAt: string;
   isSecret?: boolean;
   sharedWithDm?: boolean;
+  visibility?: 'group' | 'dm_only' | 'shared_with_dm';
 }
 
 export interface ScrapbookItem {
@@ -632,6 +668,12 @@ export interface Entity {
   description?: string;
   imageUrl?: string;
   aliases?: string[];
+  role?: string;
+  secretText?: string;
+  isPublic?: boolean;
+  isPartyMember?: boolean;
+  customFields?: any;
+  tags?: string[];
   status: 'alive' | 'dead' | 'unknown' | 'destroyed' | 'open' | 'completed' | 'failed';
   body?: any[];
   progressNote?: string;
@@ -801,6 +843,7 @@ export interface CharacterRelationship {
   titleOrRole?: string; // e.g. "Matriarca della Casata", "Capitano dei Grifoni"
   relationshipType: RelationshipType;
   customRelationshipLabel?: string; // e.g. "Padrino di Battesimo", "Maestro di Spada"
+  customLabel?: string; // Standard DB column name alias
   generationCategory: GenerationCategory;
   genealogyRole?: GenealogyRole; // Detailed genealogical node position
   sideOfFamily?: 'paternal' | 'maternal' | 'direct' | 'unspecified'; // Side of the bloodline
@@ -812,6 +855,7 @@ export interface CharacterRelationship {
   otherParentName?: string; // Name of the other parent (e.g. Coniuge)
   // Cross-links
   linkedEntityId?: string; // Link to Codex Entity (NPC, place, etc.)
+  targetEntityId?: string; // Native DB column name (target_entity_id)
   linkedPlayerId?: string; // Link to fellow Player in party
   tags?: string[];
   order?: number;
@@ -911,6 +955,7 @@ export interface CharacterBio {
   playerId: string;
   email?: string;
   campaignCode?: string;
+  entityId?: string;
   characterName?: string;
   name?: string;
   avatarUrl?: string;

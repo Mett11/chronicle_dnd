@@ -304,7 +304,7 @@ export function NotificationsModal({
 
           {/* Controls Bar: Read State Tabs & Category Filter */}
           <div className="px-4 py-3 bg-surface-2/40 border-b border-surface-2 space-y-2.5">
-            <div className="flex items-center justify-between gap-2 overflow-x-auto custom-scrollbar flex-nowrap shrink-0 pb-1 sm:pb-0">
+            <div className="flex flex-wrap sm:flex-nowrap items-center justify-between gap-2 shrink-0">
               {/* View State Tabs */}
               <div className="flex items-center bg-surface-0 border border-surface-3 rounded-xl p-0.5 font-mono text-xs shrink-0">
                 <button
@@ -373,7 +373,7 @@ export function NotificationsModal({
             </div>
 
             {/* Category Pill Filters */}
-            <div className="flex items-center gap-1.5 overflow-x-auto custom-scrollbar pb-1 text-xs">
+            <div className="flex flex-wrap sm:flex-nowrap items-center gap-1.5 overflow-x-auto custom-scrollbar pb-1 text-xs">
               <button
                 type="button"
                 onClick={() => setFilterCategory('all')}

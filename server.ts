@@ -26,102 +26,198 @@ async function startServer() {
   app.use(express.json({ limit: '30mb' }));
   app.use(express.urlencoded({ extended: true, limit: '30mb' }));
 
+  // In-memory IP Rate Limiter for AI / heavy processing endpoints (30 req / min per IP)
+  const aiRateLimitMap = new Map<string, { count: number; resetTime: number }>();
+  const AI_RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1 minute
+  const AI_RATE_LIMIT_MAX_REQUESTS = 30; // max 30 requests per minute
+
+  const aiRateLimiter = (req: any, res: any, next: any) => {
+    try {
+      const ip =
+        req.ip ||
+        (typeof req.headers['x-forwarded-for'] === 'string'
+          ? req.headers['x-forwarded-for'].split(',')[0].trim()
+          : '') ||
+        req.socket?.remoteAddress ||
+        'unknown_client';
+
+      const now = Date.now();
+      const record = aiRateLimitMap.get(ip);
+
+      if (!record || now > record.resetTime) {
+        aiRateLimitMap.set(ip, {
+          count: 1,
+          resetTime: now + AI_RATE_LIMIT_WINDOW_MS,
+        });
+        return next();
+      }
+
+      if (record.count >= AI_RATE_LIMIT_MAX_REQUESTS) {
+        const retryAfterSec = Math.max(1, Math.ceil((record.resetTime - now) / 1000));
+        res.setHeader('Retry-After', retryAfterSec);
+        return res.status(429).json({
+          error: `Limite di frequenza AI superato (massimo ${AI_RATE_LIMIT_MAX_REQUESTS} richieste al minuto per questo IP). Riprova tra ${retryAfterSec} secondi.`,
+          errorTitle: 'Limite Frequenza AI Superato (429)',
+          errorType: 'quota',
+          retryAfter: retryAfterSec,
+          canRetry: true,
+        });
+      }
+
+      record.count += 1;
+      return next();
+    } catch {
+      return next();
+    }
+  };
+
+  // Clean stale rate limit entries periodically
+  setInterval(() => {
+    const now = Date.now();
+    for (const [ip, record] of aiRateLimitMap.entries()) {
+      if (now > record.resetTime) {
+        aiRateLimitMap.delete(ip);
+      }
+    }
+  }, 5 * 60 * 1000);
+
+  // Apply rate limiter to /api/ai/*, /api/ocr, /api/sessions/sync-memory, and /api/world-lore/analyze
+  app.use((req, res, next) => {
+    const p = req.path || req.url;
+    if (
+      p.startsWith('/api/ai/') ||
+      p === '/api/ocr' ||
+      p === '/api/sessions/sync-memory' ||
+      p === '/api/world-lore/analyze'
+    ) {
+      return aiRateLimiter(req, res, next);
+    }
+    next();
+  });
+
   // API Health Check
   app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', time: new Date().toISOString() });
   });
 
-  // Google Gemini API Key Validation Endpoint (metadata check - zero generation quota consumed)
-  app.post('/api/ai/gemini/validate', async (req: any, res: any) => {
+  // Server-side Character Profile Hub Pagination Endpoint
+  app.post('/api/character/hub-data/paginate', (req: any, res: any) => {
     try {
-      const apiKey = req.body?.apiKey?.trim() || req.headers['x-gemini-key'] || process.env.GEMINI_API_KEY;
-      if (!apiKey) {
-        return res.status(400).json({ valid: false, error: 'Chiave API non fornita.' });
+      const {
+        section = 'conoscenze',
+        items = [],
+        page = 1,
+        limit = 8,
+        search = '',
+        filter = 'all',
+        sortBy = 'default',
+      } = req.body || {};
+
+      const pageNum = Math.max(1, parseInt(page, 10) || 1);
+      const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 8));
+      const cleanSearch = typeof search === 'string' ? search.trim().toLowerCase() : '';
+      const cleanFilter = typeof filter === 'string' ? filter.trim().toLowerCase() : 'all';
+
+      let list = Array.isArray(items) ? [...items] : [];
+
+      // 1. Filter by category/sub-filter if applicable
+      if (cleanFilter && cleanFilter !== 'all') {
+        list = list.filter((item: any) => {
+          if (!item) return false;
+          if (section === 'conoscenze') {
+            if (cleanFilter === 'beliefs') return item.type === 'belief' || item.subject !== undefined;
+            if (cleanFilter === 'lore') return item.type === 'lore' || (item.lore !== undefined && !item.subject);
+            if (cleanFilter === 'codex') return item.type === 'codex' || item.codexId !== undefined;
+          } else if (section === 'legami') {
+            if (cleanFilter === 'party') return item.category === 'party' || item.isPg === true;
+            if (cleanFilter === 'family') return item.category === 'family' || item.isFamily === true;
+            if (cleanFilter === 'npc') return item.category === 'npc' || (!item.isPg && !item.isFamily);
+          } else if (section === 'memorie') {
+            if (cleanFilter === 'notes') return item.type === 'note' || item.visibility !== undefined;
+            if (cleanFilter === 'timeline') return item.type === 'timeline' || item.date !== undefined;
+          } else if (section === 'reperti') {
+            if (cleanFilter === 'quests') return item.type === 'quest' || item.questScope !== undefined;
+            if (cleanFilter === 'scrapbook') return item.type === 'scrapbook' || item.imageUrl !== undefined;
+          }
+          return true;
+        });
       }
 
-      // Check key validity via Google API Gateway metadata endpoint (no generation quota used)
-      const metaRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}&pageSize=1`);
-      const data = await metaRes.json().catch(() => ({}));
+      // 2. Filter by search query
+      if (cleanSearch) {
+        list = list.filter((item: any) => {
+          if (!item) return false;
+          const searchableText = [
+            item.title,
+            item.name,
+            item.characterName,
+            item.subject,
+            item.content,
+            item.lore,
+            item.currentTruth,
+            item.notes,
+            item.bio,
+            item.relationType,
+            item.customRelationshipLabel,
+            item.titleOrRole,
+            item.attitude,
+            item.caption,
+            Array.isArray(item.tags) ? item.tags.join(' ') : '',
+          ]
+            .filter(Boolean)
+            .join(' ')
+            .toLowerCase();
 
-      if (metaRes.ok && Array.isArray(data?.models)) {
-        return res.json({ valid: true, message: 'Chiave API Google Gemini valida e operativa!' });
+          return searchableText.includes(cleanSearch);
+        });
       }
 
-      if (data?.error) {
-        const msg = String(data.error.message || '');
-        const code = data.error.code || metaRes.status;
-        if (msg.includes('API_KEY_INVALID') || msg.includes('API key not valid') || code === 400) {
-          return res.json({ valid: false, error: 'La chiave API di Google Gemini inserita non è valida o è stata revocata.' });
-        }
-        if (code === 429 || code === 503 || msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED') || msg.includes('high demand')) {
-          return res.json({ valid: true, message: 'Chiave API Google Gemini valida e autorizzata! (Server Google in alta affluenza HTTP 429/503)' });
-        }
+      // 3. Sorting
+      if (sortBy === 'name') {
+        list.sort((a, b) => {
+          const nameA = (a.title || a.name || a.characterName || a.subject || '').toLowerCase();
+          const nameB = (b.title || b.name || b.characterName || b.subject || '').toLowerCase();
+          return nameA.localeCompare(nameB);
+        });
+      } else if (sortBy === 'oldest') {
+        list.sort((a, b) => {
+          const dateA = new Date(a._createdAt || a.createdAt || a.date || 0).getTime();
+          const dateB = new Date(b._createdAt || b.createdAt || b.date || 0).getTime();
+          return dateA - dateB;
+        });
+      } else if (sortBy === 'newest') {
+        list.sort((a, b) => {
+          const dateA = new Date(a._createdAt || a.createdAt || a.date || 0).getTime();
+          const dateB = new Date(b._createdAt || b.createdAt || b.date || 0).getTime();
+          return dateB - dateA;
+        });
       }
 
-      if (metaRes.status === 429 || metaRes.status === 503) {
-        return res.json({ valid: true, message: 'Chiave API Google Gemini valida e autorizzata! (Server Google in alta affluenza HTTP 429/503)' });
-      }
+      const total = list.length;
+      const totalPages = Math.max(1, Math.ceil(total / limitNum));
+      const validPage = Math.min(pageNum, totalPages);
+      const startIndex = (validPage - 1) * limitNum;
+      const endIndex = startIndex + limitNum;
+      const paginatedItems = list.slice(startIndex, endIndex);
 
-      return res.json({ valid: false, error: 'Impossibile verificare la chiave API con i server Google.' });
-    } catch (err: any) {
-      const msg = err?.message || String(err);
-      if (msg.includes('API_KEY_INVALID') || msg.includes('API key not valid') || msg.includes('401') || msg.includes('400')) {
-        return res.json({ valid: false, error: 'La chiave API di Google Gemini inserita non è valida o è stata revocata.' });
-      }
-      if (msg.includes('429') || msg.includes('503') || msg.includes('RESOURCE_EXHAUSTED')) {
-        return res.json({ valid: true, message: 'Chiave API valida (Server Google temporaneamente saturi).' });
-      }
-      return res.json({ valid: false, error: `Errore durante la verifica: ${msg}` });
-    }
-  });
-
-  // OpenRouter API Key Validation Endpoint
-  app.post('/api/ai/openrouter/validate', async (req: any, res: any) => {
-    try {
-      const apiKey = req.body?.apiKey?.trim() || process.env.OPENROUTER_API_KEY;
-      if (!apiKey) {
-        return res.status(400).json({ valid: false, error: 'Chiave API OpenRouter non fornita.' });
-      }
-
-      const orRes = await fetch('https://openrouter.ai/api/v1/auth/key', {
-        headers: { Authorization: `Bearer ${apiKey}` },
+      return res.json({
+        success: true,
+        section,
+        page: validPage,
+        limit: limitNum,
+        total,
+        totalPages,
+        hasPrev: validPage > 1,
+        hasNext: validPage < totalPages,
+        items: paginatedItems,
       });
-
-      const data = await orRes.json().catch(() => ({}));
-      if (orRes.ok && data?.data) {
-        return res.json({ valid: true, message: 'Chiave OpenRouter valida e attiva!', usage: data.data });
-      }
-
-      return res.json({ valid: false, error: data?.error?.message || 'Chiave OpenRouter non valida.' });
     } catch (err: any) {
-      return res.json({ valid: false, error: err?.message || 'Errore di connessione a OpenRouter.' });
+      console.error('[Hub Pagination Error]', err);
+      return res.status(500).json({ error: err?.message || 'Errore durante la paginazione' });
     }
   });
 
-  // Cloudflare Workers AI Validation Endpoint
-  app.post('/api/ai/cloudflare/validate', async (req: any, res: any) => {
-    try {
-      const accountId = req.body?.accountId?.trim() || process.env.CLOUDFLARE_ACCOUNT_ID;
-      const token = req.body?.token?.trim() || process.env.CLOUDFLARE_API_TOKEN;
 
-      if (!accountId || !token) {
-        return res.status(400).json({ valid: false, error: "Inserisci sia l'Account ID che il Token API Cloudflare." });
-      }
-
-      const cfRes = await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/tokens/verify`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      const data = await cfRes.json().catch(() => ({}));
-      if (cfRes.ok && data?.success) {
-        return res.json({ valid: true, message: 'Credenziali Cloudflare Workers AI valide!' });
-      }
-
-      return res.json({ valid: false, error: data?.errors?.[0]?.message || 'Credenziali Cloudflare non valide o senza permessi Workers AI.' });
-    } catch (err: any) {
-      return res.json({ valid: false, error: err?.message || 'Errore di connessione con Cloudflare.' });
-    }
-  });
 
   // OCR Endpoint with safe file extraction and Gemini API integration
   app.post(
@@ -167,7 +263,7 @@ async function startServer() {
         const requestedEngine = req.body?.engine || 'auto';
 
         // Multi-model cascade for Gemini Vision
-        const apiKey = process.env.GEMINI_API_KEY;
+        const apiKey = req.body?.apiKey || req.headers['x-gemini-key'] || req.headers['x-custom-api-key'] || process.env.GEMINI_API_KEY;
         if (apiKey) {
           const ai = new GoogleGenAI({ apiKey });
           const prompt = `Analizza questa immagine di appunti (presumibilmente scritti a mano o stampati relativi a sessioni di D&D / GdR).
@@ -178,7 +274,9 @@ Linee guida:
 3. Restituisci ESCLUSIVAMENTE il testo trascritto e formattato, senza preamboli, note introduttive o commenti meta.`;
 
           const candidateModels = [
+            'gemini-2.5-flash',
             'gemini-flash-latest',
+            'gemini-3.8-flash',
             'gemini-3.7-flash',
             'gemini-3.1-flash-lite',
           ];
@@ -226,67 +324,6 @@ Linee guida:
       }
     }
   );
-
-  // Dedicated endpoint to list available Gemini models dynamically
-  app.get('/api/ai/gemini/models', async (req: any, res: any) => {
-    try {
-      const customKey = (req.headers['x-custom-api-key'] || req.headers['x-gemini-key'] || req.query.key || '')?.toString().trim();
-      const apiKey = customKey || process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
-
-      if (!apiKey) {
-        return res.json({
-          models: [
-            { id: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash', description: 'Velocità eccezionale, contesto esteso di 1 Milione di token.' },
-            { id: 'gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash-Lite', description: 'Latenza ridotta per risposte istantanee.' },
-            { id: 'gemini-3.7-flash', name: 'Gemini 3.7 Flash', description: 'Capacità multimodale e ragionamento avanzato.' },
-            { id: 'gemini-flash-latest', name: 'Gemini Flash Latest', description: 'Alias sempre aggiornato all\'ultima versione stabile.' },
-            { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro Preview', description: 'Modello ragionativo di fascia alta.' },
-          ],
-        });
-      }
-
-      const googleRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}`);
-      if (googleRes.ok) {
-        const data = await googleRes.json().catch(() => null);
-        if (Array.isArray(data?.models) && data.models.length > 0) {
-          const mapped = data.models
-            .filter((m: any) => {
-              const name = String(m.name || m.id || '').toLowerCase();
-              const methods = Array.isArray(m.supportedGenerationMethods) ? m.supportedGenerationMethods : [];
-              const supportsGenerate = methods.length === 0 || methods.includes('generateContent');
-              return name.includes('gemini') && !name.includes('embedding') && !name.includes('imagen') && !name.includes('aqa') && supportsGenerate;
-            })
-            .map((m: any) => {
-              const id = String(m.name || m.id || '').replace(/^models\//, '');
-              return {
-                id,
-                name: m.displayName || id,
-                description: m.description || 'Modello Google Gemini ufficialmente supportato.',
-              };
-            });
-          if (mapped.length > 0) {
-            return res.json({ models: mapped });
-          }
-        }
-      }
-
-      return res.json({
-        models: [
-          { id: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash', description: 'Velocità eccezionale, contesto esteso di 1 Milione di token.' },
-          { id: 'gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash-Lite', description: 'Latenza ridotta per risposte istantanee.' },
-          { id: 'gemini-3.7-flash', name: 'Gemini 3.7 Flash', description: 'Capacità multimodale e ragionamento avanzato.' },
-          { id: 'gemini-flash-latest', name: 'Gemini Flash Latest', description: 'Alias sempre aggiornato all\'ultima versione stabile.' },
-        ],
-      });
-    } catch (err: any) {
-      return res.json({
-        models: [
-          { id: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash', description: 'Velocità eccezionale, contesto esteso di 1 Milione di token.' },
-          { id: 'gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash-Lite', description: 'Latenza ridotta per risposte istantanee.' },
-        ],
-      });
-    }
-  });
 
   // Dedicated endpoint to analyze session chronicle and extract new + existing entities with AI-generated descriptions
   app.post('/api/ai/extract-entities', async (req: any, res: any) => {
@@ -889,12 +926,31 @@ Rispondi ESCLUSIVAMENTE in formato JSON valido conforme al seguente schema:
         return res.status(400).json({ error: 'Dati della sessione incompleti per l\'analisi.' });
       }
 
-      const customKey = (req.headers['x-custom-api-key'] as string)?.trim();
+      const customKey = (
+        req.body?.keys?.geminiKey ||
+        req.body?.apiKey ||
+        req.headers['x-custom-api-key'] ||
+        req.headers['x-gemini-key'] ||
+        ''
+      )?.trim();
       const serverKey = (process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || '').trim();
       const openrouterApiKey = (
+        req.body?.keys?.openrouterKey ||
         req.headers['x-openrouter-key'] ||
         process.env.OPENROUTER_API_KEY ||
         process.env.VITE_OPENROUTER_API_KEY ||
+        ''
+      )?.trim();
+      const cloudflareAccountId = (
+        req.body?.keys?.cloudflareAccountId ||
+        req.headers['x-cloudflare-account-id'] ||
+        process.env.CLOUDFLARE_ACCOUNT_ID ||
+        ''
+      )?.trim();
+      const cloudflareApiToken = (
+        req.body?.keys?.cloudflareApiToken ||
+        req.headers['x-cloudflare-api-token'] ||
+        process.env.CLOUDFLARE_API_TOKEN ||
         ''
       )?.trim();
 
@@ -1151,8 +1207,51 @@ Rispondi ESCLUSIVAMENTE in formato JSON valido conforme al seguente schema:
       let parsedResult: any = null;
       let lastErrorMessage = '';
 
-      // 1. Explicit OpenRouter Provider (No silent fallback to Gemini)
-      if (provider === 'openrouter') {
+      // 1. Explicit Cloudflare Workers AI Provider
+      if (provider === 'cloudflare') {
+        if (!cloudflareAccountId || !cloudflareApiToken) {
+          return res.status(400).json({
+            error: 'Credenziali Cloudflare Workers AI non configurate. Inserisci Account ID e Token API nelle Impostazioni.',
+          });
+        }
+        const requestedModel = model || '@cf/meta/llama-3.1-8b-instruct';
+        try {
+          console.log(`[Session Memory Sync] Richiesta Cloudflare con modello: ${requestedModel}`);
+          const cfRes = await fetch(`https://api.cloudflare.com/client/v4/accounts/${cloudflareAccountId}/ai/run/${requestedModel}`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${cloudflareApiToken}`,
+            },
+            body: JSON.stringify({
+              messages: [
+                { role: 'system', content: `${systemInstruction}\n\nIMPORTANTE: Rispondi ESCLUSIVAMENTE con un blocco JSON valido e nient'altro.` },
+                { role: 'user', content: `Analizza questa sessione ed aggiorna la memoria del mondo:\n\n${sessionText}` },
+              ],
+              max_tokens: 2500,
+            }),
+          });
+
+          if (!cfRes.ok) {
+            const errBody = await cfRes.text();
+            console.warn(`[Session Memory Sync] Cloudflare errore HTTP ${cfRes.status}:`, errBody.slice(0, 200));
+            return res.status(cfRes.status).json({
+              error: `Errore Cloudflare Workers AI (${requestedModel}): ${errBody.slice(0, 200)}`,
+            });
+          }
+
+          const data = await cfRes.json();
+          const rawContent = data.result?.response || data.result?.description || '';
+          if (rawContent) {
+            parsedResult = parseModelResponseToJson(rawContent);
+          }
+        } catch (cfErr: any) {
+          console.error('[Session Memory Sync] Errore Cloudflare:', cfErr);
+          return res.status(500).json({
+            error: `Errore chiamata Cloudflare Workers AI: ${cfErr?.message || cfErr}`,
+          });
+        }
+      } else if (provider === 'openrouter') {
         if (!openrouterApiKey) {
           return res.status(400).json({
             error: 'Chiave API OpenRouter non configurata. Inseriscila nelle Impostazioni per usare OpenRouter.',
@@ -1324,13 +1423,12 @@ ${sessionText.slice(0, 8000)}`;
           });
         }
 
-        const effectiveModel = (model && !model.includes('2.') ? model : 'gemini-3.8-flash') || 'gemini-3.8-flash';
+        const requestedModel = (model && typeof model === 'string' && model.trim()) || 'gemini-2.5-flash';
         const candidateModels = [
-          effectiveModel,
-          'gemini-3.8-flash',
-          'gemini-3.1-flash-lite',
+          'gemini-2.5-flash',
           'gemini-flash-latest',
-          'gemini-3.1-pro-preview',
+          requestedModel,
+          'gemini-2.5-pro',
         ].filter((v, idx, arr) => Boolean(v) && arr.indexOf(v) === idx);
 
         for (const apiKey of apiKeysToTry) {
@@ -2336,7 +2434,8 @@ ${rawText.slice(0, 20000)}
       if (!apiKey) {
         return res.json({
           models: [
-            { id: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash (Veloce / Consigliato)' },
+            { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (Stabile & Veloce)' },
+            { id: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash' },
             { id: 'gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash-Lite' },
             { id: 'gemini-flash-latest', name: 'Gemini Flash Latest' },
             { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro Preview' },
@@ -2358,7 +2457,7 @@ ${rawText.slice(0, 20000)}
           if (id.includes('embed') || id.includes('image') || id.includes('tts') || id.includes('transcribe') || id.includes('veo') || id.includes('lyria')) {
             return false;
           }
-          if (id.includes('2.0') || id.includes('2.5') || id.includes('1.5')) {
+          if (id.includes('1.0') || id.includes('1.5')) {
             return false; // Exclude deprecated models
           }
           return id.includes('flash') || id.includes('pro') || id.includes('gemini');
@@ -2378,20 +2477,20 @@ ${rawText.slice(0, 20000)}
 
       return res.json({
         models: [
-          { id: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash (Veloce / Consigliato)' },
-          { id: 'gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash-Lite' },
+          { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (Veloce / Consigliato)' },
           { id: 'gemini-flash-latest', name: 'Gemini Flash Latest' },
-          { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro Preview' },
+          { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro' },
+          { id: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash' },
         ],
       });
     } catch (err: any) {
       console.warn('[Gemini Models API Error]:', err?.message || err);
       return res.json({
         models: [
-          { id: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash (Veloce / Consigliato)' },
-          { id: 'gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash-Lite' },
+          { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (Veloce / Consigliato)' },
           { id: 'gemini-flash-latest', name: 'Gemini Flash Latest' },
-          { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro Preview' },
+          { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro' },
+          { id: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash' },
         ],
       });
     }
@@ -2843,7 +2942,12 @@ ${rawText.slice(0, 20000)}
         }
 
         let response: any = null;
-        const targetModel = requestedModel;
+        let targetModel = requestedModel;
+        const fallbackCandidates = ['gemini-2.5-flash', 'gemini-flash-latest'];
+
+        if (targetModel === 'gemini-3.8-flash' || targetModel === 'gemini-3.7-flash') {
+          targetModel = 'gemini-2.5-flash';
+        }
 
         try {
           console.log(`[Oracle] Querying Gemini model: ${targetModel}`);
@@ -2857,55 +2961,80 @@ ${rawText.slice(0, 20000)}
           const msg = String(err?.message || err);
           const lowerMsg = msg.toLowerCase();
 
-          console.warn(`[Oracle Error] Model ${targetModel} failed (${status}): ${msg}`);
-
-          if (lowerMsg.includes('api_key_invalid') || lowerMsg.includes('401') || lowerMsg.includes('key not valid')) {
-            return res.status(401).json({
-              error: 'La chiave API Google Gemini inserita non è valida o è stata revocata.',
-              errorTitle: 'Chiave Non Valida (401)',
-              errorType: 'auth',
-              suggestedAction: 'Verifica la tua chiave API nelle Impostazioni.',
-              canRetry: false,
-              provider: 'gemini',
-              model: targetModel,
-            });
+          // Auto-fallback if model not found / not supported / 404
+          const isNotFound = status === 404 || lowerMsg.includes('not found') || lowerMsg.includes('not supported') || lowerMsg.includes('does not exist');
+          if (isNotFound) {
+            console.warn(`[Oracle] Model ${targetModel} not found or unsupported (${status}). Attempting auto-fallback to ${fallbackCandidates.join(', ')}...`);
+            for (const fallbackModel of fallbackCandidates) {
+              if (fallbackModel === targetModel) continue;
+              try {
+                console.log(`[Oracle Fallback] Querying: ${fallbackModel}`);
+                response = await ai.models.generateContent({
+                  model: fallbackModel,
+                  contents: formattedContents,
+                  config,
+                });
+                if (response && (response.text || response.candidates?.[0])) {
+                  targetModel = fallbackModel;
+                  break;
+                }
+              } catch (fbErr: any) {
+                console.warn(`[Oracle Fallback] ${fallbackModel} failed:`, fbErr?.message || fbErr);
+              }
+            }
           }
 
-          if (status === 429 || lowerMsg.includes('429') || lowerMsg.includes('resource_exhausted') || lowerMsg.includes('quota')) {
-            const delayMatch = msg.match(/retry in ([\d.]+)s/i);
-            const secs = delayMatch ? Math.ceil(parseFloat(delayMatch[1])) : 30;
-            return res.status(429).json({
-              error: `Limite di frequenza o quota gratuita superato per il modello "${targetModel}" (HTTP 429). Attendi circa ${secs} secondi oppure seleziona un altro modello nel selettore in alto.`,
-              errorTitle: 'Quota temporaneamente esaurita (429)',
-              errorType: 'quota',
-              suggestedAction: `Attendi circa ${secs}s prima di inviare un nuovo messaggio oppure cambia modello dal selettore.`,
-              canRetry: true,
-              provider: 'gemini',
-              model: targetModel,
-            });
-          }
+          if (!response) {
+            console.warn(`[Oracle Error] Model ${targetModel} failed (${status}): ${msg}`);
 
-          if (status === 503 || lowerMsg.includes('503') || lowerMsg.includes('overloaded') || lowerMsg.includes('unavailable')) {
-            return res.status(503).json({
-              error: `I server Google Gemini per il modello "${targetModel}" sono temporaneamente sovraccarichi (503).`,
-              errorTitle: 'Servizio Temporaneamente Sovraccarico',
+            if (lowerMsg.includes('api_key_invalid') || lowerMsg.includes('401') || lowerMsg.includes('key not valid')) {
+              return res.status(401).json({
+                error: 'La chiave API Google Gemini inserita non è valida o è stata revocata.',
+                errorTitle: 'Chiave Non Valida (401)',
+                errorType: 'auth',
+                suggestedAction: 'Verifica la tua chiave API nelle Impostazioni.',
+                canRetry: false,
+                provider: 'gemini',
+                model: targetModel,
+              });
+            }
+
+            if (status === 429 || lowerMsg.includes('429') || lowerMsg.includes('resource_exhausted') || lowerMsg.includes('quota')) {
+              const delayMatch = msg.match(/retry in ([\d.]+)s/i);
+              const secs = delayMatch ? Math.ceil(parseFloat(delayMatch[1])) : 30;
+              return res.status(429).json({
+                error: `Limite di frequenza o quota gratuita superato per il modello "${targetModel}" (HTTP 429). Attendi circa ${secs} secondi oppure seleziona un altro modello nel selettore in alto.`,
+                errorTitle: 'Quota temporaneamente esaurita (429)',
+                errorType: 'quota',
+                suggestedAction: `Attendi circa ${secs}s prima di inviare un nuovo messaggio oppure cambia modello dal selettore.`,
+                canRetry: true,
+                provider: 'gemini',
+                model: targetModel,
+              });
+            }
+
+            if (status === 503 || lowerMsg.includes('503') || lowerMsg.includes('overloaded') || lowerMsg.includes('unavailable')) {
+              return res.status(503).json({
+                error: `I server Google Gemini per il modello "${targetModel}" sono temporaneamente sovraccarichi (503).`,
+                errorTitle: 'Servizio Temporaneamente Sovraccarico',
+                errorType: 'generic',
+                suggestedAction: 'Riprova tra qualche istante o seleziona un altro modello dal selettore.',
+                canRetry: true,
+                provider: 'gemini',
+                model: targetModel,
+              });
+            }
+
+            return res.status(status).json({
+              error: `Errore dal modello Google Gemini (${targetModel}): ${msg}`,
+              errorTitle: `Errore Modello ${targetModel}`,
               errorType: 'generic',
-              suggestedAction: 'Riprova tra qualche istante o seleziona un altro modello dal selettore.',
+              suggestedAction: 'Seleziona un altro modello dal selettore o riprova.',
               canRetry: true,
               provider: 'gemini',
               model: targetModel,
             });
           }
-
-          return res.status(status).json({
-            error: `Errore dal modello Google Gemini (${targetModel}): ${msg}`,
-            errorTitle: `Errore Modello ${targetModel}`,
-            errorType: 'generic',
-            suggestedAction: 'Seleziona un altro modello dal selettore o riprova.',
-            canRetry: true,
-            provider: 'gemini',
-            model: targetModel,
-          });
         }
 
         if (!response || (!response.text && !response.candidates?.[0])) {

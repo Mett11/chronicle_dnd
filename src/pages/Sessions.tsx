@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { MarkdownRenderer } from '../components/MarkdownRenderer';
 import { MentionInput, MentionTextarea } from '../components/MentionInput';
 import { EntityMentionText } from '../components/EntityMentionText';
@@ -63,6 +63,7 @@ import { EntityExtractionModal } from '../components/EntityExtractionModal';
 import { EntityDetailModal } from '../components/EntityDetailModal';
 import { PlayerTagsModal } from '../components/PlayerTagsModal';
 import { SessionMemorySyncModal } from '../components/SessionMemorySyncModal';
+import { EditorialHeader } from '../components/EditorialHeader';
 import features from '../config/features.json';
 import { extractTextFromContent } from '../lib/sanitize';
 
@@ -88,6 +89,44 @@ export function Sessions() {
 
   const [sessions, setSessions] = useState<Session[]>(() => CampaignManager.getAccessibleSessions(player));
   const [chapters, setChapters] = useState<CampaignChapter[]>(() => CampaignManager.getChapters());
+
+  const chapterScrollRef = useRef<HTMLDivElement>(null);
+  const [showLeftScroll, setShowLeftScroll] = useState(false);
+  const [showRightScroll, setShowRightScroll] = useState(true);
+
+  const checkScrollButtons = () => {
+    if (chapterScrollRef.current) {
+      const { scrollLeft, scrollWidth, clientWidth } = chapterScrollRef.current;
+      setShowLeftScroll(scrollLeft > 15);
+      setShowRightScroll(scrollLeft + clientWidth < scrollWidth - 15);
+    }
+  };
+
+  useEffect(() => {
+    const el = chapterScrollRef.current;
+    if (el) {
+      checkScrollButtons();
+      el.addEventListener('scroll', checkScrollButtons);
+      window.addEventListener('resize', checkScrollButtons);
+      return () => {
+        el.removeEventListener('scroll', checkScrollButtons);
+        window.removeEventListener('resize', checkScrollButtons);
+      };
+    }
+  }, [chapters]);
+
+  const scrollChaptersLeft = () => {
+    if (chapterScrollRef.current) {
+      chapterScrollRef.current.scrollBy({ left: -320, behavior: 'smooth' });
+    }
+  };
+
+  const scrollChaptersRight = () => {
+    if (chapterScrollRef.current) {
+      chapterScrollRef.current.scrollBy({ left: 320, behavior: 'smooth' });
+    }
+  };
+
   const [selectedChapterFilter, setSelectedChapterFilter] = useState<string>('all');
   const [sessionSearchQuery, setSessionSearchQuery] = useState('');
   const [sessionSortOrder, setSessionSortOrder] = useState<'desc' | 'asc'>('desc');
@@ -655,10 +694,10 @@ export function Sessions() {
 
   return (
     <div className="flex-1 h-full min-h-0 flex flex-col overflow-hidden bg-surface-0 font-body">
-      {/* Top Header Banner (Only visible when not in full reader mode) */}
-      {chronicleView !== 'reader' && (
-        <header className="bg-surface-1 border-b border-surface-2 px-3 sm:px-6 py-2.5 sm:py-3 shrink-0">
-          <div className="flex items-center justify-between gap-2 sm:gap-3">
+      {/* Top Header Banner (Only visible when not in full reader mode and not in chapters mode) */}
+      {chronicleView !== 'reader' && mainTab !== 'chapters' && (
+        <header className="bg-surface-1 border-b border-surface-2 shrink-0">
+          <div className="max-w-[1700px] mx-auto w-full px-4 sm:px-8 lg:px-10 py-2.5 sm:py-3 flex items-center justify-between gap-2 sm:gap-3">
             <div className="flex items-center gap-2 sm:gap-3 min-w-0">
               {mainTab === 'chronicles' ? (
                 <button
@@ -685,8 +724,6 @@ export function Sessions() {
                 <h1 className="font-serif font-bold text-sm sm:text-base md:text-lg text-content-1 tracking-tight truncate">
                   {selectedChapterFilter !== 'all' && activeChapterObj
                     ? activeChapterObj.name
-                    : mainTab === 'chapters'
-                    ? 'Capitoli & Tomo delle Sessioni'
                     : 'Tutte le Sessioni di Campagna'}
                 </h1>
                 <span className="text-[10px] font-mono text-content-3 shrink-0">
@@ -714,25 +751,7 @@ export function Sessions() {
 
             {/* Action Controls */}
             <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-              {player?.isDm && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setEditingChapter(null);
-                    setNewChapName('');
-                    setNewChapDesc('');
-                    setNewChapColor('#6366f1');
-                    setNewChapCoverUrl('');
-                    setIsChapterModalOpen(true);
-                  }}
-                  className="px-2.5 sm:px-3 py-1.5 rounded-[2px] font-medium text-xs bg-surface-2 hover:bg-surface-3 text-content-1 border border-surface-3 transition-colors flex items-center gap-1 cursor-pointer shrink-0"
-                  title="Crea un nuovo Capitolo"
-                >
-                  <FolderPlus size={14} className="text-primary" />
-                  <span className="hidden sm:inline">+ Nuovo Capitolo</span>
-                </button>
-              )}
-              {canCreateSession && (
+              {mainTab === 'chronicles' && canCreateSession && (
                 <button
                   id="btn-create-new-session"
                   type="button"
@@ -758,8 +777,8 @@ export function Sessions() {
             chronicleView === 'index' ? 'flex' : 'hidden'
           }`}>
             {/* Search and Chapter Filter Header */}
-            <div className="p-3 sm:p-4 border-b border-surface-2 bg-surface-1 shrink-0">
-              <div className="max-w-7xl mx-auto w-full">
+            <div className="border-b border-surface-2 bg-surface-1 shrink-0">
+              <div className="max-w-[1700px] mx-auto w-full px-4 sm:px-8 lg:px-10 py-3 sm:py-4">
                 <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 sm:gap-3 text-xs font-mono">
                   <div className="flex items-center gap-2 flex-1">
                     {/* Search bar */}
@@ -819,7 +838,7 @@ export function Sessions() {
                         title={sessionSortOrder === 'desc' ? 'Ordina: Dal numero di sessione più alto al più basso' : 'Ordina: Dal numero di sessione più basso al più alto'}
                       >
                         <SlidersHorizontal size={12} className="text-primary" />
-                        <span>{sessionSortOrder === 'desc' ? 'Sess. # Decrescente (N → 1)' : 'Sess. # Crescente (1 → N)'}</span>
+                        <span>{sessionSortOrder === 'desc' ? 'Decrescente' : 'Crescente'}</span>
                       </button>
 
                       {/* Player Participation Filter Button */}
@@ -861,8 +880,8 @@ export function Sessions() {
             </div>
 
             {/* Session Cards Grid */}
-            <div className="flex-1 overflow-y-auto custom-scrollbar p-3.5 sm:p-6 bg-surface-0">
-              <div className="max-w-7xl mx-auto w-full">
+            <div className="flex-1 overflow-y-auto custom-scrollbar bg-surface-0">
+              <div className="max-w-[1700px] mx-auto w-full px-4 sm:px-8 lg:px-10 py-4 sm:py-6">
                 {filteredSessions.length === 0 ? (
                   <div className="p-12 text-center space-y-3 bg-surface-1 border border-surface-2 rounded-xl">
                     <Scroll size={32} className="mx-auto text-content-3 opacity-40" />
@@ -1017,8 +1036,8 @@ export function Sessions() {
             </div>
 
             {/* Pagination */}
-            <div className="p-3 border-t border-surface-2 bg-surface-1 shrink-0">
-              <div className="max-w-7xl mx-auto w-full">
+            <div className="p-3 border-t border-surface-2 bg-transparent shrink-0">
+              <div className="max-w-[1700px] mx-auto w-full">
                 <Pagination
                   currentPage={currentPage}
                   totalPages={totalPages}
@@ -1041,7 +1060,8 @@ export function Sessions() {
             {selectedSession ? (
               <div className="flex-1 flex flex-col min-h-0">
                 {/* Reading Toolbar: compact, clean & distraction-free */}
-                <div className="px-3 sm:px-5 py-2 border-b border-surface-2 bg-surface-1 flex items-center justify-between gap-2 shrink-0">
+                <div className="border-b border-surface-2 bg-surface-1 shrink-0">
+                  <div className="max-w-[1700px] mx-auto w-full px-4 sm:px-8 lg:px-10 py-2 flex items-center justify-between gap-2">
                   {/* Left: Return to Index (desktop & mobile) & Session Identifier */}
                   <div className="flex items-center gap-2 min-w-0">
                     <button
@@ -1115,9 +1135,10 @@ export function Sessions() {
                     </button>
                   </div>
                 </div>
+                </div>
 
                 {/* Session Manuscript Continuous Reading View */}
-                <div className="flex-1 overflow-y-auto custom-scrollbar w-full mx-auto p-4 sm:p-6 md:p-8 max-w-3xl space-y-6">
+                <div className="flex-1 overflow-y-auto custom-scrollbar w-full mx-auto p-4 sm:p-6 md:p-8 max-w-6xl space-y-6">
                   {/* Session & Chapter Hero Artwork Banner */}
                   {(() => {
                     const currentChapter = selectedSession.chapterId
@@ -1344,7 +1365,7 @@ export function Sessions() {
                       </div>
                     </div>
 
-                    <div className="text-sm text-content-1 leading-relaxed font-sans text-pretty">
+                    <div className="text-sm text-content-1 leading-relaxed font-sans text-pretty lg:columns-2 lg:gap-8 [&>p]:mb-4 [&>p]:break-inside-avoid-column [&>h2]:break-inside-avoid-column [&>h3]:break-inside-avoid-column [&>ul]:break-inside-avoid-column [&>ol]:break-inside-avoid-column">
                       {extractTextFromContent(selectedSession.recap) ? (
                         <MarkdownRenderer
                           key={`recap-${selectedSession._id}-${showMentionTags ? 'with-tags' : 'clean'}`}
@@ -1621,7 +1642,7 @@ export function Sessions() {
                                     <span className="text-[10px] font-mono text-primary font-semibold hidden sm:inline">[DM]</span>
                                   )}
                                   <Link
-                                    to={`/profile?player=${p._id}`}
+                                    to={`/character?player=${p._id}`}
                                     className="px-2.5 py-1 bg-surface-2 hover:bg-surface-3 text-content-2 hover:text-content-1 text-xs font-mono rounded border border-surface-2 flex items-center gap-1 transition-colors"
                                     title={`Visualizza il profilo dossier di ${p.characterName}`}
                                   >
@@ -1701,7 +1722,7 @@ export function Sessions() {
 
       {/* Main Tab 2: Snodi Narrativi & Registro Timeline Eventi */}
       {mainTab === 'events' && (
-        <main className="flex-1 overflow-y-auto custom-scrollbar p-6 sm:p-10 max-w-5xl w-full mx-auto space-y-6">
+        <main className="flex-1 overflow-y-auto custom-scrollbar p-6 sm:p-10 max-w-[1700px] w-full mx-auto space-y-6">
           <div className="border-b border-surface-2 pb-4">
             <h2 className="font-serif font-bold text-lg text-content-1">
               Registro di Tutti gli Snodi ed Eventi di Campagna
@@ -1757,50 +1778,15 @@ export function Sessions() {
         </main>
       )}
 
-      {/* Main Tab 3: Archi Narrativi & Capitoli (Vista Entry Tomi) */}
+      {/* Main Tab 3: Archi Narrativi & Capitoli (Vista Entry Tomi in Overflow Orizzontale) */}
       {mainTab === 'chapters' && (
-        <main className="flex-1 overflow-y-auto custom-scrollbar p-6 sm:p-10 max-w-7xl w-full mx-auto space-y-8">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-surface-2 pb-5">
-            <div className="space-y-1">
-              <h1 className="font-serif font-bold text-2xl sm:text-3xl text-content-1 flex items-center gap-2.5 tracking-tight">
-                <BookMarked size={28} className="text-primary" />
-                <span>Tomo delle Sessioni &amp; Capitoli Narrativi</span>
-              </h1>
-              <p className="text-xs sm:text-sm text-content-3 font-mono">
-                Seleziona un capitolo per accedere direttamente alla trascrizione della cronaca di gioco.
-              </p>
-            </div>
-            {player?.isDm && (
-              <button
-                type="button"
-                onClick={() => {
-                  setEditingChapter(null);
-                  setNewChapName('');
-                  setNewChapDesc('');
-                  setNewChapColor('#6366f1');
-                  setNewChapCoverUrl('');
-                  setIsChapterModalOpen(true);
-                }}
-                className="px-4 py-2.5 rounded-[2px] bg-primary text-surface-0 hover:bg-primary-hover text-xs font-mono font-semibold flex items-center gap-2 transition-all cursor-pointer shadow-md self-start sm:self-auto hover:shadow-lg shrink-0"
-              >
-                <FolderPlus size={16} />
-                <span>+ Nuovo Capitolo</span>
-              </button>
-            )}
-          </div>
-
-          {chapters.length === 0 ? (
-            <div className="p-16 border border-surface-2 rounded-2xl bg-surface-1 text-center text-content-3 space-y-4 shadow-sm">
-              <Bookmark size={48} className="mx-auto text-primary opacity-30" />
-              <div className="space-y-1 max-w-md mx-auto">
-                <h3 className="text-base font-serif font-bold text-content-1">Nessun capitolo creato finora</h3>
-                <p className="text-xs text-content-3">
-                  {player?.isDm
-                    ? 'Crea il tuo primo capitolo per organizzare le sessioni di gioco e associare splendide immagini di copertina.'
-                    : 'Il Dungeon Master non ha ancora strutturato i capitoli narrativi per questa campagna.'}
-                </p>
-              </div>
-              {player?.isDm && (
+        <main className="flex-1 min-h-0 w-full flex flex-col justify-start overflow-hidden pt-0 pb-4">
+          <EditorialHeader
+            title="Capitoli Narrativi della Campagna"
+            badgeText={`${chapters.length} ${chapters.length === 1 ? 'Capitolo' : 'Capitoli'}`}
+            subtitle="Esplora gli archi narrativi e seleziona un capitolo per consultarne le sessioni"
+            actions={
+              player?.isDm ? (
                 <button
                   type="button"
                   onClick={() => {
@@ -1811,15 +1797,66 @@ export function Sessions() {
                     setNewChapCoverUrl('');
                     setIsChapterModalOpen(true);
                   }}
-                  className="mt-2 px-5 py-2.5 bg-primary text-surface-0 text-xs font-mono rounded-[2px] cursor-pointer inline-flex items-center gap-2 shadow-sm font-semibold"
+                  className="px-3.5 py-1.5 bg-primary hover:bg-primary-hover text-surface-0 text-xs sm:text-sm font-mono font-semibold rounded-[2px] cursor-pointer inline-flex items-center gap-1.5 shadow-xs transition-colors shrink-0 active:scale-95"
                 >
                   <FolderPlus size={15} />
-                  <span>Crea Primo Capitolo</span>
+                  <span>Nuovo Capitolo</span>
                 </button>
-              )}
+              ) : null
+            }
+          />
+
+          {chapters.length === 0 ? (
+            <div className="max-w-[1700px] mx-auto w-full px-4 sm:px-8 lg:px-10 my-auto">
+              <div className="p-10 border border-surface-2 rounded-2xl bg-surface-1 text-center text-content-3 space-y-4 shadow-sm max-w-xl mx-auto">
+                <Bookmark size={48} className="mx-auto text-primary opacity-30" />
+                <div className="space-y-1 max-w-md mx-auto">
+                  <h3 className="text-base font-serif font-bold text-content-1">Nessun capitolo creato finora</h3>
+                  <p className="text-xs text-content-3">
+                    {player?.isDm
+                      ? 'Crea il tuo primo capitolo per organizzare le sessioni di gioco e associare splendide immagini di copertina.'
+                      : 'Il Dungeon Master non ha ancora strutturato i capitoli narrativi per questa campagna.'}
+                  </p>
+                </div>
+                {player?.isDm && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingChapter(null);
+                      setNewChapName('');
+                      setNewChapDesc('');
+                      setNewChapColor('#6366f1');
+                      setNewChapCoverUrl('');
+                      setIsChapterModalOpen(true);
+                    }}
+                    className="mt-2 px-5 py-2.5 bg-primary text-surface-0 text-xs font-mono rounded-[2px] cursor-pointer inline-flex items-center gap-2 shadow-sm font-semibold"
+                  >
+                    <FolderPlus size={15} />
+                    <span>Crea Primo Capitolo</span>
+                  </button>
+                )}
+              </div>
             </div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8 sm:gap-10">
+            <div className="relative max-w-[1700px] mx-auto w-full flex-1 min-h-0 flex items-center group/scroll">
+              {/* Left Scroll Arrow Button */}
+              {chapters.length >= 4 && showLeftScroll && (
+                <button
+                  type="button"
+                  onClick={scrollChaptersLeft}
+                  className="absolute left-2 sm:left-4 top-1/2 -translate-y-1/2 z-30 w-11 h-11 sm:w-12 sm:h-12 rounded-full bg-surface-1/95 hover:bg-primary text-content-1 hover:text-surface-0 border border-surface-3 shadow-2xl flex items-center justify-center transition-all cursor-pointer backdrop-blur-md group/btn hover:scale-110 active:scale-95"
+                  title="Scorri Capitoli a Sinistra"
+                  aria-label="Scorri Capitoli a Sinistra"
+                >
+                  <ChevronLeft size={26} className="group-hover/btn:-translate-x-0.5 transition-transform" />
+                </button>
+              )}
+
+              {/* Scrollable Row */}
+              <div
+                ref={chapterScrollRef}
+                className="w-full flex-1 min-h-0 flex items-start overflow-x-auto overflow-y-hidden gap-5 sm:gap-6 px-4 sm:px-8 lg:px-10 pt-2 pb-6 custom-scrollbar select-none scroll-smooth"
+              >
               {chapters.map((chap) => {
                 const chapSessions = sessions.filter(
                   (s) => s.chapterId === chap.id || s.chapterName === chap.name
@@ -1830,10 +1867,10 @@ export function Sessions() {
                   <article
                     key={chap.id}
                     onClick={() => handleSelectChapterFromCard(chap)}
-                    className="group relative bg-surface-1 border border-surface-2 hover:border-primary/80 rounded-2xl overflow-hidden transition-all duration-300 shadow-xl hover:shadow-2xl hover:-translate-y-1 flex flex-col cursor-pointer"
+                    className="group relative w-[280px] sm:w-[320px] md:w-[350px] lg:w-[360px] h-[430px] sm:h-[480px] md:h-[520px] shrink-0 bg-surface-1 border border-surface-2 hover:border-primary/80 rounded-2xl overflow-hidden transition-all duration-300 shadow-xl hover:shadow-2xl hover:-translate-y-1 flex flex-col cursor-pointer"
                   >
-                    {/* Large Book Tome Cover Artwork (Aspect Ratio 2/3) */}
-                    <div className="relative aspect-[2/3] w-full bg-surface-2 overflow-hidden shrink-0 shadow-inner">
+                    {/* Cover Artwork Container */}
+                    <div className="relative flex-1 min-h-0 w-full bg-surface-2 overflow-hidden shadow-inner">
                       {chap.coverImageUrl && chap.coverImageUrl.trim() ? (
                         <img
                           src={chap.coverImageUrl}
@@ -1842,50 +1879,50 @@ export function Sessions() {
                           referrerPolicy="no-referrer"
                         />
                       ) : (
-                        <div className="w-full h-full bg-gradient-to-b from-surface-2 to-surface-1 flex flex-col items-center justify-center p-8 text-center relative">
-                          <BookOpen size={52} className="text-content-3 opacity-30 mb-3" />
-                          <span className="text-xs font-mono text-content-3 font-semibold uppercase tracking-wider">Nessuna Copertina</span>
+                        <div className="w-full h-full bg-gradient-to-b from-surface-2 to-surface-1 flex flex-col items-center justify-center p-6 text-center relative">
+                          <BookOpen size={40} className="text-content-3 opacity-30 mb-2" />
+                          <span className="text-[10px] font-mono text-content-3 font-semibold uppercase tracking-wider">Nessuna Copertina</span>
                           {player?.isDm && (
                             <span
                               onClick={(e) => {
                                 e.stopPropagation();
                                 setEditingCoverChapter(chap);
                               }}
-                              className="text-xs font-mono text-primary hover:underline mt-3 flex items-center gap-1 font-semibold cursor-pointer"
+                              className="text-[11px] font-mono text-primary hover:underline mt-2 flex items-center gap-1 font-semibold cursor-pointer"
                             >
-                              <ImageIcon size={14} /> + Imposta Copertina
+                              <ImageIcon size={12} /> + Imposta Copertina
                             </span>
                           )}
                         </div>
                       )}
 
                       {/* Top Bar Badges & Actions Overlay */}
-                      <div className="absolute top-3 left-3 right-3 flex items-center justify-between gap-2 z-10">
-                        <span className="px-3 py-1.5 rounded-[2px] text-[11px] font-mono font-bold tracking-wider text-white shadow-md flex items-center gap-2 backdrop-blur-md bg-black/80 border border-white/10">
+                      <div className="absolute top-2.5 left-2.5 right-2.5 flex items-center justify-between gap-1.5 z-10">
+                        <span className="px-2 py-0.5 rounded-[2px] text-[10px] font-mono font-bold tracking-wider text-white shadow-md flex items-center gap-1.5 backdrop-blur-md bg-black/80 border border-white/10">
                           <span
-                            className="w-2.5 h-2.5 rounded-full inline-block shrink-0 shadow-xs"
+                            className="w-2 h-2 rounded-full inline-block shrink-0 shadow-xs"
                             style={{ backgroundColor: chap.color || '#6366f1' }}
                           />
                           <span>{sessionCount} {sessionCount === 1 ? 'SESSIONE' : 'SESSIONI'}</span>
                         </span>
 
                         {player?.isDm && (
-                          <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                          <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
                             <button
                               type="button"
                               onClick={() => handleOpenCreateModal(chap.id)}
-                              className="p-2 rounded-[2px] bg-primary/90 hover:bg-primary text-surface-0 backdrop-blur-md transition-colors cursor-pointer border border-primary/30 shadow-sm"
+                              className="p-1 rounded-[2px] bg-primary/90 hover:bg-primary text-surface-0 backdrop-blur-md transition-colors cursor-pointer border border-primary/30 shadow-sm"
                               title={`Registra nuova sessione nel capitolo "${chap.name}"`}
                             >
-                              <Plus size={14} className="stroke-[2.5]" />
+                              <Plus size={12} className="stroke-[2.5]" />
                             </button>
                             <button
                               type="button"
                               onClick={() => setEditingCoverChapter(chap)}
-                              className="p-2 rounded-[2px] bg-black/80 hover:bg-black text-white/90 hover:text-white backdrop-blur-md transition-colors cursor-pointer border border-white/10 shadow-sm"
+                              className="p-1 rounded-[2px] bg-black/80 hover:bg-black text-white/90 hover:text-white backdrop-blur-md transition-colors cursor-pointer border border-white/10 shadow-sm"
                               title="Modifica copertina capitolo"
                             >
-                              <ImageIcon size={14} />
+                              <ImageIcon size={12} />
                             </button>
                             <button
                               type="button"
@@ -1897,57 +1934,94 @@ export function Sessions() {
                                 setNewChapCoverUrl(chap.coverImageUrl || '');
                                 setIsChapterModalOpen(true);
                               }}
-                              className="p-2 rounded-[2px] bg-black/80 hover:bg-black text-white/90 hover:text-white backdrop-blur-md transition-colors cursor-pointer border border-white/10 shadow-sm"
+                              className="p-1 rounded-[2px] bg-black/80 hover:bg-black text-white/90 hover:text-white backdrop-blur-md transition-colors cursor-pointer border border-white/10 shadow-sm"
                               title="Modifica dettagli capitolo"
                             >
-                              <Edit3 size={14} />
+                              <Edit3 size={12} />
                             </button>
                             <button
                               type="button"
                               onClick={() => setChapterToDelete(chap.id)}
-                              className="p-2 rounded-[2px] bg-black/80 hover:bg-black text-white/90 hover:text-rose-400 backdrop-blur-md transition-colors cursor-pointer border border-white/10 shadow-sm"
+                              className="p-1 rounded-[2px] bg-black/80 hover:bg-black text-white/90 hover:text-rose-400 backdrop-blur-md transition-colors cursor-pointer border border-white/10 shadow-sm"
                               title="Elimina capitolo"
                             >
-                              <Trash2 size={14} />
+                              <Trash2 size={12} />
                             </button>
                           </div>
                         )}
                       </div>
                     </div>
 
-                    {/* Book Tome Title & Information Bar */}
-                    <div className="p-5 bg-surface-1 border-t border-surface-2 flex items-center justify-between gap-3 flex-1">
-                      <div className="flex items-start gap-3 min-w-0 flex-1">
+                    {/* Compact Title Bar at Bottom */}
+                    <div className="p-2.5 sm:p-3 bg-surface-1 border-t border-surface-2 flex items-center justify-between gap-2 shrink-0">
+                      <div className="flex items-center gap-2 min-w-0 flex-1">
                         <span
-                          className="w-3 h-3 rounded-full shrink-0 mt-1 shadow-xs"
+                          className="w-2.5 h-2.5 rounded-full shrink-0 shadow-xs"
                           style={{ backgroundColor: chap.color || '#6366f1' }}
                         />
                         <div className="min-w-0 flex-1">
-                          <h3 className="font-serif font-bold text-base sm:text-lg text-content-1 group-hover:text-primary transition-colors leading-snug truncate">
+                          <h3 className="font-serif font-bold text-xs sm:text-sm text-content-1 group-hover:text-primary transition-colors leading-snug truncate">
                             {chap.name}
                           </h3>
-                          {chap.description && (
-                            <p className="text-xs text-content-3 line-clamp-2 font-sans mt-1 leading-relaxed">
-                              {chap.description}
-                            </p>
-                          )}
                         </div>
                       </div>
-                      <div className="p-2 rounded-full bg-surface-2 group-hover:bg-primary group-hover:text-surface-0 text-content-3 transition-colors shrink-0">
-                        <ChevronRight size={18} />
+                      <div className="p-1 rounded-full bg-surface-2 group-hover:bg-primary group-hover:text-surface-0 text-content-3 transition-colors shrink-0">
+                        <ChevronRight size={14} />
                       </div>
                     </div>
                   </article>
                 );
               })}
+
+              {/* Empty Card Slot "+ Nuovo Capitolo": Shown when chapters.length < 4 OR for DM */}
+              {(chapters.length < 4 || player?.isDm) && (
+                <div
+                  onClick={() => {
+                    if (!player?.isDm) return;
+                    setEditingChapter(null);
+                    setNewChapName('');
+                    setNewChapDesc('');
+                    setNewChapColor('#6366f1');
+                    setNewChapCoverUrl('');
+                    setIsChapterModalOpen(true);
+                  }}
+                  className="w-[280px] sm:w-[320px] md:w-[350px] lg:w-[360px] h-[430px] sm:h-[480px] md:h-[520px] shrink-0 rounded-2xl border-2 border-dashed border-surface-3 hover:border-primary/80 bg-surface-1/40 hover:bg-surface-1 flex flex-col items-center justify-center p-6 text-center transition-all cursor-pointer group shadow-sm hover:shadow-xl hover:-translate-y-1"
+                >
+                  <div className="w-12 h-12 rounded-full bg-primary/10 text-primary group-hover:bg-primary group-hover:text-surface-0 flex items-center justify-center transition-all mb-3 shadow-xs">
+                    <Plus size={24} />
+                  </div>
+                  <h3 className="font-serif font-bold text-xs sm:text-sm text-content-1 group-hover:text-primary transition-colors">
+                    + Nuovo Capitolo
+                  </h3>
+                  <p className="text-[11px] text-content-3 font-mono mt-1 max-w-[180px]">
+                    {player?.isDm
+                      ? 'Crea un nuovo arco narrativo o tomo'
+                      : 'Spazio riservato per i prossimi capitoli'}
+                  </p>
+                </div>
+              )}
             </div>
-          )}
+
+            {/* Right Scroll Arrow Button */}
+            {chapters.length >= 4 && showRightScroll && (
+              <button
+                type="button"
+                onClick={scrollChaptersRight}
+                className="absolute right-2 sm:right-4 top-1/2 -translate-y-1/2 z-30 w-11 h-11 sm:w-12 sm:h-12 rounded-full bg-surface-1/95 hover:bg-primary text-content-1 hover:text-surface-0 border border-surface-3 shadow-2xl flex items-center justify-center transition-all cursor-pointer backdrop-blur-md group/btn hover:scale-110 active:scale-95"
+                title="Scorri Capitoli a Destra"
+                aria-label="Scorri Capitoli a Destra"
+              >
+                <ChevronRight size={26} className="group-hover/btn:translate-x-0.5 transition-transform" />
+              </button>
+            )}
+          </div>
+        )}
         </main>
       )}
 
       {/* Main Tab 4: Compagnia & Partecipanti */}
       {mainTab === 'party' && (
-        <main className="flex-1 overflow-y-auto custom-scrollbar p-6 sm:p-10 max-w-5xl w-full mx-auto space-y-6">
+        <main className="flex-1 overflow-y-auto custom-scrollbar p-6 sm:p-10 max-w-[1700px] w-full mx-auto space-y-6">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-surface-2 pb-4">
             <div>
               <h2 className="font-serif font-bold text-lg text-content-1">

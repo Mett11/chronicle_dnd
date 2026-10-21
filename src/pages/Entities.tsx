@@ -548,7 +548,7 @@ export function Entities() {
   // Handle routeId & query param (?entity=ID) deep linking
   useEffect(() => {
     const searchParams = new URLSearchParams(location.search);
-    const queryEntityId = searchParams.get('entity') || searchParams.get('id');
+    const queryEntityId = searchParams.get('entity') || searchParams.get('id') || searchParams.get('select');
     const targetId = routeId || queryEntityId;
 
     if (targetId) {
@@ -827,7 +827,7 @@ export function Entities() {
   };
 
   return (
-    <div className="p-4 sm:p-8 max-w-7xl mx-auto w-full space-y-8 font-body">
+    <div className="px-4 sm:px-8 lg:px-10 py-6 sm:py-8 max-w-[1700px] mx-auto w-full space-y-8 font-body">
       {/* 1. OVERVIEW VIEW: Editorial Chronicle Codex */}
       {isOverview ? (
         <div className="space-y-6 sm:space-y-8">
@@ -978,10 +978,10 @@ export function Entities() {
               )}
             </div>
           ) : (
-            /* PANORAMICA DEI TOMI: 2 GRANDI LIBRI VERTICALI CON ILLUMINAZIONE A GRANA MAGICA ALL'HOVER */
-            <div className="space-y-6 max-w-5xl mx-auto">
-              {/* Header con Navigazione Slider & Controlli Coppie */}
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-1 border-b border-surface-2/60 pb-3">
+            /* PANORAMICA DEI TOMI: 2 COLONNE (30% ULTIMI INSERITI / 70% 2 FILE DA 3 LIBRI) */
+            <div className="space-y-4 max-w-[1700px] mx-auto w-full">
+              {/* Header Info Bar */}
+              <div className="flex items-center justify-between gap-3 px-1 border-b border-surface-2/60 pb-3">
                 <div className="flex items-center gap-2">
                   <span className="w-2 h-2 rounded-full bg-primary" />
                   <span className="text-[11px] font-mono uppercase tracking-[0.18em] text-content-2 font-semibold">
@@ -991,180 +991,173 @@ export function Entities() {
                     ({entities.length} voci custodite)
                   </span>
                 </div>
+              </div>
 
-                {/* Slider Controls (Previous / Next + Pair Tabs) */}
-                <div className="flex items-center gap-1.5 self-start sm:self-auto">
-                  <button
-                    type="button"
-                    onClick={() => setTomePairIndex((prev) => (prev > 0 ? prev - 1 : 2))}
-                    className="p-1.5 rounded-[2px] border border-surface-2/80 bg-surface-1/60 hover:bg-surface-2 text-content-2 hover:text-content-1 transition-colors cursor-pointer"
-                    title="Coppia precedente"
-                    aria-label="Coppia precedente"
-                  >
-                    <ChevronLeft size={15} />
-                  </button>
+              {/* Main 30% / 70% Grid Layout */}
+              <div className="grid grid-cols-1 lg:grid-cols-10 gap-5 sm:gap-6 items-stretch w-full animate-fadeIn py-1">
+                {/* COLONNA SINISTRA (30% = col-span-3): GLI ULTIMI INSERITI PER OGNI TOMO */}
+                <aside className="lg:col-span-3 flex flex-col justify-between rounded-xl bg-surface-1/90 border border-surface-2 p-4 sm:p-5 shadow-lg relative overflow-hidden h-[560px] sm:h-[620px] md:h-[650px] shrink-0">
+                  {/* Accent Background Glow */}
+                  <div className="absolute inset-0 bg-gradient-to-br from-primary/10 via-transparent to-transparent pointer-events-none" />
 
-                  <div className="flex items-center gap-1 bg-surface-1/40 p-0.5 rounded-[2px] border border-surface-2/60">
-                    {[
-                      { idx: 0, label: 'Tomi I – II' },
-                      { idx: 1, label: 'Tomi III – IV' },
-                      { idx: 2, label: 'Tomi V – VI' },
-                    ].map((tab) => (
-                      <button
-                        key={tab.idx}
-                        type="button"
-                        onClick={() => setTomePairIndex(tab.idx)}
-                        className={`px-3 py-1 text-[10px] font-mono uppercase tracking-wider rounded-[2px] transition-all cursor-pointer ${
-                          tomePairIndex === tab.idx
-                            ? 'bg-primary/25 text-primary border border-primary/50 font-semibold shadow-xs'
-                            : 'text-content-3/70 hover:text-content-2 hover:bg-surface-2/40 border border-transparent'
-                        }`}
-                      >
-                        {tab.label}
-                      </button>
-                    ))}
+                  {/* Title Header */}
+                  <div className="flex items-center justify-between gap-2 border-b border-surface-2/80 pb-3 relative z-10">
+                    <h3 className="font-serif font-bold text-sm sm:text-base text-content-1 tracking-wide uppercase">
+                      Gli Ultimi Inseriti
+                    </h3>
+                    <span className="text-[10px] font-mono text-content-3 uppercase">6 Volumi</span>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => setTomePairIndex((prev) => (prev < 2 ? prev + 1 : 0))}
-                    className="p-1.5 rounded-[2px] border border-surface-2/80 bg-surface-1/60 hover:bg-surface-2 text-content-2 hover:text-content-1 transition-colors cursor-pointer"
-                    title="Coppia successiva"
-                    aria-label="Coppia successiva"
-                  >
-                    <ChevronRight size={15} />
-                  </button>
-                </div>
-              </div>
+                  {/* List of 6 Recent Entries (1 for each of the 6 Tomes) */}
+                  <div className="flex-1 flex flex-col justify-between my-2 relative z-10 min-h-0 divide-y divide-surface-2/40">
+                    {[
+                      { cat: CATEGORY_DEFINITIONS.npc },
+                      { cat: CATEGORY_DEFINITIONS.monster },
+                      { cat: CATEGORY_DEFINITIONS.place },
+                      { cat: CATEGORY_DEFINITIONS.quest },
+                      { cat: CATEGORY_DEFINITIONS.item },
+                      { cat: CATEGORY_DEFINITIONS.faction },
+                    ].map(({ cat }) => {
+                      const catEntities = entities.filter((e) => e.type === cat.id);
+                      const latestEntity = catEntities.length > 0
+                        ? [...catEntities].sort((a, b) => new Date(b.createdAt || b.updatedAt || 0).getTime() - new Date(a.createdAt || a.updatedAt || 0).getTime())[0]
+                        : null;
+                      const HeraldicIcon = cat.heraldicIcon;
 
-              {/* 2 Libri Verticali (Formato Grimoire con Dorso Rinforzato & Grana Animata all'Hover con Accent Dinamico) */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-7 sm:gap-8 max-w-3xl mx-auto w-full animate-fadeIn py-2">
-                {[
-                  [
+                      return (
+                        <div
+                          key={cat.id}
+                          onClick={() => {
+                            if (latestEntity) {
+                              setDetailEntity(latestEntity);
+                            } else {
+                              navigate(`/entities/${cat.id}`);
+                            }
+                          }}
+                          className="group/item flex items-center justify-between gap-3 py-2.5 sm:py-3.5 px-2 hover:bg-surface-2/40 rounded-sm transition-all cursor-pointer flex-1 min-h-0"
+                        >
+                          <div className="flex items-center gap-3 min-w-0 flex-1">
+                            <HeraldicIcon size={18} className="text-primary shrink-0 transition-transform group-hover/item:scale-110" />
+
+                            <div className="min-w-0 flex-1 space-y-0.5">
+                              <div className="text-[11px] font-mono uppercase tracking-wider text-content-3 font-semibold truncate">
+                                {cat.title}
+                              </div>
+                              {latestEntity ? (
+                                <h4 className="font-serif font-bold text-sm sm:text-base text-content-1 group-hover/item:text-primary transition-colors truncate">
+                                  {latestEntity.name}
+                                </h4>
+                              ) : (
+                                <span className="text-xs font-mono text-content-3/50 italic">Tomo intonso</span>
+                              )}
+                            </div>
+                          </div>
+
+                          <ChevronRight size={16} className="text-content-3/60 group-hover/item:text-primary group-hover/item:translate-x-1 transition-all shrink-0" />
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Footer Info */}
+                  <div className="pt-2 border-t border-surface-2/80 text-[10px] font-mono text-content-3 flex items-center justify-between relative z-10">
+                    <span>Aggiornato in tempo reale</span>
+                    <span className="text-primary font-bold">Codex</span>
+                  </div>
+                </aside>
+
+                {/* COLONNA DESTRA (70% = col-span-7): RIGA UNICA DI TOMI SCROLLABILE ORIZZONTALMENTE (ALTEZZA = CARD SX) */}
+                <div className="lg:col-span-7 h-[560px] sm:h-[620px] md:h-[650px] flex items-center overflow-x-auto overflow-y-hidden custom-scrollbar gap-4 sm:gap-5 pb-2 pt-1 px-1">
+                  {[
                     { cat: CATEGORY_DEFINITIONS.npc, num: 'I', sub: 'Figure di spicco, alleati & PNG' },
                     { cat: CATEGORY_DEFINITIONS.monster, num: 'II', sub: 'Bestiario, creature & minacce' },
-                  ],
-                  [
                     { cat: CATEGORY_DEFINITIONS.place, num: 'III', sub: 'Toponomastica, reami & mappe' },
                     { cat: CATEGORY_DEFINITIONS.quest, num: 'IV', sub: 'Trame, ordini & incarichi' },
-                  ],
-                  [
                     { cat: CATEGORY_DEFINITIONS.item, num: 'V', sub: 'Reliquie, tomi & artefatti' },
                     { cat: CATEGORY_DEFINITIONS.faction, num: 'VI', sub: 'Gilde, casate & congreghe' },
-                  ],
-                ][tomePairIndex].map(({ cat, num, sub }) => {
-                  const catEntities = entities.filter((e) => e.type === cat.id);
-                  const count = catEntities.length;
-                  const HeraldicIcon = cat.heraldicIcon;
-                  const aliveCount =
-                    cat.id === 'npc'
-                      ? catEntities.filter((n) => n.status === 'alive').length
-                      : undefined;
+                  ].map(({ cat, num, sub }) => {
+                    const catEntities = entities.filter((e) => e.type === cat.id);
+                    const count = catEntities.length;
+                    const HeraldicIcon = cat.heraldicIcon;
+                    const aliveCount =
+                      cat.id === 'npc'
+                        ? catEntities.filter((n) => n.status === 'alive').length
+                        : undefined;
 
-                  return (
-                    <button
-                      key={cat.id}
-                      type="button"
-                      onClick={() => navigate(`/entities/${cat.id}`)}
-                      className="w-full max-w-[360px] min-h-[520px] sm:min-h-[560px] mx-auto p-5 sm:p-6 rounded-[4px] border border-surface-3/80 hover:border-primary/80 border-l-[10px] sm:border-l-[12px] border-l-primary bg-surface-1/95 hover:bg-surface-1 transition-all duration-500 shadow-xl hover:shadow-[0_16px_45px_var(--color-primary-muted)] text-left flex flex-col justify-between gap-4 group cursor-pointer relative overflow-hidden"
-                    >
-                      {/* Porzione Interna del Tomo: Scura a riposo, Grana Animata & Bagliore con Accent del Tema SOLO in Hover */}
-                      <div className="relative w-full rounded-[3px] border border-surface-3/60 group-hover:border-primary/70 bg-surface-0/90 p-6 sm:p-7 overflow-hidden shadow-2xl flex flex-col justify-between flex-1 min-h-[360px] transition-all duration-500">
-                        {/* Sfondo Notturno a Riposo */}
-                        <div className="absolute inset-0 bg-gradient-to-b from-surface-1 via-surface-0 to-surface-0/95" />
+                    return (
+                      <button
+                        key={cat.id}
+                        type="button"
+                        onClick={() => navigate(`/entities/${cat.id}`)}
+                        className="h-full aspect-[3/4] shrink-0 rounded-[6px] border border-surface-3/80 hover:border-primary/80 bg-surface-1 hover:bg-surface-1/90 transition-all duration-300 shadow-xl hover:shadow-2xl text-left flex flex-col justify-between group cursor-pointer relative overflow-hidden"
+                      >
+                        {/* Leather Book Spine (Left 3D Spine Column) */}
+                        <div className="absolute left-0 top-0 bottom-0 w-6 sm:w-7 bg-gradient-to-r from-surface-3 via-surface-2 to-surface-1 border-r border-surface-3/90 z-20 flex flex-col justify-between py-4 items-center shadow-md">
+                          {/* Spine Ribs (Nervi) */}
+                          <span className="w-full h-1 bg-surface-0/60 border-y border-primary/40" />
+                          <span className="w-full h-1 bg-surface-0/60 border-y border-primary/40" />
+                          <span className="w-full h-1 bg-surface-0/60 border-y border-primary/40" />
+                          <span className="w-full h-1 bg-surface-0/60 border-y border-primary/40" />
+                        </div>
 
-                        {/* Riempimento con Grana Dither Gradiente Animata a Tema (Attiva SOLO in Hover) */}
-                        <TomeGrainCanvas />
+                        {/* Page Edges Stack Effect on Right and Bottom */}
+                        <div className="absolute right-0 top-1 bottom-1 w-1.5 bg-gradient-to-b from-[#e2d5b6]/20 via-[#c8b78a]/30 to-[#e2d5b6]/20 border-l border-surface-3/50 rounded-r-xs z-10" />
+                        <div className="absolute bottom-0 left-6 right-1 h-1.5 bg-gradient-to-r from-[#e2d5b6]/20 via-[#c8b78a]/30 to-[#e2d5b6]/20 border-t border-surface-3/50 z-10" />
 
-                        {/* Bagliore Soffuso Radiante Posteriore */}
-                        <div
-                          className="absolute inset-0 opacity-0 group-hover:opacity-40 transition-opacity duration-500 ease-out pointer-events-none"
-                          style={{
-                            background:
-                              'radial-gradient(circle at 45% 35%, var(--color-primary) 0%, color-mix(in srgb, var(--color-primary) 40%, transparent) 50%, transparent 80%)',
-                          }}
-                        />
+                        {/* Main Front Book Cover */}
+                        <div className="relative pl-8 sm:pl-9 pr-4 pt-4 pb-3 flex-1 flex flex-col justify-between z-10 bg-surface-1/90 group-hover:bg-surface-1 transition-colors h-full">
+                          {/* Inner Luminescence Magic Glow (Incantesimo di Luminescenza) */}
+                          <div
+                            className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none z-0 rounded-[6px]"
+                            style={{
+                              boxShadow: 'inset 0 0 35px 2px color-mix(in srgb, var(--color-primary) 40%, transparent)',
+                              background:
+                                'radial-gradient(circle at 50% 50%, color-mix(in srgb, var(--color-primary) 22%, transparent) 0%, color-mix(in srgb, var(--color-primary) 8%, transparent) 60%, transparent 100%)',
+                            }}
+                          />
 
-                        {/* Riga Superiore: Intestazione Volume & Emblema */}
-                        <div className="flex items-center justify-between gap-2 relative z-10">
-                          <span className="text-xs font-mono tracking-widest text-primary font-bold uppercase drop-shadow-sm">
-                            VOL. {num}
-                          </span>
-                          <div className="flex items-center gap-1.5 text-content-1 bg-surface-0/80 backdrop-blur-xs px-2.5 py-1 rounded-[2px] border border-surface-3/80 group-hover:border-primary/80 transition-colors">
-                            <HeraldicIcon size={14} className="shrink-0 text-primary" />
-                            <span className="text-[10px] font-mono uppercase tracking-wider font-semibold">
-                              {cat.heraldicSigil}
+                          {/* Corner Metallic Accent Ornaments (Brass Corners) */}
+                          <div className="absolute top-2 right-2 w-3.5 h-3.5 border-t-2 border-r-2 border-primary/60 rounded-tr-xs pointer-events-none z-10" />
+                          <div className="absolute bottom-2 right-2 w-3.5 h-3.5 border-b-2 border-r-2 border-primary/60 rounded-br-xs pointer-events-none z-10" />
+
+                          {/* Top Row: Icon only */}
+                          <div className="flex items-center justify-end relative z-10">
+                            <HeraldicIcon size={16} className="text-primary/80 group-hover:text-primary shrink-0 transition-colors" />
+                          </div>
+
+                          {/* Center Body: Large Roman Numeral & Tome Title */}
+                          <div className="py-2 text-center space-y-2 relative z-10 flex-1 flex flex-col justify-center">
+                            <div className="font-cinzel font-black text-4xl sm:text-5xl text-content-1 group-hover:text-primary transition-colors tracking-widest leading-none select-none drop-shadow-sm">
+                              {num}
+                            </div>
+                            <div className="space-y-1">
+                              <h3 className="font-cinzel font-bold text-lg sm:text-xl text-content-1 group-hover:text-content-1 transition-colors tracking-wide leading-tight">
+                                {cat.title}
+                              </h3>
+                              <p className="text-[11px] text-content-2 group-hover:text-content-1 font-sans leading-relaxed line-clamp-2">
+                                {aliveCount !== undefined ? `${aliveCount} in vita • ${sub}` : sub}
+                              </p>
+                            </div>
+                          </div>
+
+                          {/* Decorative Divider Line */}
+                          <div className="w-full flex items-center justify-center gap-2 opacity-50 relative z-10 my-1">
+                            <span className="h-px bg-content-3/30 flex-1" />
+                            <span className="text-[9px] font-cinzel text-primary tracking-widest">&diams;</span>
+                            <span className="h-px bg-content-3/30 flex-1" />
+                          </div>
+
+                          {/* Bottom Footer: Count only */}
+                          <div className="pt-2 border-t border-surface-2/60 flex items-center justify-center text-xs font-mono w-full relative z-10">
+                            <span className="text-[10px] uppercase tracking-wider text-content-3 group-hover:text-content-1 transition-colors font-semibold">
+                              {count} {count === 1 ? 'voce' : 'voci'}
                             </span>
                           </div>
                         </div>
-
-                        {/* Centro del Libro: Numero Romano ad Altissimo Contrasto & Titolo Monumentale */}
-                        <div className="py-6 text-center space-y-3 relative z-10">
-                          <div className="font-cinzel font-black text-6xl sm:text-7xl text-content-1 group-hover:text-primary transition-colors dark:drop-shadow-[0_4px_16px_rgba(0,0,0,0.85)] drop-shadow-none tracking-widest leading-none select-none">
-                            {num}
-                          </div>
-                          <div className="space-y-1.5 px-2">
-                            <h3 className="font-cinzel font-bold text-2xl sm:text-[1.65rem] text-content-1 group-hover:text-content-1 transition-colors tracking-wide leading-tight dark:drop-shadow-[0_2px_8px_rgba(0,0,0,0.75)] drop-shadow-none">
-                              {cat.title}
-                            </h3>
-                            <p className="text-xs sm:text-[0.82rem] text-content-2 group-hover:text-content-1 font-sans max-w-xs mx-auto leading-relaxed transition-colors">
-                              {aliveCount !== undefined ? `${aliveCount} in vita • ${sub}` : sub}
-                            </p>
-                          </div>
-                        </div>
-
-                        {/* Filetto Decorativo Inferiore dell'inlay */}
-                        <div className="w-full flex items-center justify-center gap-2 opacity-60 relative z-10">
-                          <span className="h-px bg-content-3/30 flex-1" />
-                          <span className="text-[10px] font-cinzel text-primary tracking-widest">&diams;</span>
-                          <span className="h-px bg-content-3/30 flex-1" />
-                        </div>
-                      </div>
-
-                      {/* Piede del Libro: Margine e Azione */}
-                      <div className="pt-3 border-t border-surface-2/60 flex items-center justify-between text-xs font-mono w-full">
-                        <span className="truncate flex-1 mr-3 text-content-3 text-[11px]">
-                          {catEntities.length > 0 ? (
-                            <span className="text-content-2">
-                              <span className="text-primary mr-1.5 font-bold">&bull;</span>
-                              {catEntities[0].name}
-                              {catEntities.length > 1 && (
-                                <span className="text-content-3/70 ml-1">(+{catEntities.length - 1} altre)</span>
-                              )}
-                            </span>
-                          ) : (
-                            <span className="italic opacity-50">Tomo intonso</span>
-                          )}
-                        </span>
-
-                        <div className="flex items-center gap-2 shrink-0">
-                          <span className="text-[10px] uppercase tracking-wider text-content-3 font-semibold">
-                            {count} {count === 1 ? 'voce' : 'voci'}
-                          </span>
-                          <span className="text-primary font-serif font-bold text-base group-hover:translate-x-1.5 transition-transform">
-                            &rarr;
-                          </span>
-                        </div>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-
-              {/* Indicatori Slider Inferiori (Punti di Navigazione Rapida) */}
-              <div className="flex items-center justify-center gap-2 pt-2">
-                {[0, 1, 2].map((idx) => (
-                  <button
-                    key={idx}
-                    type="button"
-                    onClick={() => setTomePairIndex(idx)}
-                    className={`h-2 transition-all rounded-full cursor-pointer ${
-                      tomePairIndex === idx ? 'w-9 bg-primary' : 'w-2.5 bg-surface-3 hover:bg-content-3'
-                    }`}
-                    title={`Passa alla coppia ${idx + 1}`}
-                    aria-label={`Passa alla coppia ${idx + 1}`}
-                  />
-                ))}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             </div>
           )}

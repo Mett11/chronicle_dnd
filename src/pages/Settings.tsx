@@ -367,6 +367,14 @@ export function Settings() {
   const isUserTypingRef = React.useRef(false);
 
   useEffect(() => {
+    if (keyMode === 'campaign' && !isDm) {
+      setGeminiKeyInput('');
+      setCfAccountIdInput('');
+      setCfApiTokenInput('');
+      setOpenrouterKeyInput('');
+      return;
+    }
+
     const target = keyMode === 'campaign' ? campaignKeys : personalKeys;
     if (prevKeyModeRef.current !== keyMode) {
       prevKeyModeRef.current = keyMode;
@@ -384,7 +392,7 @@ export function Settings() {
       setCfApiTokenInput(target.cloudflareApiToken || '');
       setOpenrouterKeyInput(target.openrouterKey || '');
     }
-  }, [keyMode, campaignKeys, personalKeys]);
+  }, [keyMode, campaignKeys, personalKeys, isDm]);
 
   const handleSetAiProvider = (prov: 'gemini' | 'openrouter') => {
     CampaignManager.setCampaignAiConfig({ provider: prov });
@@ -472,7 +480,7 @@ export function Settings() {
   const handleSwitchCampaign = () => {
     CampaignManager.setActiveCampaignCode(null);
     try {
-      navigate('/campaigns', { replace: true });
+      navigate('/', { replace: true });
     } catch {
       window.location.href = '/';
     }
@@ -1442,67 +1450,83 @@ export function Settings() {
               </div>
             )}
 
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <label className="text-xs font-mono font-medium text-content-2 block">
-                  Chiave API Google Gemini
-                </label>
-                <div className="relative">
-                  <input
-                    type={showGeminiKey ? 'text' : 'password'}
-                    value={geminiKeyInput}
-                    onChange={(e) => {
-                      isUserTypingRef.current = true;
-                      setGeminiKeyInput(e.target.value);
-                    }}
-                    placeholder="AIzaSy..."
-                    className="w-full bg-surface-2 border border-surface-3 rounded-xl px-3.5 py-2.5 text-xs text-content-1 focus:outline-none focus:border-primary font-mono pr-10"
-                  />
+            {keyMode === 'campaign' && !isDm ? (
+              <div className="p-4 sm:p-5 bg-primary/10 border border-primary/30 rounded-2xl flex items-start gap-3.5 shadow-xs">
+                <div className="w-9 h-9 rounded-xl bg-primary/20 border border-primary/30 flex items-center justify-center shrink-0 text-primary">
+                  <Lock size={18} />
+                </div>
+                <div className="space-y-1.5 min-w-0">
+                  <h4 className="text-xs font-bold text-content-1 flex items-center gap-1.5">
+                    <span>Chiave Condivisa di Campagna protetta</span>
+                  </h4>
+                  <p className="text-xs text-content-2 leading-relaxed">
+                    🔒 Chiave Condivisa di Campagna attiva. Le credenziali AI del tavolo sono gestite e protette dal Dungeon Master. Se desideri usare una tua quota indipendente o evitare limiti di traffico, seleziona &quot;Chiave Personale&quot; qui sopra.
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <label className="text-xs font-mono font-medium text-content-2 block">
+                    Chiave API Google Gemini
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={showGeminiKey ? 'text' : 'password'}
+                      value={geminiKeyInput}
+                      onChange={(e) => {
+                        isUserTypingRef.current = true;
+                        setGeminiKeyInput(e.target.value);
+                      }}
+                      placeholder="AIzaSy..."
+                      className="w-full bg-surface-2 border border-surface-3 rounded-xl px-3.5 py-2.5 text-xs text-content-1 focus:outline-none focus:border-primary font-mono pr-10"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowGeminiKey(!showGeminiKey)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-content-3 hover:text-content-1"
+                    >
+                      {showGeminiKey ? <EyeOff size={14} /> : <Eye size={14} />}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-xs font-mono font-medium text-content-2 block">
+                    Chiave API OpenRouter
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={showOpenrouterKey ? 'text' : 'password'}
+                      value={openrouterKeyInput}
+                      onChange={(e) => {
+                        isUserTypingRef.current = true;
+                        setOpenrouterKeyInput(e.target.value);
+                      }}
+                      placeholder="sk-or-v1-..."
+                      className="w-full bg-surface-2 border border-surface-3 rounded-xl px-3.5 py-2.5 text-xs text-content-1 focus:outline-none focus:border-primary font-mono pr-10"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowOpenrouterKey(!showOpenrouterKey)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-content-3 hover:text-content-1"
+                    >
+                      {showOpenrouterKey ? <EyeOff size={14} /> : <Eye size={14} />}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="pt-2 flex justify-end">
                   <button
                     type="button"
-                    onClick={() => setShowGeminiKey(!showGeminiKey)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-content-3 hover:text-content-1"
+                    onClick={handleSaveAiKeys}
+                    className="bg-primary hover:bg-primary-hover text-surface-0 px-5 py-2.5 rounded-xl text-xs font-semibold cursor-pointer transition-colors shadow-md"
                   >
-                    {showGeminiKey ? <EyeOff size={14} /> : <Eye size={14} />}
+                    Salva Credenziali AI
                   </button>
                 </div>
               </div>
-
-              <div className="space-y-2">
-                <label className="text-xs font-mono font-medium text-content-2 block">
-                  Chiave API OpenRouter
-                </label>
-                <div className="relative">
-                  <input
-                    type={showOpenrouterKey ? 'text' : 'password'}
-                    value={openrouterKeyInput}
-                    onChange={(e) => {
-                      isUserTypingRef.current = true;
-                      setOpenrouterKeyInput(e.target.value);
-                    }}
-                    placeholder="sk-or-v1-..."
-                    className="w-full bg-surface-2 border border-surface-3 rounded-xl px-3.5 py-2.5 text-xs text-content-1 focus:outline-none focus:border-primary font-mono pr-10"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowOpenrouterKey(!showOpenrouterKey)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-content-3 hover:text-content-1"
-                  >
-                    {showOpenrouterKey ? <EyeOff size={14} /> : <Eye size={14} />}
-                  </button>
-                </div>
-              </div>
-
-              <div className="pt-2 flex justify-end">
-                <button
-                  type="button"
-                  onClick={handleSaveAiKeys}
-                  className="bg-primary hover:bg-primary-hover text-surface-0 px-5 py-2.5 rounded-xl text-xs font-semibold cursor-pointer transition-colors shadow-md"
-                >
-                  Salva Credenziali AI
-                </button>
-              </div>
-            </div>
+            )}
           </div>
         </div>
       )}

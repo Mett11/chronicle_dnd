@@ -21,6 +21,7 @@ import { CharacterFamilyTreeTab } from '../components/character/CharacterFamilyT
 import { CharacterNotesTab } from '../components/character/CharacterNotesTab';
 import { CharacterQuestsTab } from '../components/character/CharacterQuestsTab';
 import { CharacterMemoriesTab } from '../components/character/CharacterMemoriesTab';
+import { CharacterGrimoireFolio } from '../components/character/CharacterGrimoireFolio';
 import { getStoredTheme, ClassTheme } from '../lib/theme';
 import {
   User,
@@ -57,6 +58,7 @@ import {
   Users,
   Brain,
   RefreshCw,
+  Scroll,
 } from 'lucide-react';
 
 const PRESET_COLORS = [
@@ -119,6 +121,8 @@ export function CharacterProfile() {
   const [currentTheme] = useState<ClassTheme>(getStoredTheme);
   const [viewMode, setViewMode] = useState<'edit' | 'read'>('edit');
 
+
+
   // Reset secondary active states when switching target player
   useEffect(() => {
     setSelectedNote(null);
@@ -156,6 +160,11 @@ export function CharacterProfile() {
   }, []);
 
   const matchedCodexEntity = useMemo(() => {
+    if (!targetPlayer?.characterName && !characterBio?.entityId) return null;
+    if (characterBio?.entityId) {
+      const foundById = entities.find((e) => e._id === characterBio.entityId);
+      if (foundById) return foundById;
+    }
     if (!targetPlayer?.characterName) return null;
     const cleanName = targetPlayer.characterName.toLowerCase().trim();
     return (
@@ -165,7 +174,7 @@ export function CharacterProfile() {
           (e.aliases && Array.isArray(e.aliases) && e.aliases.some((a) => typeof a === 'string' && a.toLowerCase().trim() === cleanName))
       ) || null
     );
-  }, [entities, targetPlayer?.characterName]);
+  }, [entities, targetPlayer?.characterName, characterBio?.entityId]);
   
   // Search states
   const [searchQuery, setSearchQuery] = useState('');
@@ -698,21 +707,22 @@ export function CharacterProfile() {
     e.preventDefault();
     if (!memoryTitle.trim() || !memoryImage.trim() || !targetPlayer) return;
 
-    setIsUploadingMemoryImage(true);
     let finalImageUrl = memoryImage.trim();
-
-    try {
-      const code = CampaignManager.getActiveCampaignCode() || 'default';
-      finalImageUrl = await FirebaseStorageService.uploadMedia(
-        code,
-        'scrapbook',
-        memoryTitle.trim(),
-        memoryImage.trim()
-      );
-    } catch (err) {
-      console.warn('Errore upload memoria su Firebase Storage:', err);
-    } finally {
-      setIsUploadingMemoryImage(false);
+    if (!finalImageUrl.startsWith('http://') && !finalImageUrl.startsWith('https://')) {
+      setIsUploadingMemoryImage(true);
+      try {
+        const code = CampaignManager.getActiveCampaignCode() || 'default';
+        finalImageUrl = await FirebaseStorageService.uploadMedia(
+          code,
+          'scrapbook',
+          memoryTitle.trim(),
+          memoryImage.trim()
+        );
+      } catch (err) {
+        console.warn('Errore upload memoria su Supabase Storage:', err);
+      } finally {
+        setIsUploadingMemoryImage(false);
+      }
     }
 
     // Do NOT store raw base64 in scrapbook items
@@ -1109,6 +1119,7 @@ export function CharacterProfile() {
     const entityStatus: Entity['status'] =
       targetPlayer.status === 'dead' ? 'dead' : existingEnt?.status || 'alive';
 
+    let finalEntityId = existingEnt?._id;
     if (existingEnt) {
       // Update existing entity
       const updated = CampaignManager.updateEntity(existingEnt._id, {
@@ -1123,13 +1134,14 @@ export function CharacterProfile() {
           ...aiConfig,
         },
       });
+      finalEntityId = updated?._id || existingEnt._id;
       setEntities(CampaignManager.getEntities());
       setSyncStatusMsg(
         `Scheda di "${charName}" allineata nel Codex con memoria completa (${timelineMemories.length} ricordi, ${evolvingBeliefs.length} credenze, ${openQuests.length} obiettivi) e Persona IA!`
       );
     } else {
       // Create new Codex entity
-      CampaignManager.addEntity({
+      const created = CampaignManager.addEntity({
         name: charName,
         type: 'npc',
         aliases,
@@ -1139,16 +1151,18 @@ export function CharacterProfile() {
         progressNote,
         aiConfig,
       });
+      finalEntityId = created?._id;
       setEntities(CampaignManager.getEntities());
       setSyncStatusMsg(
         `Nuova scheda di "${charName}" creata nel Codex con memoria completa (${timelineMemories.length} ricordi, ${evolvingBeliefs.length} credenze) e Persona IA!`
       );
     }
 
-    // Ensure CharacterBio is also updated with all merged memories and beliefs
+    // Ensure CharacterBio is also updated with all merged memories, beliefs and linked entityId
     const updatedBio: CharacterBio = {
       ...(currentBio || { playerId: targetPlayer._id }),
       playerId: targetPlayer._id,
+      entityId: finalEntityId || currentBio?.entityId,
       timelineMemories,
       evolvingBeliefs,
       knownLoreBites,
@@ -1290,998 +1304,40 @@ export function CharacterProfile() {
   };
 
   return (
-    <div className="p-4 sm:p-6 max-w-6xl mx-auto space-y-6 w-full pb-16">
-      {/* 1. Party Members Selector Bar */}
-      {allPlayers && allPlayers.length > 1 && (
-        <div className="bg-surface-1 border border-surface-2 rounded-xl p-3 shadow-xs">
-          <div className="flex items-center justify-between gap-2 mb-2 px-1">
-            <div className="flex items-center gap-1.5 text-xs text-content-3 font-medium">
-              <Users size={13} className="text-primary" />
-              <span>Personaggi del Party ({allPlayers.length})</span>
-            </div>
-            {!isOwnProfile && (
-              <button
-                type="button"
-                id="back-to-own-character-btn"
-                onClick={() => {
-                  const newParams = new URLSearchParams(searchParams);
-                  newParams.delete('player');
-                  setSearchParams(newParams);
-                }}
-                className="text-xs text-primary hover:underline flex items-center gap-1 font-medium cursor-pointer"
-              >
-                <User size={12} /> Torna al mio personaggio
-              </button>
-            )}
-          </div>
+    <div className="w-full pb-16 min-h-screen bg-surface-0">
+      <div className="w-full">
 
-          <div className="flex items-center gap-2 overflow-x-auto custom-scrollbar pb-1 pt-0.5">
-            {allPlayers.map((p) => {
-              const isSelected = p._id === targetPlayer._id;
-              const isMe = p._id === player._id;
-              return (
-                <button
-                  key={p._id}
-                  type="button"
-                  id={`party-member-btn-${p._id}`}
-                  onClick={() => {
-                    const newParams = new URLSearchParams(searchParams);
-                    if (isMe) {
-                      newParams.delete('player');
-                    } else {
-                      newParams.set('player', p._id);
-                    }
-                    setSearchParams(newParams);
-                  }}
-                  className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs transition-all shrink-0 cursor-pointer ${
-                    isSelected
-                      ? 'bg-primary/15 border-primary text-content-1 ring-1 ring-primary/40 font-semibold shadow-xs'
-                      : 'bg-surface-2/70 hover:bg-surface-2 border-surface-3 text-content-2 hover:text-content-1'
-                  }`}
-                >
-                  <div
-                    className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold text-white overflow-hidden shrink-0"
-                    style={{ backgroundColor: p.color || '#6366f1' }}
-                  >
-                    {(!p.isDm && CampaignManager.isDmAvatar(p.avatarUrl) ? '' : CampaignManager.cleanAvatarString(p.avatarUrl)) ? (
-                      <img src={CampaignManager.cleanAvatarString(p.avatarUrl)} alt="" className="w-full h-full object-cover" />
-                    ) : (
-                      p.characterName?.charAt(0).toUpperCase() || 'P'
-                    )}
-                  </div>
-                  <span className="truncate max-w-[130px]">{p.characterName}</span>
-                  {isMe && (
-                    <span className="px-1.5 py-0.2 text-[9px] font-mono bg-surface-3 text-content-2 rounded">
-                      Tu
-                    </span>
-                  )}
-                  {p.isDm && (
-                    <span className="px-1.5 py-0.2 text-[9px] font-mono bg-primary/20 text-primary rounded font-semibold">
-                      DM
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
 
-      {/* Top Dossier Header Card */}
-      <div className="bg-surface-1 border border-surface-2 rounded-xl p-5 sm:p-6 shadow-xs">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-5">
-          <div className="flex items-center gap-4 sm:gap-5">
-            {(() => {
-              const isGeneric = (n?: string | null) => !n || ['personaggio', 'avventuriero', 'player', 'giocatore'].includes(n.trim().toLowerCase());
-              const rawBioName = characterBio?.characterName?.trim() || characterBio?.name?.trim();
-              const validBioName = !isGeneric(rawBioName) ? rawBioName : null;
-              const rawAvatar = CampaignManager.cleanAvatarString(characterBio?.avatarUrl) || CampaignManager.cleanAvatarString(targetPlayer.avatarUrl) || '';
-              const displayAvatar = (!targetPlayer.isDm && CampaignManager.isDmAvatar(rawAvatar)) ? '' : rawAvatar;
-              const displayName = validBioName || (!isGeneric(targetPlayer.characterName) ? targetPlayer.characterName : (!isGeneric(account?.characterName) ? account?.characterName : 'Personaggio'));
-              const displayColor = characterBio?.color || targetPlayer.color || '#6366f1';
-
-              return (
-                <div className="relative group shrink-0">
-                  {displayAvatar ? (
-                    <img
-                      src={displayAvatar}
-                      alt={displayName}
-                      className="w-16 h-16 sm:w-20 sm:h-20 rounded-lg object-cover border-2 shadow-xs shrink-0 transition-colors"
-                      style={{ borderColor: displayColor }}
-                    />
-                  ) : (
-                    <div
-                      className="w-16 h-16 sm:w-20 sm:h-20 rounded-lg flex items-center justify-center font-heading font-bold text-2xl sm:text-3xl text-surface-0 shadow-xs shrink-0 transition-colors"
-                      style={{ backgroundColor: displayColor }}
-                    >
-                      {displayName.charAt(0).toUpperCase()}
-                    </div>
-                  )}
-                  {isOwnProfile && (
-                    <button
-                      type="button"
-                      id="edit-profile-btn"
-                      onClick={handleOpenEditProfile}
-                      className="absolute -bottom-1 -right-1 p-1.5 bg-surface-2 hover:bg-surface-3 text-content-1 rounded-md border border-surface-3 shadow-xs transition-colors cursor-pointer"
-                      title="Modifica Identità & Colore Personaggio"
-                    >
-                      <Edit3 size={13} />
-                    </button>
-                  )}
-                </div>
-              );
-            })()}
-
-            <div className="space-y-1 min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <h1 className="text-xl sm:text-2xl font-heading font-bold text-content-1 truncate">
-                  {(() => {
-                    const isGeneric = (n?: string | null) => !n || ['personaggio', 'avventuriero', 'player', 'giocatore'].includes(n.trim().toLowerCase());
-                    const rawBioName = characterBio?.characterName?.trim() || characterBio?.name?.trim();
-                    const validBioName = !isGeneric(rawBioName) ? rawBioName : null;
-                    return validBioName || (!isGeneric(targetPlayer.characterName) ? targetPlayer.characterName : (!isGeneric(account?.characterName) ? account?.characterName : 'Personaggio'));
-                  })()}
-                </h1>
-                {targetPlayer.isDm ? (
-                  <span className="px-2 py-0.5 bg-primary/10 text-primary text-xs font-semibold rounded-md border border-primary/20 flex items-center gap-1">
-                    <Crown size={12} /> Dungeon Master
-                  </span>
-                ) : (
-                  <span className="px-2 py-0.5 bg-surface-2 text-content-2 text-xs font-medium rounded-md border border-surface-3 flex items-center gap-1">
-                    <Shield size={12} className="text-primary" /> {isOwnProfile ? 'Tuo PG' : 'PG del Party'}
-                  </span>
-                )}
-                <span
-                  className="w-2.5 h-2.5 rounded-full border border-surface-0 shadow-xs shrink-0"
-                  style={{ backgroundColor: targetPlayer.color || '#6366f1' }}
-                  title={`Emblema: ${targetPlayer.color || '#6366f1'}`}
-                />
-              </div>
-
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-content-3">
-                {characterBio?.characterClass || characterBio?.characterRace ? (
-                  <span className="text-content-2 font-medium">
-                    {[characterBio.characterRace, characterBio.characterClass, characterBio.characterTitle]
-                      .filter(Boolean)
-                      .join(' • ')}
-                  </span>
-                ) : null}
-                <span className="flex items-center gap-1">
-                  <User size={12} /> {targetPlayer.email || account.email}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          {/* Direct Actions & View Mode Toolbar */}
-          <div className="flex flex-wrap items-center gap-2 shrink-0 pt-3 md:pt-0 border-t md:border-t-0 border-surface-2">
-            {isOwnProfile ? (
-              <>
-                {/* View Mode Toggle: Modifica (Proprietario) vs Lettura (Altri Giocatori) */}
-                <div className="flex items-center p-0.5 bg-surface-2 border border-surface-3 rounded-lg mr-1">
-                  <button
-                    type="button"
-                    id="view-mode-edit-btn"
-                    onClick={() => {
-                      setViewMode('edit');
-                      CampaignManager.saveUserPreferences({ reading: { dossierViewMode: 'edit' } });
-                    }}
-                    className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors flex items-center gap-1.5 cursor-pointer ${
-                      viewMode === 'edit'
-                        ? 'bg-surface-1 text-content-1 shadow-xs font-semibold'
-                        : 'text-content-3 hover:text-content-1'
-                    }`}
-                    title="Vista Proprietario (Modifica & impostazioni privacy)"
-                  >
-                    <Edit3 size={13} className={viewMode === 'edit' ? 'text-primary' : ''} />
-                    <span>Modifica</span>
-                  </button>
-                  <button
-                    type="button"
-                    id="view-mode-read-btn"
-                    onClick={() => {
-                      setViewMode('read');
-                      CampaignManager.saveUserPreferences({ reading: { dossierViewMode: 'read' } });
-                    }}
-                    className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors flex items-center gap-1.5 cursor-pointer ${
-                      viewMode === 'read'
-                        ? 'bg-surface-1 text-content-1 shadow-xs font-semibold'
-                        : 'text-content-3 hover:text-content-1'
-                    }`}
-                    title="Anteprima Vista Party (Come appare agli altri giocatori)"
-                  >
-                    <Eye size={13} className={viewMode === 'read' ? 'text-primary' : ''} />
-                    <span>Lettura</span>
-                  </button>
-                </div>
-
-                {viewMode === 'edit' && (
-                  <>
-                    <button
-                      type="button"
-                      id="new-personal-note-btn"
-                      onClick={() => {
-                        setIsAskDm(false);
-                        setIsNoteModalOpen(true);
-                      }}
-                      className="px-3 py-1.5 bg-primary text-surface-0 hover:bg-primary-hover rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5 shadow-xs cursor-pointer"
-                    >
-                      <Plus size={14} />
-                      <span>Nuova Nota</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      id="ask-dm-btn"
-                      onClick={() => {
-                        setIsAskDm(true);
-                        setIsNoteModalOpen(true);
-                      }}
-                      className="px-3 py-1.5 bg-surface-2 hover:bg-surface-3 text-content-1 border border-surface-3 rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5 cursor-pointer"
-                    >
-                      <HelpCircle size={14} className="text-amber-400" />
-                      <span>Chiedi al DM</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      id="new-quest-btn"
-                      onClick={() => setIsQuestModalOpen(true)}
-                      className="px-3 py-1.5 bg-surface-2 hover:bg-surface-3 text-content-1 border border-surface-3 rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5 cursor-pointer"
-                    >
-                      <Target size={14} className="text-cyan-400" />
-                      <span>Nuova Quest</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      id="new-memory-btn"
-                      onClick={() => setIsMemoryModalOpen(true)}
-                      className="px-3 py-1.5 bg-surface-2 hover:bg-surface-3 text-content-1 border border-surface-3 rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5 cursor-pointer"
-                    >
-                      <ImageIcon size={14} className="text-purple-400" />
-                      <span>Memoria</span>
-                    </button>
-                  </>
-                )}
-              </>
-            ) : (
-              <div className="flex items-center gap-2">
-                <span className="px-3 py-1.5 bg-surface-2 text-content-2 border border-surface-3 rounded-lg text-xs font-medium flex items-center gap-1.5">
-                  <Eye size={13} className="text-primary" /> Vista Membro del Party
-                </span>
-              </div>
-            )}
-          </div>
-        </div>
+        <CharacterGrimoireFolio
+          player={targetPlayer}
+          characterBio={characterBio}
+          notes={notes}
+          quests={quests}
+          entities={entities}
+          scrapbook={scrapbook}
+          isOwnProfile={isOwnProfile}
+          isDM={Boolean(player?.isDm)}
+          onBioUpdated={(bio) => {
+            setCharacterBio(bio);
+            loadData();
+          }}
+          onOpenEditProfile={handleOpenEditProfile}
+          onOpenNoteModal={(note, isDm) => {
+            setEditingNote(note || null);
+            setIsAskDm(Boolean(isDm));
+            setIsNoteModalOpen(true);
+          }}
+          onOpenQuestModal={(quest) => {
+            setEditingQuest(quest || null);
+            setIsQuestModalOpen(true);
+          }}
+          onOpenMemoryModal={() => {
+            setIsMemoryModalOpen(true);
+          }}
+        />
       </div>
 
-      {/* 1.5 Codex Sync & AI Persona Card */}
-      <div className="bg-surface-1 border border-surface-2 rounded-xl p-4 sm:p-5 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div className="flex items-center gap-3.5 min-w-0">
-          <div
-            className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 border ${
-              matchedCodexEntity
-                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
-                : 'bg-primary/10 text-primary border-primary/30'
-            }`}
-          >
-            <Brain size={20} />
-          </div>
-          <div className="min-w-0 space-y-0.5">
-            <div className="flex items-center gap-2 flex-wrap">
-              <h3 className="font-heading font-bold text-sm text-content-1">
-                {matchedCodexEntity
-                  ? 'Scheda Sincronizzata nel Codex'
-                  : 'Crea Scheda nel Codex & Abilita Persona IA'}
-              </h3>
-              {matchedCodexEntity && (
-                <span className="px-2 py-0.2 text-[10px] font-mono bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 rounded-full font-semibold flex items-center gap-1">
-                  <CheckCircle2 size={10} /> Persona IA Attiva
-                </span>
-              )}
-            </div>
-            <p className="text-xs text-content-3 leading-relaxed">
-              {matchedCodexEntity
-                ? `Allinea memorie cronologiche (${(characterBio?.timelineMemories || []).length}), credenze evolutive, stato presente, quest personali e relazioni (PNG e party) con la Persona IA nel Codex per la Sendipietra.`
-                : `Crea la scheda di ${targetPlayer.characterName} nel Codex trasferendo biografia, memorie storiche, credenze, quest attive e legami per abilitare la Persona IA e la Sendipietra.`}
-            </p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2 shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-surface-2 flex-wrap">
-          <button
-            type="button"
-            onClick={handleRebuildMemoriesFromSessions}
-            disabled={isRebuildingMemories}
-            className="px-3 py-1.5 bg-surface-2 hover:bg-surface-3 text-content-1 border border-surface-3 rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs disabled:opacity-50"
-            title="Scansiona tutte le 25 sessioni della campagna e ripristina la cronologia memorie per questo personaggio"
-          >
-            <Sparkles size={13} className="text-amber-400" />
-            <span>{isRebuildingMemories ? 'Recupero in corso...' : 'Recupera Memorie dalle Sessioni'}</span>
-          </button>
-
-          {matchedCodexEntity && (
-            <Link
-              to={`/entities?select=${matchedCodexEntity._id}`}
-              className="px-3 py-1.5 bg-surface-2 hover:bg-surface-3 text-content-1 border border-surface-3 rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
-              title="Apri la scheda nel Codex ed esplora le relazioni o chatta con la Persona IA"
-            >
-              <BookOpen size={13} className="text-primary" />
-              <span>Vedi nel Codex</span>
-            </Link>
-          )}
-
-          <button
-            type="button"
-            onClick={handleSyncToCodex}
-            className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs ${
-              matchedCodexEntity
-                ? 'bg-primary/10 hover:bg-primary/20 text-primary border border-primary/30'
-                : 'bg-primary text-surface-0 hover:bg-primary-hover border border-primary'
-            }`}
-          >
-            <RefreshCw size={13} className={matchedCodexEntity ? 'text-primary' : 'text-surface-0'} />
-            <span>{matchedCodexEntity ? 'Sincronizza Memoria & Scheda Codex' : 'Crea Scheda Codex & Abilita IA'}</span>
-          </button>
-        </div>
-      </div>
-
-      {syncStatusMsg && (
-        <div className="p-3 bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs rounded-xl flex items-center justify-between gap-2 animate-fade-in">
-          <span className="flex items-center gap-2 font-medium">
-            <CheckCircle2 size={15} />
-            {syncStatusMsg}
-          </span>
-          {matchedCodexEntity && (
-            <Link
-              to={`/entities?select=${matchedCodexEntity._id}`}
-              className="underline font-semibold hover:text-emerald-200"
-            >
-              Apri nel Codex &rarr;
-            </Link>
-          )}
-        </div>
-      )}
-
-      {/* 5 Core Dossier Hub Navigation Tiles Grid */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-        {/* Hub 1: Anagrafica & Background */}
-        <button
-          type="button"
-          id="tab-bio-btn"
-          onClick={() => {
-            setActiveTab('biography');
-            if (isSearchActive) clearSearch();
-          }}
-          className={`p-3.5 rounded-xl border text-left transition-all relative flex flex-col justify-between cursor-pointer group ${
-            activeTab === 'biography' && !isSearchActive
-              ? 'border-amber-500/60 bg-amber-500/10 shadow-xs ring-1 ring-amber-500/30'
-              : 'border-surface-2 bg-surface-1 hover:bg-surface-2/70 hover:border-surface-3'
-          }`}
-        >
-          <div className="flex items-start justify-between gap-1 mb-2">
-            <div className="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 group-hover:scale-105 transition-transform">
-              <FileText size={16} />
-            </div>
-            <span className="text-[10px] font-mono uppercase tracking-wider text-amber-400 font-semibold">
-              Hub 1
-            </span>
-          </div>
-          <div>
-            <div className="text-xs font-bold text-content-1 truncate">Anagrafica &amp; Bio</div>
-            <div className="text-[11px] text-content-3 truncate">Identità, Storia &amp; Segreti</div>
-          </div>
-        </button>
-
-        {/* Hub 2: Mente & Memorie */}
-        <button
-          type="button"
-          id="tab-mind-btn"
-          onClick={() => {
-            setActiveTab('mind');
-            if (isSearchActive) clearSearch();
-          }}
-          className={`p-3.5 rounded-xl border text-left transition-all relative flex flex-col justify-between cursor-pointer group ${
-            activeTab === 'mind' && !isSearchActive
-              ? 'border-amber-500/60 bg-amber-500/10 shadow-xs ring-1 ring-amber-500/30'
-              : 'border-surface-2 bg-surface-1 hover:bg-surface-2/70 hover:border-surface-3'
-          }`}
-        >
-          <div className="flex items-start justify-between gap-1 mb-2">
-            <div className="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 group-hover:scale-105 transition-transform">
-              <Brain size={16} />
-            </div>
-            <span className="px-1.5 py-0.5 text-[10px] font-mono rounded bg-surface-2 border border-surface-3 text-content-2">
-              {(characterBio?.evolvingBeliefs?.length || 0) + quests.length}
-            </span>
-          </div>
-          <div>
-            <div className="text-xs font-bold text-content-1 truncate">Mente &amp; Memorie</div>
-            <div className="text-[11px] text-content-3 truncate">Patti, Teorie &amp; Obiettivi</div>
-          </div>
-        </button>
-
-        {/* Hub 3: Sociale & Relazioni */}
-        <button
-          type="button"
-          id="tab-family-btn"
-          onClick={() => {
-            setActiveTab('family_tree');
-            if (isSearchActive) clearSearch();
-          }}
-          className={`p-3.5 rounded-xl border text-left transition-all relative flex flex-col justify-between cursor-pointer group ${
-            activeTab === 'family_tree' && !isSearchActive
-              ? 'border-emerald-500/60 bg-emerald-500/10 shadow-xs ring-1 ring-emerald-500/30'
-              : 'border-surface-2 bg-surface-1 hover:bg-surface-2/70 hover:border-surface-3'
-          }`}
-        >
-          <div className="flex items-start justify-between gap-1 mb-2">
-            <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 group-hover:scale-105 transition-transform">
-              <Users size={16} />
-            </div>
-            <span className="px-1.5 py-0.5 text-[10px] font-mono rounded bg-surface-2 border border-surface-3 text-content-2">
-              {familyRelationsCount}
-            </span>
-          </div>
-          <div>
-            <div className="text-xs font-bold text-content-1 truncate">Sociale &amp; Relazioni</div>
-            <div className="text-[11px] text-content-3 truncate">Party &amp; Albero Famiglia</div>
-          </div>
-        </button>
-
-        {/* Hub 4: Taccuino & DM */}
-        <button
-          type="button"
-          id="tab-notes-btn"
-          onClick={() => {
-            setActiveTab('notes');
-            if (isSearchActive) clearSearch();
-          }}
-          className={`p-3.5 rounded-xl border text-left transition-all relative flex flex-col justify-between cursor-pointer group ${
-            (activeTab === 'notes' || activeTab === 'dm_questions') && !isSearchActive
-              ? 'border-primary/60 bg-primary/10 shadow-xs ring-1 ring-primary/30'
-              : 'border-surface-2 bg-surface-1 hover:bg-surface-2/70 hover:border-surface-3'
-          }`}
-        >
-          <div className="flex items-start justify-between gap-1 mb-2">
-            <div className="w-8 h-8 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center text-primary group-hover:scale-105 transition-transform">
-              <BookOpen size={16} />
-            </div>
-            <span className="px-1.5 py-0.5 text-[10px] font-mono rounded bg-surface-2 border border-surface-3 text-content-2 flex items-center gap-1">
-              {notes.length + dmQuestions.length}
-              {pendingQuestions.length > 0 && (
-                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
-              )}
-            </span>
-          </div>
-          <div>
-            <div className="text-xs font-bold text-content-1 truncate">Taccuino &amp; DM</div>
-            <div className="text-[11px] text-content-3 truncate">Note, OCR &amp; Chiarimenti</div>
-          </div>
-        </button>
-
-        {/* Hub 5: Galleria Visiva & Scrapbook */}
-        <button
-          type="button"
-          id="tab-memories-btn"
-          onClick={() => {
-            setActiveTab('memories');
-            if (isSearchActive) clearSearch();
-          }}
-          className={`p-3.5 rounded-xl border text-left transition-all relative flex flex-col justify-between cursor-pointer group ${
-            (activeTab === 'memories' || activeTab === 'quests') && !isSearchActive
-              ? 'border-purple-500/60 bg-purple-500/10 shadow-xs ring-1 ring-purple-500/30'
-              : 'border-surface-2 bg-surface-1 hover:bg-surface-2/70 hover:border-surface-3'
-          }`}
-        >
-          <div className="flex items-start justify-between gap-1 mb-2">
-            <div className="w-8 h-8 rounded-lg bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400 group-hover:scale-105 transition-transform">
-              <ImageIcon size={16} />
-            </div>
-            <span className="px-1.5 py-0.5 text-[10px] font-mono rounded bg-surface-2 border border-surface-3 text-content-2">
-              {scrapbook.length}
-            </span>
-          </div>
-          <div>
-            <div className="text-xs font-bold text-content-1 truncate">Galleria Visiva</div>
-            <div className="text-[11px] text-content-3 truncate">Memoria Visiva &amp; Scrapbook</div>
-          </div>
-        </button>
-      </div>
-
-      {/* Active Section Info & Unified Search Bar */}
-      <div className="bg-surface-1 border border-surface-2 rounded-xl p-2.5 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 shadow-xs">
-        <div className="flex items-center gap-2 text-xs text-content-2 font-medium">
-          <span className="text-content-3">Sezione attiva:</span>
-          <span className="px-2.5 py-1 rounded-lg bg-surface-2 border border-surface-3 text-content-1 font-semibold flex items-center gap-1.5">
-            {activeTab === 'biography' && <FileText size={13} className="text-amber-400" />}
-            {activeTab === 'family_tree' && <GitBranch size={13} className="text-emerald-400" />}
-            {activeTab === 'notes' && <BookOpen size={13} className="text-primary" />}
-            {activeTab === 'quests' && <Target size={13} className="text-cyan-400" />}
-            {activeTab === 'dm_questions' && <HelpCircle size={13} className="text-amber-400" />}
-            {activeTab === 'memories' && <ImageIcon size={13} className="text-purple-400" />}
-            {activeTab === 'biography' && 'Background & Tratti'}
-            {activeTab === 'family_tree' && 'Albero Genealogico & Relazioni'}
-            {activeTab === 'notes' && 'Taccuino Personale'}
-            {activeTab === 'quests' && 'Obiettivi & Quest'}
-            {activeTab === 'dm_questions' && 'Chiarimenti col DM'}
-            {activeTab === 'memories' && 'Memorie Visive & Scrapbook'}
-          </span>
-        </div>
-
-        {/* Unified Search Input */}
-        <div className="relative w-full sm:w-80 shrink-0">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-content-3 pointer-events-none" />
-          <input
-            type="text"
-            id="character-notes-search-input"
-            placeholder="Cerca in tutto il dossier del PG..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full bg-surface-2/80 border border-surface-3 focus:border-primary rounded-lg pl-9 pr-8 py-1.5 text-xs text-content-1 outline-none transition-colors placeholder:text-content-3/60"
-          />
-          {isSearchActive && (
-            <button
-              type="button"
-              onClick={clearSearch}
-              className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 text-content-3 hover:text-content-1 rounded-full bg-surface-3 transition-colors cursor-pointer"
-              title="Cancella ricerca"
-            >
-              <X size={12} />
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* Categorized Search Filter Bar (Visible only when searching) */}
-      {isSearchActive && (
-        <motion.div
-          initial={{ opacity: 0, y: -4 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="flex flex-wrap items-center justify-between gap-3 bg-surface-1 border border-surface-2 p-3 rounded-lg text-xs"
-        >
-          <div className="flex items-center gap-1.5 text-content-3">
-            <Filter size={13} className="text-primary" />
-            <span>Filtra Risultati ({searchResults.length} trovati):</span>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-1.5">
-            <button
-              type="button"
-              onClick={() => setSearchCategoryFilter('all')}
-              className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer ${
-                searchCategoryFilter === 'all'
-                  ? 'bg-primary text-surface-0'
-                  : 'bg-surface-2 text-content-2 hover:bg-surface-3 hover:text-content-1'
-              }`}
-            >
-              Tutti ({searchCounts.all})
-            </button>
-            <button
-              type="button"
-              onClick={() => setSearchCategoryFilter('notes')}
-              className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer ${
-                searchCategoryFilter === 'notes'
-                  ? 'bg-indigo-500 text-surface-0'
-                  : 'bg-surface-2 text-content-2 hover:bg-surface-3 hover:text-content-1'
-              }`}
-            >
-              Taccuino ({searchCounts.notes})
-            </button>
-            <button
-              type="button"
-              onClick={() => setSearchCategoryFilter('quests')}
-              className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer ${
-                searchCategoryFilter === 'quests'
-                  ? 'bg-cyan-500 text-surface-0'
-                  : 'bg-surface-2 text-content-2 hover:bg-surface-3 hover:text-content-1'
-              }`}
-            >
-              Obiettivi ({searchCounts.quests})
-            </button>
-            <button
-              type="button"
-              onClick={() => setSearchCategoryFilter('dm_questions')}
-              className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer ${
-                searchCategoryFilter === 'dm_questions'
-                  ? 'bg-amber-500 text-surface-0'
-                  : 'bg-surface-2 text-content-2 hover:bg-surface-3 hover:text-content-1'
-              }`}
-            >
-              Chiarimenti DM ({searchCounts.dm_questions})
-            </button>
-            <button
-              type="button"
-              onClick={() => setSearchCategoryFilter('memories')}
-              className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer ${
-                searchCategoryFilter === 'memories'
-                  ? 'bg-purple-500 text-surface-0'
-                  : 'bg-surface-2 text-content-2 hover:bg-surface-3 hover:text-content-1'
-              }`}
-            >
-              Memorie ({searchCounts.memories})
-            </button>
-          </div>
-        </motion.div>
-      )}
-
-      {/* Main Content Area: Search Mode vs Tab Mode */}
-      {isSearchActive ? (
-        /* UNIFIED SEARCH RESULTS VIEW */
-        <div className="space-y-6">
-          <div className="flex items-center justify-between">
-            <h3 className="font-heading text-sm font-semibold text-content-1 flex items-center gap-2">
-              <Search size={15} className="text-primary" />
-              <span>Risultati per: &ldquo;<span className="text-primary">{searchQuery}</span>&rdquo;</span>
-            </h3>
-            <span className="text-xs text-content-3">
-              Pagina {searchPage} di {totalPages}
-            </span>
-          </div>
-
-          {filteredSearchResults.length === 0 ? (
-            <div className="bg-surface-1 border border-surface-2 rounded-xl p-10 text-center space-y-3">
-              <Search size={32} className="mx-auto text-content-3 opacity-40" />
-              <h3 className="font-heading text-sm font-semibold text-content-1">
-                Nessun risultato trovato per la ricerca
-              </h3>
-              <p className="text-xs text-content-3 max-w-md mx-auto">
-                Non ci sono corrispondenze in taccuino personale, obiettivi, chiarimenti al DM o memorie.
-              </p>
-              <button
-                type="button"
-                onClick={clearSearch}
-                className="px-3.5 py-1.5 bg-surface-2 hover:bg-surface-3 text-content-1 rounded-lg text-xs font-medium inline-flex items-center gap-2 mt-1 cursor-pointer transition-colors"
-              >
-                <X size={13} /> Cancella Ricerca
-              </button>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
-              {paginatedResults.map((result) => (
-                <div
-                  key={result.id}
-                  onClick={() => handleSearchResultClick(result)}
-                  className="bg-surface-1 border border-surface-2 hover:border-surface-3 rounded-xl p-4 space-y-3 transition-all cursor-pointer group hover:shadow-xs relative overflow-hidden flex flex-col justify-between"
-                >
-                  <div className="space-y-2.5">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <span
-                          className="p-1 rounded-md text-xs shrink-0"
-                          style={{
-                            backgroundColor: `${result.badgeColor || '#6366f1'}15`,
-                            color: result.badgeColor || '#6366f1',
-                          }}
-                        >
-                          {result.categoryType === 'notes' && <BookOpen size={13} />}
-                          {result.categoryType === 'quests' && <Target size={13} />}
-                          {result.categoryType === 'dm_questions' && <HelpCircle size={13} />}
-                          {result.categoryType === 'memories' && <ImageIcon size={13} />}
-                        </span>
-                        <h4 className="font-heading font-semibold text-sm text-content-1 group-hover:text-primary transition-colors truncate">
-                          {result.title}
-                        </h4>
-                      </div>
-
-                      <span
-                        className="px-2 py-0.5 text-[10px] font-medium rounded-md border shrink-0 uppercase tracking-wider"
-                        style={{
-                          backgroundColor: `${result.badgeColor || '#6366f1'}15`,
-                          borderColor: `${result.badgeColor || '#6366f1'}30`,
-                          color: result.badgeColor || '#6366f1',
-                        }}
-                      >
-                        {result.statusBadge}
-                      </span>
-                    </div>
-
-                    {result.imageUrl && (
-                      <div className="aspect-video w-full rounded-lg overflow-hidden bg-surface-2 relative">
-                        <img
-                          src={result.imageUrl}
-                          alt={result.title}
-                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                        />
-                      </div>
-                    )}
-
-                    <p className="text-xs text-content-3 line-clamp-3 leading-relaxed">
-                      {result.snippet}
-                    </p>
-                  </div>
-
-                  <div className="flex items-center justify-between text-[11px] text-content-3 pt-2.5 border-t border-surface-2/60">
-                    <span className="font-medium text-content-2">
-                      {result.subtitle}
-                    </span>
-                    {result.date && (
-                      <span className="flex items-center gap-1">
-                        <Clock size={11} /> {result.date}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Pagination Controls */}
-          {totalPages > 1 && (
-            <div className="flex items-center justify-center gap-2 pt-3">
-              <button
-                type="button"
-                disabled={searchPage === 1}
-                onClick={() => setSearchPage((p) => Math.max(1, p - 1))}
-                className="px-3 py-1.5 rounded-lg border border-surface-2 bg-surface-1 hover:bg-surface-2 text-content-2 disabled:opacity-40 disabled:pointer-events-none text-xs flex items-center gap-1 cursor-pointer"
-              >
-                <ChevronLeft size={13} /> Precedente
-              </button>
-
-              <div className="flex items-center gap-1 px-2">
-                {Array.from({ length: totalPages }, (_, i) => i + 1).map((pageNum) => (
-                  <button
-                    key={pageNum}
-                    type="button"
-                    onClick={() => setSearchPage(pageNum)}
-                    className={`w-7 h-7 rounded-md text-xs font-medium transition-colors cursor-pointer ${
-                      searchPage === pageNum
-                        ? 'bg-primary text-surface-0 font-bold'
-                        : 'bg-surface-1 border border-surface-2 hover:bg-surface-2 text-content-2'
-                    }`}
-                  >
-                    {pageNum}
-                  </button>
-                ))}
-              </div>
-
-              <button
-                type="button"
-                disabled={searchPage === totalPages}
-                onClick={() => setSearchPage((p) => Math.min(totalPages, p + 1))}
-                className="px-3 py-1.5 rounded-lg border border-surface-2 bg-surface-1 hover:bg-surface-2 text-content-2 disabled:opacity-40 disabled:pointer-events-none text-xs flex items-center gap-1 cursor-pointer"
-              >
-                Successivo <ChevronRight size={13} />
-              </button>
-            </div>
-          )}
-        </div>
-      ) : (
-        /* STANDARD TAB CONTENT */
-        <AnimatePresence mode="wait">
-          {/* HUB 1: ANAGRAFICA & BACKGROUND */}
-          {activeTab === 'biography' && (
-            <motion.div
-              key={`tab_biography_${targetPlayer._id}`}
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -6 }}
-            >
-              <CharacterBackgroundTab
-                key={`bio_${targetPlayer._id}_${characterBio?.updatedAt || 'init'}`}
-                player={targetPlayer}
-                characterBio={characterBio}
-                activeSectionMode="bio"
-                isOtherPlayerView={effectiveIsOtherPlayerView}
-                onBioUpdated={(updated) => setCharacterBio(updated)}
-              />
-            </motion.div>
-          )}
-
-          {/* HUB 2: MENTE & MEMORIE */}
-          {activeTab === 'mind' && (
-            <motion.div
-              key={`tab_mind_${targetPlayer._id}`}
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -6 }}
-            >
-              <CharacterBackgroundTab
-                key={`mind_${targetPlayer._id}_${characterBio?.updatedAt || 'init'}`}
-                player={targetPlayer}
-                characterBio={characterBio}
-                activeSectionMode="mind"
-                isOtherPlayerView={effectiveIsOtherPlayerView}
-                onBioUpdated={(updated) => setCharacterBio(updated)}
-                quests={quests}
-                onOpenCreateQuest={() => {
-                  setEditingQuest(null);
-                  setIsQuestModalOpen(true);
-                }}
-                onEditQuest={(quest) => {
-                  setEditingQuest(quest);
-                  setIsQuestModalOpen(true);
-                }}
-                onToggleQuestStatus={(quest, newStatus) =>
-                  handleToggleQuestStatus(quest, newStatus)
-                }
-                onRequestDeleteQuest={(questId) => setQuestToDelete(questId)}
-              />
-            </motion.div>
-          )}
-
-          {/* HUB 3: SOCIALE & RELAZIONI (PARTY & FAMIGLIA) */}
-          {activeTab === 'family_tree' && (
-            <motion.div
-              key={`tab_family_tree_${targetPlayer._id}`}
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -6 }}
-              className="space-y-6"
-            >
-              <CharacterFamilyTreeTab
-                key={targetPlayer._id}
-                player={targetPlayer}
-                isOtherPlayerView={effectiveIsOtherPlayerView}
-                privacySettings={characterBio?.privacySettings}
-                onPrivacyUpdated={(updatedPrivacy) => {
-                  if (targetPlayer) {
-                    const updatedBio: CharacterBio = {
-                      ...(characterBio || { playerId: targetPlayer._id }),
-                      playerId: targetPlayer._id,
-                      privacySettings: updatedPrivacy,
-                      updatedAt: new Date().toISOString(),
-                    };
-                    CampaignManager.saveCharacterBio(updatedBio);
-                    setCharacterBio(updatedBio);
-                  }
-                }}
-              />
-            </motion.div>
-          )}
-
-          {/* HUB 4: TACCUINO & DM */}
-          {(activeTab === 'notes' || activeTab === 'dm_questions') && (
-            <motion.div
-              key={`tab_notes_dm_${targetPlayer._id}`}
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -6 }}
-              className="space-y-4"
-            >
-              {/* Hub 4 Sub-Navigation Bar */}
-              <div className="flex items-center gap-2 border-b border-surface-2 pb-3">
-                <button
-                  type="button"
-                  onClick={() => setNotesHubSubTab('notes')}
-                  className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-2 ${
-                    notesHubSubTab === 'notes'
-                      ? 'bg-primary/20 text-primary border border-primary/30 shadow-xs'
-                      : 'bg-surface-1 text-content-3 hover:text-content-1 border border-surface-2'
-                  }`}
-                >
-                  <BookOpen size={14} />
-                  <span>Note &amp; Appunti Personali ({notes.length})</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setNotesHubSubTab('dm_questions')}
-                  className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-2 ${
-                    notesHubSubTab === 'dm_questions'
-                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30 shadow-xs'
-                      : 'bg-surface-1 text-content-3 hover:text-content-1 border border-surface-2'
-                  }`}
-                >
-                  <HelpCircle size={14} className="text-amber-400" />
-                  <span>Filo Diretto col DM ({filteredDmQuestions.length})</span>
-                  {pendingQuestions.length > 0 && (
-                    <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-                  )}
-                </button>
-              </div>
-
-              {notesHubSubTab === 'notes' ? (
-                <CharacterNotesTab
-                  key={targetPlayer._id}
-                  notes={notes}
-                  isOtherPlayerView={effectiveIsOtherPlayerView}
-                  privacySettings={characterBio?.privacySettings}
-                  onTogglePrivacy={handleTogglePrivacy}
-                  onOpenCreateNote={() => {
-                    setIsAskDm(false);
-                    setIsNoteModalOpen(true);
-                  }}
-                  onSelectNote={(note) => setSelectedNote(note)}
-                  characterName={targetPlayer.characterName}
-                />
-              ) : (
-                <div className="space-y-4 pt-1">
-                  {!isOwnProfile && !player?.isDm ? (
-                    <div className="bg-surface-1 border border-surface-2 rounded-xl p-10 text-center space-y-3">
-                      <div className="w-12 h-12 rounded-full bg-surface-2 border border-surface-3 flex items-center justify-center mx-auto text-amber-400">
-                        <Lock size={22} />
-                      </div>
-                      <h3 className="font-heading text-sm font-semibold text-content-1">
-                        Comunicazioni con il Dungeon Master Riservate
-                      </h3>
-                      <p className="text-xs text-content-3 max-w-md mx-auto leading-relaxed">
-                        Le conversazioni private e i chiarimenti di regole tra {targetPlayer.characterName} e il Master sono strettamente confidenziali.
-                      </p>
-                    </div>
-                  ) : filteredDmQuestions.length === 0 ? (
-                    <div className="bg-surface-1 border border-surface-2 rounded-xl p-10 text-center space-y-3">
-                      <HelpCircle size={32} className="mx-auto text-amber-400/60" />
-                      <h3 className="font-heading text-sm font-semibold text-content-1">
-                        Nessuna domanda inviata al Dungeon Master
-                      </h3>
-                      <p className="text-xs text-content-3 max-w-md mx-auto">
-                        {isOwnProfile
-                          ? 'Hai dubbi sulla lore, desideri un chiarimento sulle tue capacità o vuoi chiedere un\'azione privata al Master?'
-                          : `${targetPlayer.characterName} non ha ancora inviato domande o richieste private al Dungeon Master.`}
-                      </p>
-                      {isOwnProfile && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setIsAskDm(true);
-                            setIsNoteModalOpen(true);
-                          }}
-                          className="px-3.5 py-1.5 bg-amber-500 text-surface-0 rounded-lg text-xs font-medium inline-flex items-center gap-1.5 mt-1 shadow-xs cursor-pointer hover:bg-amber-600"
-                        >
-                          <HelpCircle size={13} /> Fai una domanda al DM
-                        </button>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="space-y-3.5">
-                      {filteredDmQuestions.map((q) => (
-                        <div
-                          key={q._id}
-                          className="bg-surface-1 border border-surface-2 rounded-xl p-5 space-y-3.5 transition-all shadow-xs"
-                        >
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="space-y-1">
-                              <div className="flex items-center gap-2">
-                                <span className="px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-400 border border-amber-500/20 text-[10px] font-semibold uppercase">
-                                  Chiarimento Riservato
-                                </span>
-                                <h3 className="font-heading font-semibold text-sm text-content-1">
-                                  {q.title}
-                                </h3>
-                              </div>
-                            </div>
-                          </div>
-                          <p className="text-xs text-content-2 leading-relaxed whitespace-pre-wrap">
-                            {q.content}
-                          </p>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-            </motion.div>
-          )}
-
-          {/* HUB 5: GALLERIA VISIVA & SCRAPBOOK */}
-          {(activeTab === 'memories' || activeTab === 'quests') && (
-            <motion.div
-              key={`tab_memories_${targetPlayer._id}`}
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -6 }}
-            >
-              <CharacterMemoriesTab
-                key={targetPlayer._id}
-                memories={scrapbook}
-                isOtherPlayerView={effectiveIsOtherPlayerView}
-                privacySettings={characterBio?.privacySettings}
-                onTogglePrivacy={handleTogglePrivacy}
-                onOpenCreateMemory={() => setIsMemoryModalOpen(true)}
-                onSelectMemory={(mem) => setSelectedMemory(mem)}
-                characterName={targetPlayer.characterName}
-              />
-            </motion.div>
-          )}
-        </AnimatePresence>
-      )}
-
-      {/* ========================================================================= */}
       {/* MODALS */}
-      {/* ========================================================================= */}
-
       {/* 1. EDIT PROFILE & EMBLEM COLOR MODAL */}
       <AnimatePresence>
         {isEditProfileOpen && (

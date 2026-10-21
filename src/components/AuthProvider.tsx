@@ -3,7 +3,6 @@ import { Player, UserAccount, UserPreferences } from '../types';
 import { CampaignManager } from '../store/campaignStore';
 import { CloudSyncService } from '../lib/cloudSync';
 import { UserPreferencesService, DEFAULT_USER_PREFERENCES, normalizeUserPreferences } from '../lib/userPreferencesService';
-import { UserProfileSyncService } from '../lib/userProfileSync';
 import { ApiKeyManager } from '../lib/apiKeyManager';
 import { SupabaseSyncService } from '../lib/supabaseSyncService';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
@@ -87,6 +86,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!account?.id) return;
 
     const unsub = UserPreferencesService.subscribeUserPreferences(account.id, (prefs: UserPreferences) => {
+      if (prefs?.theme) {
+        UserPreferencesService.applyThemeToDOM(prefs.theme);
+      }
       setAccount((prev) => {
         if (!prev) return null;
         return {
@@ -122,9 +124,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         let userAccount: UserAccount;
 
         if (existingSupa) {
+          const localPrefs = UserPreferencesService.getLocalPreferences(uid);
+          const storedThemeId = typeof localStorage !== 'undefined' ? localStorage.getItem('chronicle_theme_class') : null;
           const authPreferences = existingSupa.preferences
-            ? normalizeUserPreferences(existingSupa.preferences, DEFAULT_USER_PREFERENCES)
-            : DEFAULT_USER_PREFERENCES;
+            ? normalizeUserPreferences(existingSupa.preferences, localPrefs)
+            : localPrefs;
+
+          if (storedThemeId && (!authPreferences.theme?.themeId || authPreferences.theme.themeId === 'dungeon-master')) {
+            authPreferences.theme.themeId = storedThemeId;
+          }
 
           userAccount = {
             id: existingSupa.id || uid,
@@ -182,6 +190,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         CampaignManager.setCurrentAccount(userAccount.id);
 
         setAccount(userAccount);
+        if (userAccount.preferences?.theme) {
+          UserPreferencesService.applyThemeToDOM(userAccount.preferences.theme);
+        }
         refreshPlayers();
         ApiKeyManager.preloadAllKeys(uid);
 
@@ -241,7 +252,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
         if (!isMounted) return;
+        if (event === 'TOKEN_REFRESHED') {
+          // Token refreshed in background on window/tab focus - do not re-sync or flash UI
+          return;
+        }
         if (session?.user) {
+          // If already authenticated with this exact user ID, do not re-trigger full sync and cause theme flash
+          const curr = CampaignManager.getCurrentAccount();
+          if (curr && curr.id === session.user.id && event === 'SIGNED_IN') {
+            return;
+          }
           const meta = (session.user.user_metadata || {}) as Record<string, any>;
           await syncUser(
             session.user.id,
@@ -299,7 +319,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             });
             setAccount(result.account);
             refreshPlayers();
-            UserProfileSyncService.syncUserProfile(result.account, uid);
             return { success: true };
           }
         }
@@ -386,7 +405,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         setAccount(result.account);
         refreshPlayers();
-        UserProfileSyncService.syncUserProfile(result.account, uid);
         return { success: true };
       } catch (err: any) {
         console.error('Registration error:', err);
@@ -475,7 +493,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (updated) {
         setAccount(updated);
         refreshPlayers();
-        UserProfileSyncService.syncUserProfile(updated);
         return true;
       }
       return false;

@@ -69,7 +69,7 @@ export function Pagination({
         {onPageSizeChange && pageSize && (
           <div className="flex items-center gap-1.5 ml-1">
             <span className="hidden sm:inline text-content-3">Mostra:</span>
-            <div className="flex items-center bg-surface-2 rounded-lg p-0.5 border border-surface-3">
+            <div className="flex items-center bg-transparent rounded-lg p-0.5 border border-surface-3">
               {pageSizeOptions.map((opt) => (
                 <button
                   key={opt}
@@ -97,7 +97,7 @@ export function Pagination({
             onClick={() => onPageChange(currentPage - 1)}
             disabled={currentPage === 1}
             title="Pagina precedente"
-            className="w-7 h-7 rounded-lg bg-surface-2 border border-surface-3 text-content-2 hover:text-primary hover:border-primary/50 disabled:opacity-30 disabled:pointer-events-none transition-all flex items-center justify-center cursor-pointer"
+            className="w-7 h-7 rounded-lg bg-transparent border border-surface-3 text-content-2 hover:text-primary hover:border-primary/50 disabled:opacity-30 disabled:pointer-events-none transition-all flex items-center justify-center cursor-pointer"
           >
             <ChevronLeft size={14} />
           </button>
@@ -121,7 +121,7 @@ export function Pagination({
                   className={`min-w-[28px] h-7 px-1.5 rounded-lg flex items-center justify-center text-[11px] font-medium font-mono transition-all cursor-pointer ${
                     isActive
                       ? 'bg-primary text-surface-0 font-bold shadow-xs'
-                      : 'bg-surface-2 border border-surface-3 text-content-2 hover:text-content-1 hover:border-surface-3/80'
+                      : 'bg-transparent border border-surface-3 text-content-2 hover:text-content-1 hover:border-surface-3/80'
                   }`}
                 >
                   {pageNum}
@@ -135,7 +135,7 @@ export function Pagination({
             onClick={() => onPageChange(currentPage + 1)}
             disabled={currentPage === totalPages}
             title="Pagina successiva"
-            className="w-7 h-7 rounded-lg bg-surface-2 border border-surface-3 text-content-2 hover:text-primary hover:border-primary/50 disabled:opacity-30 disabled:pointer-events-none transition-all flex items-center justify-center cursor-pointer"
+            className="w-7 h-7 rounded-lg bg-transparent border border-surface-3 text-content-2 hover:text-primary hover:border-primary/50 disabled:opacity-30 disabled:pointer-events-none transition-all flex items-center justify-center cursor-pointer"
           >
             <ChevronRight size={14} />
           </button>

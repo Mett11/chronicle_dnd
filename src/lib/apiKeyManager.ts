@@ -526,22 +526,35 @@ export class ApiKeyManager {
     const camp = this.getCampaignKeys();
     const pers = this.getPersonalKeys();
 
+    const clean = (val?: string) => (val && typeof val === 'string' && !val.startsWith('enc:') ? val.trim() : '');
+
+    const cGemini = clean(camp.geminiKey);
+    const pGemini = clean(pers.geminiKey);
+    const cOpenRouter = clean(camp.openrouterKey);
+    const pOpenRouter = clean(pers.openrouterKey);
+    const cGroq = clean(camp.groqApiKey);
+    const pGroq = clean(pers.groqApiKey);
+    const cCfId = clean(camp.cloudflareAccountId);
+    const pCfId = clean(pers.cloudflareAccountId);
+    const cCfToken = clean(camp.cloudflareApiToken);
+    const pCfToken = clean(pers.cloudflareApiToken);
+
     if (mode === 'campaign') {
       return {
-        geminiKey: camp.geminiKey || pers.geminiKey || '',
-        openrouterKey: camp.openrouterKey || pers.openrouterKey || '',
-        groqApiKey: camp.groqApiKey || pers.groqApiKey || '',
-        cloudflareAccountId: camp.cloudflareAccountId || pers.cloudflareAccountId || '',
-        cloudflareApiToken: camp.cloudflareApiToken || pers.cloudflareApiToken || '',
+        geminiKey: cGemini || pGemini || '',
+        openrouterKey: cOpenRouter || pOpenRouter || '',
+        groqApiKey: cGroq || pGroq || '',
+        cloudflareAccountId: cCfId || pCfId || '',
+        cloudflareApiToken: cCfToken || pCfToken || '',
       };
     }
 
     return {
-      geminiKey: pers.geminiKey || camp.geminiKey || '',
-      openrouterKey: pers.openrouterKey || camp.openrouterKey || '',
-      groqApiKey: pers.groqApiKey || camp.groqApiKey || '',
-      cloudflareAccountId: pers.cloudflareAccountId || camp.cloudflareAccountId || '',
-      cloudflareApiToken: pers.cloudflareApiToken || camp.cloudflareApiToken || '',
+      geminiKey: pGemini || cGemini || '',
+      openrouterKey: pOpenRouter || cOpenRouter || '',
+      groqApiKey: pGroq || cGroq || '',
+      cloudflareAccountId: pCfId || cCfId || '',
+      cloudflareApiToken: pCfToken || cCfToken || '',
     };
   }
 
@@ -556,22 +569,35 @@ export class ApiKeyManager {
       this.preloadPersonalKeys(uid),
     ]);
 
+    const clean = (val?: string) => (val && typeof val === 'string' && !val.startsWith('enc:') ? val.trim() : '');
+
+    const cGemini = clean(camp.geminiKey);
+    const pGemini = clean(pers.geminiKey);
+    const cOpenRouter = clean(camp.openrouterKey);
+    const pOpenRouter = clean(pers.openrouterKey);
+    const cGroq = clean(camp.groqApiKey);
+    const pGroq = clean(pers.groqApiKey);
+    const cCfId = clean(camp.cloudflareAccountId);
+    const pCfId = clean(pers.cloudflareAccountId);
+    const cCfToken = clean(camp.cloudflareApiToken);
+    const pCfToken = clean(pers.cloudflareApiToken);
+
     if (mode === 'campaign') {
       return {
-        geminiKey: camp.geminiKey || pers.geminiKey || '',
-        openrouterKey: camp.openrouterKey || pers.openrouterKey || '',
-        groqApiKey: camp.groqApiKey || pers.groqApiKey || '',
-        cloudflareAccountId: camp.cloudflareAccountId || pers.cloudflareAccountId || '',
-        cloudflareApiToken: camp.cloudflareApiToken || pers.cloudflareApiToken || '',
+        geminiKey: cGemini || pGemini || '',
+        openrouterKey: cOpenRouter || pOpenRouter || '',
+        groqApiKey: cGroq || pGroq || '',
+        cloudflareAccountId: cCfId || pCfId || '',
+        cloudflareApiToken: cCfToken || pCfToken || '',
       };
     }
 
     return {
-      geminiKey: pers.geminiKey || camp.geminiKey || '',
-      openrouterKey: pers.openrouterKey || camp.openrouterKey || '',
-      groqApiKey: pers.groqApiKey || camp.groqApiKey || '',
-      cloudflareAccountId: pers.cloudflareAccountId || camp.cloudflareAccountId || '',
-      cloudflareApiToken: pers.cloudflareApiToken || camp.cloudflareApiToken || '',
+      geminiKey: pGemini || cGemini || '',
+      openrouterKey: pOpenRouter || cOpenRouter || '',
+      groqApiKey: pGroq || cGroq || '',
+      cloudflareAccountId: pCfId || cCfId || '',
+      cloudflareApiToken: pCfToken || cCfToken || '',
     };
   }
 

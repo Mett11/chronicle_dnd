@@ -646,7 +646,6 @@ html, body {
 
 h1, h2, h3, h4, h5, h6 {
   font-family: var(--font-heading);
-  color: var(--color-content-1);
   line-height: 1.1;
   letter-spacing: -0.02em;
 }
@@ -805,5 +804,58 @@ html, body, .custom-scrollbar {
 .font-uncial { font-family: 'Uncial Antiqua', cursive, serif; }
 .font-almendra { font-family: 'Almendra', Georgia, serif; }
 .font-pirata { font-family: 'Pirata One', cursive, sans-serif; }
+
+/* Accessibility, Contrast & Uniform Light Theming */
+html.light,
+[data-theme$="-light"] {
+  color-scheme: light;
+}
+html.dark,
+:root:not([data-theme$="-light"]) {
+  color-scheme: dark;
+}
+
+html.light,
+html.light body,
+[data-theme$="-light"],
+[data-theme$="-light"] body {
+  background-color: var(--color-surface-0);
+  color: var(--color-content-1);
+}
+
+html.light ::-webkit-scrollbar-thumb,
+[data-theme$="-light"] ::-webkit-scrollbar-thumb,
+html.light .custom-scrollbar::-webkit-scrollbar-thumb,
+[data-theme$="-light"] .custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.22);
+}
+
+html.light ::-webkit-scrollbar-thumb:hover,
+[data-theme$="-light"] ::-webkit-scrollbar-thumb:hover,
+html.light .custom-scrollbar::-webkit-scrollbar-thumb:hover,
+[data-theme$="-light"] .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.4);
+}
+
+html.light,
+html.light body,
+html.light .custom-scrollbar,
+[data-theme$="-light"],
+[data-theme$="-light"] body,
+[data-theme$="-light"] .custom-scrollbar {
+  scrollbar-color: rgba(0, 0, 0, 0.22) transparent;
+}
+
+/* Hide scrollbar for Chrome, Safari, Opera, Edge, Firefox */
+.no-scrollbar::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+.no-scrollbar {
+  -ms-overflow-style: none !important;
+  scrollbar-width: none !important;
+}
+
 
 

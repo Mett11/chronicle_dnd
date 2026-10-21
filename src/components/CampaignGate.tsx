@@ -24,6 +24,7 @@ import {
   Share2,
 } from 'lucide-react';
 import { CampaignManager } from '../store/campaignStore';
+import { normalizeCampaignRole } from '../types';
 import { useAuth } from './AuthProvider';
 import { CampaignMeta, CampaignProfile } from '../types';
 import { ConfirmModal } from './ConfirmModal';
@@ -358,7 +359,7 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
     const campDmEmail = (camp.dmEmail || '').toLowerCase().trim();
     if (campDmEmail && userEmail && campDmEmail === userEmail) return true;
     const member = CampaignManager.getCampaignMember(cleanCode, account.id, account.email);
-    if (member && (member.role === 'dm' || member.role === 'co-dm' || member.role === 'comaster')) return true;
+    if (member && (member.role === 'dm' || normalizeCampaignRole(member.role) === 'co_dm')) return true;
     const profile = account.campaignProfiles?.[cleanCode];
     if (profile && (profile.isCoDm || profile.isCoMaster || profile.tags?.includes('Co-Master'))) return true;
     return false;
@@ -491,11 +492,12 @@ export function CampaignGate({ onEnter }: CampaignGateProps) {
         )
       );
 
-      // If user was previously expelled, entering the valid campaign code clears the expulsion and allows rejoining
-      if (isExpelled && existing.expelledAccountIds) {
-        existing.expelledAccountIds = existing.expelledAccountIds.filter(
-          (id) => id !== account?.id && (!account?.email || id.toLowerCase() !== account.email.toLowerCase())
+      if (isExpelled) {
+        setJoinError(
+          `Sei stato rimosso da questa campagna dal Dungeon Master e non puoi accedere.`
         );
+        setIsSearching(false);
+        return;
       }
 
       // Clear pending code from localStorage & clean URL query params once verified

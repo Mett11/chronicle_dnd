@@ -175,26 +175,15 @@ export class UserPreferencesService {
    */
   static applyThemeToDOM(theme: UserPreferences['theme']) {
     if (typeof document === 'undefined') return;
-    const targetThemeId = theme.themeId || (typeof localStorage !== 'undefined' ? localStorage.getItem('chronicle_theme_class') : null) || 'warlock';
+    const stored = typeof localStorage !== 'undefined' ? localStorage.getItem('chronicle_theme_class') : null;
+    let targetThemeId = theme?.themeId;
+    if (!targetThemeId || (targetThemeId === 'dungeon-master' && stored && stored !== 'dungeon-master')) {
+      targetThemeId = stored || 'dungeon-master';
+    }
     try {
       applyTheme(targetThemeId);
     } catch (e) {
       console.warn('[UserPreferencesService] applyTheme failed, fallbacking:', e);
-    }
-
-    const root = document.documentElement;
-    if (theme.darkMode !== undefined) {
-      if (theme.darkMode) {
-        root.classList.add('dark');
-        root.classList.remove('light');
-      } else {
-        root.classList.remove('dark');
-        root.classList.add('light');
-      }
-    }
-
-    if (theme.colorPalette) {
-      root.style.setProperty('--primary-color', theme.colorPalette);
     }
   }
 
@@ -362,6 +351,7 @@ export class UserPreferencesService {
     const normalizedAccountPrefs = normalizeUserPreferences(accountPreferences, DEFAULT_USER_PREFERENCES);
 
     const mergedTheme: UserPreferences['theme'] = {
+      themeId: authoritativePrefs.theme.themeId || normalizedAccountPrefs.theme.themeId || 'dungeon-master',
       colorPalette: authoritativePrefs.theme.colorPalette || normalizedAccountPrefs.theme.colorPalette,
       darkMode: authoritativePrefs.theme.darkMode !== undefined ? authoritativePrefs.theme.darkMode : normalizedAccountPrefs.theme.darkMode,
       campaignTitleFont: authoritativePrefs.theme.campaignTitleFont || normalizedAccountPrefs.theme.campaignTitleFont,

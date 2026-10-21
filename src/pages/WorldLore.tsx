@@ -60,94 +60,81 @@ import { WorldLoreService, DecomposedBiteSuggestion } from '../lib/worldLoreServ
 export const WORLD_LORE_CATEGORIES: {
   id: WorldLoreCategory;
   label: string;
-  icon: string;
   color: string;
   description: string;
 }[] = [
   {
     id: 'pantheon',
     label: 'Deità & Religioni',
-    icon: '⚡',
-    color: 'text-amber-400 border-amber-500/30 bg-amber-500/10',
+    color: 'text-amber-400',
     description: 'Dei, culti divini, dogmi sacri, ordini sacerdotali e poteri celesti',
   },
   {
     id: 'cosmology',
     label: 'Cosmologia & Piani',
-    icon: '🌌',
-    color: 'text-indigo-400 border-indigo-500/30 bg-indigo-500/10',
+    color: 'text-indigo-400',
     description: 'Origine del cosmo, piani di esistenza, il Piano Astrale e le sfere celesti',
   },
   {
     id: 'magic_laws',
     label: 'Leggi della Magia',
-    icon: '✨',
-    color: 'text-sky-400 border-sky-500/30 bg-sky-500/10',
+    color: 'text-sky-400',
     description: 'La Trama magica, scuole d\'arcano, formule proibite e flussi di mana',
   },
   {
     id: 'ancient_history',
     label: 'Storia Antica & Ere',
-    icon: '⏳',
-    color: 'text-rose-400 border-rose-500/30 bg-rose-500/10',
+    color: 'text-rose-400',
     description: 'Imperi caduti, cataclismi leggendari, ere passate e cronache dimenticate',
   },
   {
     id: 'customs_cultures',
     label: 'Usanze & Popoli',
-    icon: '📜',
-    color: 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10',
+    color: 'text-emerald-400',
     description: 'Tradizioni culturali, lingue, tabù popolari, feste e leggi dei regni',
   },
   {
     id: 'factions_orders',
     label: 'Ordini & Fazioni',
-    icon: '🛡️',
-    color: 'text-purple-400 border-purple-500/30 bg-purple-500/10',
+    color: 'text-purple-400',
     description: 'Ordini cavallereschi, confraternite segrete e gilde che plasmano il mondo',
   },
   {
     id: 'geography_nature',
     label: 'Terre & Natura Mistica',
-    icon: '🏔️',
-    color: 'text-teal-400 border-teal-500/30 bg-teal-500/10',
+    color: 'text-teal-400',
     description: 'Regioni mistiche, terre selvagge, anomalie ambientali e climi magici',
   },
   {
     id: 'general',
     label: 'Principi Fondamentali',
-    icon: '📖',
-    color: 'text-content-2 border-surface-3 bg-surface-2/60',
+    color: 'text-content-2',
     description: 'Miti fondativi, concetti universali e primer generale della campagna',
   },
 ];
 
 export const LORE_LEVEL_CONFIG: Record<
   LoreBiteLevel,
-  { label: string; badgeClass: string; icon: string; description: string }
+  { label: string; badgeClass: string; description: string }
 > = {
   public: {
     label: 'Sapere Popolare',
-    badgeClass: 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30',
-    icon: '👥',
+    badgeClass: 'text-emerald-400',
     description: 'Conoscenza comune diffusa tra la gente del continente',
   },
   specialized: {
     label: 'Conoscenza Iniziatica',
-    badgeClass: 'bg-sky-500/10 text-sky-300 border-sky-500/30',
-    icon: '🎓',
+    badgeClass: 'text-sky-400',
     description: 'Appannaggio di studiosi, sacerdoti, chierici o background specifici',
   },
   esoteric: {
     label: 'Mito Arcano / Dimenticato',
-    badgeClass: 'bg-purple-500/10 text-purple-300 border-purple-500/30',
-    icon: '🔮',
+    badgeClass: 'text-purple-400',
     description: 'Verità accessibile solo tramite tomi antichi, maestri o indagini profonde',
   },
   secret: {
     label: 'Verità Proibita',
-    badgeClass: 'bg-rose-500/10 text-rose-300 border-rose-500/30',
-    icon: '🗝️',
+    badgeClass: 'text-rose-400',
     description: 'Segreto del Master o rivelazione sconvolgente scoperta nel corso della trama',
   },
 };
@@ -340,80 +327,85 @@ export function WorldLore() {
   return (
     <div className="flex-1 flex flex-col h-full min-h-0 bg-surface-0 overflow-hidden">
       {/* Top Header Bar */}
-      <header className="px-4 sm:px-6 py-3.5 border-b border-surface-2 bg-surface-1/80 backdrop-blur-md flex flex-wrap items-center justify-between gap-3 shrink-0">
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="w-10 h-10 rounded-xl bg-primary/10 text-primary border border-primary/25 flex items-center justify-center shrink-0 shadow-xs">
-            <Globe size={20} />
+      <header className="border-b border-surface-2 bg-surface-1/80 backdrop-blur-md shrink-0">
+        <div className="max-w-[1700px] mx-auto w-full px-4 sm:px-8 lg:px-10 py-3.5 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-xl bg-primary/10 text-primary border border-primary/25 flex items-center justify-center shrink-0 shadow-xs">
+              <Globe size={20} />
+            </div>
+            <div className="min-w-0">
+              <h1 className="text-base sm:text-lg font-cinzel font-bold text-content-1 tracking-wide truncate flex items-center gap-2">
+                <span>World Lore &amp; Principi del Mondo</span>
+              </h1>
+              <p className="text-xs text-content-3 truncate">
+                Cosmogonia, panteon, leggi dell'arcano e bagaglio di conoscenze del party
+              </p>
+            </div>
           </div>
-          <div className="min-w-0">
-            <h1 className="text-base sm:text-lg font-cinzel font-bold text-content-1 tracking-wide truncate flex items-center gap-2">
-              <span>World Lore &amp; Principi del Mondo</span>
-            </h1>
-            <p className="text-xs text-content-3 truncate">
-              Cosmogonia, panteon, leggi dell'arcano e bagaglio di conoscenze del party
-            </p>
-          </div>
-        </div>
 
-        <div className="flex items-center gap-2 ml-auto">
-          {canCreateLore && (
-            <button
-              type="button"
-              onClick={handleOpenCreateModal}
-              className="px-3.5 py-1.5 rounded-xl bg-primary text-surface-0 hover:bg-primary-hover font-sans text-xs font-semibold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
-            >
-              <Plus size={15} />
-              <span>Nuovo Articolo di Lore</span>
-            </button>
-          )}
+          <div className="flex items-center gap-2 ml-auto">
+            {canCreateLore && (
+              <button
+                type="button"
+                onClick={handleOpenCreateModal}
+                className="px-3.5 py-1.5 rounded-xl bg-primary text-surface-0 hover:bg-primary-hover font-sans text-xs font-semibold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
+              >
+                <Plus size={15} />
+                <span>Nuovo Articolo di Lore</span>
+              </button>
+            )}
+          </div>
         </div>
       </header>
 
       {/* Filter and Category Strip */}
-      <div className="px-4 sm:px-6 py-2.5 border-b border-surface-2/70 bg-surface-1/40 flex items-center gap-2 overflow-x-auto custom-scrollbar shrink-0">
-        <button
-          type="button"
-          onClick={() => setSelectedCategory('all')}
-          className={`px-3 py-1 rounded-lg text-xs font-medium transition-all shrink-0 cursor-pointer ${
-            selectedCategory === 'all'
-              ? 'bg-primary text-surface-0 font-semibold shadow-xs'
-              : 'bg-surface-2 text-content-2 hover:bg-surface-3 hover:text-content-1'
-          }`}
-        >
-          Tutte le Voci ({articles.length})
-        </button>
+      <nav className="bg-surface-1 border-b border-surface-2 shrink-0">
+        <div className="max-w-[1700px] mx-auto w-full px-4 sm:px-8 lg:px-10 flex items-center gap-6 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden text-xs">
+          <button
+            type="button"
+            onClick={() => setSelectedCategory('all')}
+            className={`flex items-center gap-2 py-2.5 -mb-px border-b-2 whitespace-nowrap transition-colors cursor-pointer ${
+              selectedCategory === 'all'
+                ? 'border-primary text-content-1 font-semibold'
+                : 'border-transparent text-content-3 hover:text-content-1'
+            }`}
+          >
+            <span>Tutte le Voci</span>
+            <span className="font-mono text-[10px] text-content-3">({articles.length})</span>
+          </button>
 
-        {WORLD_LORE_CATEGORIES.map((cat) => {
-          const count = articles.filter((a) => a.category === cat.id).length;
-          return (
-            <button
-              key={cat.id}
-              type="button"
-              onClick={() => setSelectedCategory(cat.id)}
-              className={`px-3 py-1 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all shrink-0 cursor-pointer ${
-                selectedCategory === cat.id
-                  ? 'bg-primary text-surface-0 font-semibold shadow-xs'
-                  : 'bg-surface-2 text-content-2 hover:bg-surface-3 hover:text-content-1'
-              }`}
-            >
-              <span>{cat.icon}</span>
-              <span>{cat.label}</span>
-              {count > 0 && <span className="text-[10px] opacity-80">({count})</span>}
-            </button>
-          );
-        })}
-      </div>
+          {WORLD_LORE_CATEGORIES.map((cat) => {
+            const count = articles.filter((a) => a.category === cat.id).length;
+            const isActive = selectedCategory === cat.id;
+            return (
+              <button
+                key={cat.id}
+                type="button"
+                onClick={() => setSelectedCategory(cat.id)}
+                className={`flex items-center gap-2 py-2.5 -mb-px border-b-2 whitespace-nowrap transition-colors cursor-pointer ${
+                  isActive
+                    ? 'border-primary text-content-1 font-semibold'
+                    : 'border-transparent text-content-3 hover:text-content-1'
+                }`}
+              >
+                <span>{cat.label}</span>
+                {count > 0 && <span className="font-mono text-[10px] text-content-3">({count})</span>}
+              </button>
+            );
+          })}
+        </div>
+      </nav>
 
       {/* Main Two-Pane View */}
-      <div className="flex-1 flex min-h-0 overflow-hidden">
+      <div className="max-w-[1700px] mx-auto w-full px-4 sm:px-8 lg:px-10 flex-1 flex min-h-0 overflow-hidden">
         {/* Left Sidebar: Article Search & List */}
         <aside
-          className={`w-full lg:w-80 xl:w-96 border-r border-surface-2 bg-surface-1/30 flex flex-col shrink-0 ${
+          className={`w-full lg:w-80 xl:w-96 border-r border-surface-2 bg-transparent flex flex-col shrink-0 ${
             selectedArticle ? 'hidden lg:flex' : 'flex'
           }`}
         >
           {/* Search and Secondary Filter Bar */}
-          <div className="p-3 border-b border-surface-2 space-y-2 bg-surface-1/50">
+          <div className="p-3 border-b border-surface-2 space-y-2 bg-transparent">
             <div className="relative">
               <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-content-3" />
               <input
@@ -500,39 +492,35 @@ export function WorldLore() {
                     onClick={() => {
                       setSelectedArticleId(art._id);
                     }}
-                    className={`w-full text-left p-3 rounded-xl border transition-all cursor-pointer space-y-1.5 ${
+                    className={`w-full text-left px-4 py-3 transition-all cursor-pointer flex flex-col gap-1 border-b border-surface-2/60 ${
                       isSelected
-                        ? 'bg-surface-2 border-primary/40 shadow-xs'
-                        : 'bg-surface-1/60 border-surface-2/80 hover:bg-surface-2/60 hover:border-surface-3'
+                        ? 'border-l-[3px] border-l-primary bg-surface-2/60 text-content-1'
+                        : 'border-l-[3px] border-l-transparent hover:bg-surface-2/30 text-content-2'
                     }`}
                   >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className={`text-[10px] font-mono px-2 py-0.5 rounded-md border font-medium ${catDef.color}`}>
-                        {catDef.icon} {catDef.label}
+                    <div className="flex items-center justify-between gap-2 min-w-0">
+                      <span className="text-[10px] font-mono tracking-wider text-primary uppercase">
+                        {catDef.label}
                       </span>
                       {art.dmOnly && (
-                        <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 flex items-center gap-1">
-                          <Lock size={10} />
-                          <span>DM Only</span>
+                        <span className="text-[9px] font-mono px-1.5 py-0.5 rounded-[2px] bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                          DM
                         </span>
                       )}
                     </div>
 
-                    <h3 className="text-xs font-semibold text-content-1 font-serif leading-snug truncate">
+                    <h3 className="text-xs font-semibold text-content-1 font-cinzel leading-snug truncate">
                       {art.title}
                     </h3>
 
                     {art.subtitle && (
-                      <p className="text-[11px] text-content-3 truncate">{art.subtitle}</p>
+                      <p className="text-[10px] text-content-3 font-mono truncate">{art.subtitle}</p>
                     )}
 
-                    {/* Footer stats: Bites and known by indicator */}
-                    <div className="flex items-center justify-between pt-1 border-t border-surface-3/50 text-[10px] text-content-3 font-mono">
-                      <span>
-                        🧩 {totalBites} {totalBites === 1 ? 'nozione' : 'nozioni'}
-                      </span>
+                    <div className="flex items-center justify-between pt-1 text-[10px] text-content-3 font-mono">
+                      <span>{totalBites} {totalBites === 1 ? 'nozione' : 'nozioni'}</span>
                       {esotericBites > 0 && (
-                        <span className="text-purple-400">🔮 {esotericBites} arcani/segreti</span>
+                        <span className="text-purple-400">{esotericBites} segreti</span>
                       )}
                     </div>
                   </button>
@@ -547,7 +535,7 @@ export function WorldLore() {
           selectedArticle ? 'flex' : 'hidden lg:flex'
         }`}>
           {selectedArticle ? (
-            <div className="p-4 sm:p-6 lg:p-8 max-w-5xl mx-auto w-full space-y-8">
+            <div className="p-4 sm:p-6 lg:p-8 max-w-[1700px] mx-auto w-full space-y-8">
               {/* Back to List on mobile */}
               <div className="lg:hidden flex items-center gap-2">
                 <button
@@ -560,23 +548,23 @@ export function WorldLore() {
                 </button>
               </div>
 
-              {/* Article Header Card */}
-              <div className="p-5 sm:p-6 rounded-2xl bg-surface-1 border border-surface-2 space-y-4 shadow-sm relative overflow-hidden">
+              {/* Article Header */}
+              <div className="border-b border-surface-2 pb-6 space-y-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div className="flex items-center gap-2 flex-wrap">
                     {(() => {
                       const catDef = WORLD_LORE_CATEGORIES.find((c) => c.id === selectedArticle.category) || WORLD_LORE_CATEGORIES[7];
                       return (
-                        <span className={`text-xs font-mono px-2.5 py-1 rounded-lg border font-semibold ${catDef.color}`}>
-                          {catDef.icon} {catDef.label}
+                        <span className="text-xs font-mono uppercase tracking-wider text-primary font-semibold">
+                          {catDef.label}
                         </span>
                       );
                     })()}
 
                     {selectedArticle.dmOnly && (
-                      <span className="text-xs font-mono px-2.5 py-1 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/25 flex items-center gap-1.5">
-                        <Lock size={12} />
-                        <span>Riservato al Master</span>
+                      <span className="text-xs font-mono px-2 py-0.5 rounded-[2px] bg-amber-500/10 text-amber-400 border border-amber-500/25 flex items-center gap-1">
+                        <Lock size={11} />
+                        <span>DM</span>
                       </span>
                     )}
 
@@ -585,7 +573,7 @@ export function WorldLore() {
                         {selectedArticle.tags.map((t, idx) => (
                           <span
                             key={idx}
-                            className="text-[10px] font-mono px-2 py-0.5 rounded bg-surface-2 text-content-3 border border-surface-3"
+                            className="text-[10px] font-mono px-1.5 py-0.5 rounded-[2px] bg-surface-2 text-content-3"
                           >
                             #{t}
                           </span>
@@ -600,10 +588,10 @@ export function WorldLore() {
                       <button
                         type="button"
                         onClick={() => handleOpenEditModal(selectedArticle)}
-                        className="p-2 rounded-lg bg-surface-2 hover:bg-surface-3 text-content-2 hover:text-content-1 text-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+                        className="p-1.5 rounded-[2px] bg-surface-2 hover:bg-surface-3 text-content-2 hover:text-content-1 text-xs transition-colors flex items-center gap-1.5 cursor-pointer"
                         title="Modifica articolo e nozioni"
                       >
-                        <Edit3 size={14} />
+                        <Edit3 size={13} />
                         <span className="hidden sm:inline">Modifica</span>
                       </button>
                     )}
@@ -612,10 +600,10 @@ export function WorldLore() {
                       <button
                         type="button"
                         onClick={() => setArticleToDelete(selectedArticle)}
-                        className="p-2 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 text-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+                        className="p-1.5 rounded-[2px] bg-surface-2 hover:bg-surface-3 text-rose-400 text-xs transition-colors flex items-center gap-1.5 cursor-pointer"
                         title="Elimina articolo di lore"
                       >
-                        <Trash2 size={14} />
+                        <Trash2 size={13} />
                         <span className="hidden sm:inline">Elimina</span>
                       </button>
                     )}
@@ -634,37 +622,26 @@ export function WorldLore() {
                 </div>
 
                 {selectedArticle.summary && (
-                  <div className="p-3.5 rounded-xl bg-surface-2/60 border border-surface-3/80 text-xs text-content-2 leading-relaxed font-sans">
-                    <span className="font-semibold text-content-1 font-mono uppercase tracking-wider text-[10px] block mb-1">
-                      Sommario Sintetico
-                    </span>
+                  <p className="text-xs text-content-2 leading-relaxed font-sans">
                     {selectedArticle.summary}
-                  </div>
+                  </p>
                 )}
               </div>
 
               {/* Granular Knowledge & Lore Bites Section */}
-              <section className="space-y-3.5">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className="w-6 h-6 rounded-lg bg-primary/10 text-primary flex items-center justify-center">
-                      <Sparkles size={14} />
-                    </div>
-                    <h3 className="text-sm font-cinzel font-bold text-content-1 uppercase tracking-wider">
-                      Nozioni Granulari &amp; Chi le Conosce nel Party ({selectedArticle.bites.length})
-                    </h3>
-                  </div>
-                  <span className="text-[11px] text-content-3 font-mono">
-                    Livelli di profondità cosmica
-                  </span>
+              <section className="space-y-4">
+                <div className="flex items-center justify-between border-b border-surface-2/60 pb-2">
+                  <h3 className="text-xs font-mono uppercase tracking-wider text-content-3">
+                    Nozioni Granulari &amp; Portatori ({selectedArticle.bites.length})
+                  </h3>
                 </div>
 
                 {selectedArticle.bites.length === 0 ? (
-                  <div className="p-4 rounded-xl bg-surface-1 border border-surface-2 text-center text-xs text-content-3 italic">
-                    Nessuna nozione granulare estratta. Clicca su Modifica per aggiungerne con o senza l'IA.
-                  </div>
+                  <p className="text-xs text-content-3 italic py-4">
+                    Nessuna nozione granulare estratta. Clicca su Modifica per aggiungerne.
+                  </p>
                 ) : (
-                  <div className="grid grid-cols-1 gap-3">
+                  <div className="divide-y divide-surface-2/60">
                     {selectedArticle.bites.map((bite) => {
                       const levelConf = LORE_LEVEL_CONFIG[bite.level] || LORE_LEVEL_CONFIG.public;
                       const knownPlayers = bite.knownBy.filter((k) => k.type === 'player');
@@ -676,17 +653,17 @@ export function WorldLore() {
                       return (
                         <div
                           key={bite.id}
-                          className="p-4 rounded-xl bg-surface-1 border border-surface-2 hover:border-surface-3 transition-colors space-y-3"
+                          className="py-4 space-y-2.5 first:pt-0"
                         >
                           <div className="flex flex-wrap items-start justify-between gap-2">
                             <div className="space-y-1 flex-1 min-w-[240px]">
                               <div className="flex items-center gap-2 flex-wrap">
-                                <span className={`text-[10px] font-mono px-2 py-0.5 rounded border font-semibold ${levelConf.badgeClass}`}>
-                                  {levelConf.icon} {levelConf.label}
+                                <span className="text-[10px] font-mono text-primary uppercase tracking-wider font-semibold">
+                                  {levelConf.label}
                                 </span>
 
                                 {bite.customTag && (
-                                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-surface-2 text-content-2 border border-surface-3">
+                                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded-[2px] bg-surface-2 text-content-3">
                                     {bite.customTag}
                                   </span>
                                 )}
@@ -702,21 +679,21 @@ export function WorldLore() {
                               <button
                                 type="button"
                                 onClick={() => handleToggleAllPartyForBite(selectedArticle, bite)}
-                                className={`px-2.5 py-1 rounded-lg text-[11px] font-medium border transition-colors flex items-center gap-1 cursor-pointer ${
+                                className={`px-2.5 py-1 rounded-[2px] text-[11px] font-mono border transition-colors flex items-center gap-1 cursor-pointer ${
                                   isKnownByAllParty
                                     ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
-                                    : 'bg-surface-2 text-content-2 hover:text-content-1 border-surface-3'
+                                    : 'bg-surface-2 text-content-3 hover:text-content-1 border-surface-2'
                                 }`}
                                 title={isKnownByAllParty ? 'Rimuovi da tutto il party' : 'Assegna a tutti i membri del party'}
                               >
                                 <Users size={12} />
-                                <span>{isKnownByAllParty ? 'Noto a tutto il Party' : 'Assegna a tutto il Party'}</span>
+                                <span>{isKnownByAllParty ? 'Party' : 'Assegna Party'}</span>
                               </button>
 
                               <button
                                 type="button"
                                 onClick={() => setManagingBite({ article: selectedArticle, bite })}
-                                className="px-2.5 py-1 rounded-lg bg-surface-2 hover:bg-surface-3 text-content-2 hover:text-content-1 text-[11px] font-medium border border-surface-3 transition-colors flex items-center gap-1 cursor-pointer"
+                                className="px-2.5 py-1 rounded-[2px] bg-surface-2 hover:bg-surface-3 text-content-3 hover:text-content-1 text-[11px] font-mono border border-surface-2 transition-colors flex items-center gap-1 cursor-pointer"
                                 title="Gestisci chi conosce questa nozione in dettaglio"
                               >
                                 <Edit3 size={11} />
@@ -731,14 +708,14 @@ export function WorldLore() {
 
                           {/* Chips of characters who know this */}
                           {bite.knownBy.length > 0 && (
-                            <div className="pt-2 border-t border-surface-2/60 flex items-center gap-1.5 flex-wrap text-[11px]">
+                            <div className="pt-1.5 flex items-center gap-1.5 flex-wrap text-[11px]">
                               <span className="text-content-3 text-[10px] font-mono shrink-0 mr-1">
-                                Portatori di questo Sapere:
+                                Portatori:
                               </span>
                               {knownPlayers.map((kp) => (
                                 <span
                                   key={kp.id}
-                                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-primary/10 text-primary border border-primary/20 text-[10px] font-medium"
+                                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-[2px] bg-primary/10 text-primary border border-primary/20 text-[10px] font-mono"
                                   title={kp.acquisitionNote || 'Conoscenza acquisita'}
                                 >
                                   <User size={10} />
@@ -748,7 +725,7 @@ export function WorldLore() {
                               {knownEntities.map((ke) => (
                                 <span
                                   key={ke.id}
-                                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-surface-2 text-content-2 border border-surface-3 text-[10px]"
+                                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-[2px] bg-surface-2 text-content-2 border border-surface-3 text-[10px] font-mono"
                                   title="PNG / Entità del Compendio"
                                 >
                                   <Shield size={10} className="text-amber-400" />
@@ -765,17 +742,12 @@ export function WorldLore() {
               </section>
 
               {/* Full Markdown Text Content */}
-              <section className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <div className="w-6 h-6 rounded-lg bg-primary/10 text-primary flex items-center justify-center">
-                    <BookOpen size={14} />
-                  </div>
-                  <h3 className="text-sm font-cinzel font-bold text-content-1 uppercase tracking-wider">
-                    Cronaca &amp; Trattato Integrale
-                  </h3>
-                </div>
+              <section className="space-y-3 pt-4 border-t border-surface-2">
+                <h3 className="text-xs font-mono uppercase tracking-wider text-content-3">
+                  Trattato Integrale
+                </h3>
 
-                <div className="p-5 sm:p-7 rounded-2xl bg-surface-1 border border-surface-2 text-sm text-content-2 leading-relaxed">
+                <div className="text-sm text-content-2 leading-relaxed font-sans">
                   <MarkdownRenderer content={selectedArticle.fullContentMarkdown || selectedArticle.summary || ''} />
                 </div>
               </section>
@@ -1392,7 +1364,7 @@ function WorldLoreEditorModal({
                       <option value="">Rileva Automaticamente</option>
                       {WORLD_LORE_CATEGORIES.map((cat) => (
                         <option key={cat.id} value={cat.id}>
-                          {cat.icon} {cat.label}
+                          {cat.label}
                         </option>
                       ))}
                     </select>
@@ -1468,7 +1440,7 @@ function WorldLoreEditorModal({
                     >
                       {WORLD_LORE_CATEGORIES.map((cat) => (
                         <option key={cat.id} value={cat.id}>
-                          {cat.icon} {cat.label}
+                          {cat.label}
                         </option>
                       ))}
                     </select>

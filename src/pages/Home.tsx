@@ -32,6 +32,7 @@ import {
   ArrowLeft,
   BookMarked,
   EyeOff,
+  Menu,
 } from 'lucide-react';
 import { useAuth } from '../components/AuthProvider';
 import { CampaignManager } from '../store/campaignStore';
@@ -106,6 +107,7 @@ export function Home() {
   const [questToDelete, setQuestToDelete] = useState<string | null>(null);
 
   const [activeLightboxImg, setActiveLightboxImg] = useState<string | null>(null);
+  const [isNoteActionsMenuOpen, setIsNoteActionsMenuOpen] = useState(false);
   const [feedbackToast, setFeedbackToast] = useState<string | null>(null);
 
   const showToast = (msg: string) => {
@@ -127,7 +129,7 @@ export function Home() {
       setLatestSession(allSessions[0]);
     }
     setOpenQuests(allEntities.filter((e) => {
-      if (e.type !== 'quest' || e.status !== 'open') return false;
+      if (e.type !== 'quest' || (e.status !== 'open' && (e.status as any) !== 'alive')) return false;
       return CampaignManager.isEntityAccessible(e, player);
     }));
 
@@ -376,8 +378,8 @@ export function Home() {
       )}
 
       {/* Integrated Top Header Bar */}
-      <header className="bg-surface-1 border-b border-surface-2 px-4 sm:px-6 py-3.5 shrink-0">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      <header className="bg-surface-1 border-b border-surface-2 shrink-0">
+        <div className="max-w-[1700px] mx-auto w-full px-4 sm:px-8 lg:px-10 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="space-y-0.5 min-w-0">
             <div className="flex items-center gap-2 text-[10px] font-mono tracking-wider text-primary uppercase">
               <span className="flex items-center gap-1.5">
@@ -396,7 +398,7 @@ export function Home() {
               )}
             </div>
             <h1 className="font-cinzel font-semibold text-lg sm:text-xl text-content-1 tracking-[0.05em]">
-              Cronache, Memorie & Appunti del Tavolo
+              Cronache, Memorie &amp; Appunti del Tavolo
             </h1>
           </div>
 
@@ -424,58 +426,181 @@ export function Home() {
       </header>
 
       {/* Integrated Typographic Tab Bar (Underlined tabs, no floating SaaS pills) */}
-      <nav className="bg-surface-1 border-b border-surface-2 px-4 sm:px-6 flex items-center gap-6 overflow-x-auto custom-scrollbar shrink-0 text-xs">
-        <button
-          onClick={() => handleTabChange('notes')}
-          className={`flex items-center gap-2 py-2.5 -mb-px border-b-2 whitespace-nowrap transition-colors cursor-pointer ${
-            activeTab === 'notes'
-              ? 'border-primary text-content-1 font-semibold'
-              : 'border-transparent text-content-3 hover:text-content-1'
-          }`}
-        >
-          <Feather size={13} className={activeTab === 'notes' ? 'text-primary' : ''} />
-          <span>Appunti & Cronache</span>
-          <span className="font-mono text-[10px] text-content-3">({notes.length})</span>
-        </button>
+      <nav className="bg-surface-1 border-b border-surface-2 shrink-0">
+        <div className="max-w-[1700px] mx-auto w-full px-4 sm:px-8 lg:px-10 flex items-center justify-between gap-6 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden text-xs">
+          <div className="flex items-center gap-6 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            <button
+              onClick={() => handleTabChange('notes')}
+              className={`flex items-center gap-2 py-2.5 -mb-px border-b-2 whitespace-nowrap transition-colors cursor-pointer ${
+                activeTab === 'notes'
+                  ? 'border-primary text-content-1 font-semibold'
+                  : 'border-transparent text-content-3 hover:text-content-1'
+              }`}
+            >
+              <Feather size={13} className={activeTab === 'notes' ? 'text-primary' : ''} />
+              <span>Appunti &amp; Cronache</span>
+              <span className="font-mono text-[10px] text-content-3">({notes.length})</span>
+            </button>
 
-        <button
-          onClick={() => handleTabChange('session')}
-          className={`flex items-center gap-2 py-2.5 -mb-px border-b-2 whitespace-nowrap transition-colors cursor-pointer ${
-            activeTab === 'session'
-              ? 'border-primary text-content-1 font-semibold'
-              : 'border-transparent text-content-3 hover:text-content-1'
-          }`}
-        >
-          <BookOpen size={13} className={activeTab === 'session' ? 'text-primary' : ''} />
-          <span>Ultima Cronaca</span>
-          {latestSession && (
-            <span className="font-mono text-[10px] text-primary">#{latestSession.number}</span>
+            <button
+              onClick={() => handleTabChange('session')}
+              className={`flex items-center gap-2 py-2.5 -mb-px border-b-2 whitespace-nowrap transition-colors cursor-pointer ${
+                activeTab === 'session'
+                  ? 'border-primary text-content-1 font-semibold'
+                  : 'border-transparent text-content-3 hover:text-content-1'
+              }`}
+            >
+              <BookOpen size={13} className={activeTab === 'session' ? 'text-primary' : ''} />
+              <span>Ultima Cronaca</span>
+              {latestSession && (
+                <span className="font-mono text-[10px] text-primary">#{latestSession.number}</span>
+              )}
+            </button>
+
+            <button
+              onClick={() => handleTabChange('quests')}
+              className={`flex items-center gap-2 py-2.5 -mb-px border-b-2 whitespace-nowrap transition-colors cursor-pointer ${
+                activeTab === 'quests'
+                  ? 'border-primary text-content-1 font-semibold'
+                  : 'border-transparent text-content-3 hover:text-content-1'
+              }`}
+            >
+              <Target size={13} className={activeTab === 'quests' ? 'text-primary' : ''} />
+              <span>Missioni Attive</span>
+              <span className="font-mono text-[10px] text-content-3">({openQuests.length})</span>
+            </button>
+          </div>
+
+          {activeTab === 'notes' && activeSelectedNote && (
+            <div className="flex items-center gap-2 shrink-0 py-1.5 relative">
+              {/* Desktop actions */}
+              <div className="hidden sm:flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleToggleAskDm(activeSelectedNote._id, activeSelectedNote.askDm)}
+                  className={`px-2.5 py-1 rounded-[2px] text-xs font-mono border transition-colors flex items-center gap-1.5 cursor-pointer ${
+                    activeSelectedNote.askDm
+                      ? 'bg-cyan-500/10 text-cyan-300 border-cyan-500/30'
+                      : 'bg-surface-2 text-content-3 border-surface-2 hover:text-content-1'
+                  }`}
+                >
+                  <HelpCircle size={12} />
+                  <span>{activeSelectedNote.askDm ? 'Chiesto al DM' : 'Chiedi al DM'}</span>
+                </button>
+
+                <button
+                  onClick={() => handleTogglePin(activeSelectedNote._id)}
+                  className={`p-1.5 rounded-[2px] border transition-colors cursor-pointer ${
+                    activeSelectedNote.pinned
+                      ? 'bg-primary/10 text-primary border-primary/30'
+                      : 'bg-surface-2 text-content-3 border-surface-2 hover:text-content-1'
+                  }`}
+                  title="Fissa nota"
+                >
+                  <Pin size={13} />
+                </button>
+
+                {(activeSelectedNote.author?._id === player?._id || player?.isDm) && (
+                  <>
+                    <button
+                      onClick={() => handleOpenEditNote(activeSelectedNote)}
+                      className="p-1.5 rounded-[2px] bg-surface-2 text-content-3 border border-surface-2 hover:text-content-1 transition-colors cursor-pointer"
+                      title="Modifica Nota"
+                    >
+                      <Edit3 size={13} />
+                    </button>
+                    <button
+                      onClick={() => setNoteToDelete(activeSelectedNote._id)}
+                      className="p-1.5 rounded-[2px] bg-surface-2 text-content-3 border border-surface-2 hover:text-rose-400 transition-colors cursor-pointer"
+                      title="Elimina Nota"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </>
+                )}
+              </div>
+
+              {/* Mobile Hamburger Dropdown */}
+              <div className="sm:hidden relative">
+                <button
+                  type="button"
+                  onClick={() => setIsNoteActionsMenuOpen((prev) => !prev)}
+                  className="p-1.5 rounded-[2px] bg-surface-2 border border-surface-3 text-content-1 flex items-center justify-center cursor-pointer"
+                  title="Menu Azioni Nota"
+                >
+                  <Menu size={16} />
+                </button>
+
+                {isNoteActionsMenuOpen && (
+                  <div className="absolute right-0 top-full mt-1.5 w-48 bg-surface-1 border border-surface-2 rounded-xl shadow-xl z-50 p-1.5 space-y-1 font-mono text-xs">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handleToggleAskDm(activeSelectedNote._id, activeSelectedNote.askDm);
+                        setIsNoteActionsMenuOpen(false);
+                      }}
+                      className="w-full text-left px-3 py-2 rounded-lg hover:bg-surface-2 text-content-1 flex items-center gap-2 cursor-pointer"
+                    >
+                      <HelpCircle size={14} className="text-cyan-400" />
+                      <span>{activeSelectedNote.askDm ? 'Chiesto al DM' : 'Chiedi al DM'}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handleTogglePin(activeSelectedNote._id);
+                        setIsNoteActionsMenuOpen(false);
+                      }}
+                      className="w-full text-left px-3 py-2 rounded-lg hover:bg-surface-2 text-content-1 flex items-center gap-2 cursor-pointer"
+                    >
+                      <Pin size={14} className="text-primary" />
+                      <span>{activeSelectedNote.pinned ? 'Rimuovi Fissa' : 'Fissa Nota'}</span>
+                    </button>
+
+                    {(activeSelectedNote.author?._id === player?._id || player?.isDm) && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            handleOpenEditNote(activeSelectedNote);
+                            setIsNoteActionsMenuOpen(false);
+                          }}
+                          className="w-full text-left px-3 py-2 rounded-lg hover:bg-surface-2 text-content-1 flex items-center gap-2 cursor-pointer"
+                        >
+                          <Edit3 size={14} className="text-content-2" />
+                          <span>Modifica Nota</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setNoteToDelete(activeSelectedNote._id);
+                            setIsNoteActionsMenuOpen(false);
+                          }}
+                          className="w-full text-left px-3 py-2 rounded-lg hover:bg-rose-500/10 text-rose-400 flex items-center gap-2 cursor-pointer"
+                        >
+                          <Trash2 size={14} />
+                          <span>Elimina Nota</span>
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
           )}
-        </button>
-
-        <button
-          onClick={() => handleTabChange('quests')}
-          className={`flex items-center gap-2 py-2.5 -mb-px border-b-2 whitespace-nowrap transition-colors cursor-pointer ${
-            activeTab === 'quests'
-              ? 'border-primary text-content-1 font-semibold'
-              : 'border-transparent text-content-3 hover:text-content-1'
-          }`}
-        >
-          <Target size={13} className={activeTab === 'quests' ? 'text-primary' : ''} />
-          <span>Missioni Attive</span>
-          <span className="font-mono text-[10px] text-content-3">({openQuests.length})</span>
-        </button>
+        </div>
       </nav>
 
       {/* Main Work Area */}
       <main className="flex-1 min-h-0 relative overflow-hidden bg-surface-0">
+        <div className="max-w-[1700px] mx-auto w-full h-full px-4 sm:px-8 lg:px-10">
         {/* TAB 1: APPUNTI & CRONACHE (Archival Index + Direct Reading Sheet) */}
         {activeTab === 'notes' && (
           <div className="h-full flex flex-col md:flex-row divide-y md:divide-y-0 md:divide-x divide-surface-2 overflow-hidden">
             {/* Left Column: Index Column (Fixed width on desktop, full on mobile) */}
-            <aside className={`w-full md:w-80 lg:w-96 h-full flex flex-col min-h-0 bg-surface-1 shrink-0 ${selectedNoteId ? 'hidden md:flex' : 'flex'}`}>
+            <aside className={`w-full md:w-80 lg:w-96 h-full flex flex-col min-h-0 bg-transparent border-r border-surface-2 shrink-0 ${selectedNoteId ? 'hidden md:flex' : 'flex'}`}>
               {/* Filter & Search Header */}
-              <div className="p-3 border-b border-surface-2 space-y-2.5 shrink-0 bg-surface-1">
+              <div className="p-3 border-b border-surface-2 space-y-2.5 shrink-0 bg-transparent">
                 {/* Search Input */}
                 <div className="relative">
                   <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-content-3" />
@@ -552,7 +677,7 @@ export function Home() {
               </div>
 
               {/* Continuous Register Rows (No card nesting, 1px divider) */}
-              <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar touch-pan-y overscroll-contain divide-y divide-surface-2/60 bg-surface-1">
+              <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar touch-pan-y overscroll-contain divide-y divide-surface-2/60 bg-transparent">
                 {filteredNotes.length === 0 ? (
                   <div className="p-8 text-center space-y-3">
                     <Feather size={20} className="mx-auto text-content-3 opacity-40" />
@@ -640,7 +765,7 @@ export function Home() {
               </div>
 
               {/* Compact Index Pagination */}
-              <div className="p-2.5 border-t border-surface-2 bg-surface-1 shrink-0">
+              <div className="p-2.5 bg-transparent shrink-0">
                 <Pagination
                   currentPage={notePage}
                   totalPages={totalNotePages}
@@ -660,77 +785,21 @@ export function Home() {
             {/* Right Column: Direct Reading Sheet (Occupy all space, no nested cards) */}
             <section className={`flex-1 flex flex-col min-h-0 bg-surface-0 overflow-y-auto custom-scrollbar ${!selectedNoteId ? 'hidden md:flex' : 'flex'}`}>
               {activeSelectedNote ? (
-                <div className="flex-1 flex flex-col min-h-0">
-                  {/* Reading Control Bar */}
-                  <div className="px-6 py-3 border-b border-surface-2 bg-surface-1 flex items-center justify-between gap-3 shrink-0">
-                    <div className="flex items-center gap-2">
+                <div className="flex-1 flex flex-col min-h-0 overflow-y-auto custom-scrollbar p-4 sm:p-8 lg:p-10 w-full items-center">
+                  <div className="w-full max-w-[780px] space-y-4">
+                    {/* Mobile Back Button */}
+                    <div className="md:hidden">
                       <button
                         type="button"
                         onClick={() => setSelectedNoteId(null)}
-                        className="md:hidden p-1.5 rounded-lg bg-surface-2 hover:bg-surface-3 border border-surface-3 text-content-2 hover:text-content-1 transition-all active:scale-95 cursor-pointer flex items-center justify-center shrink-0"
-                        title="Torna all'indice delle note"
+                        className="inline-flex items-center gap-1.5 text-xs font-mono text-content-2 hover:text-content-1 bg-surface-2 px-3 py-1.5 rounded-[2px] border border-surface-3 cursor-pointer"
                       >
-                        <ArrowLeft size={16} />
+                        <ArrowLeft size={14} />
+                        <span>Torna all'indice</span>
                       </button>
-                      <span className="font-mono text-[11px] text-content-3 flex items-center gap-1.5">
-                        <Scroll size={12} className="text-primary" />
-                        <span>REGISTRO ARCHIVISTICO #{activeSelectedNote._id.slice(-4).toUpperCase()}</span>
-                      </span>
                     </div>
 
-                    {/* Actions in row */}
-                    <div className="flex items-center gap-2 shrink-0">
-                      <button
-                        type="button"
-                        onClick={() => handleToggleAskDm(activeSelectedNote._id, activeSelectedNote.askDm)}
-                        className={`px-2.5 py-1 rounded-[2px] text-xs font-mono border transition-colors flex items-center gap-1.5 cursor-pointer ${
-                          activeSelectedNote.askDm
-                            ? 'bg-cyan-500/10 text-cyan-300 border-cyan-500/30'
-                            : 'bg-surface-2 text-content-3 border-surface-2 hover:text-content-1'
-                        }`}
-                      >
-                        <HelpCircle size={12} />
-                        <span className="hidden sm:inline">
-                          {activeSelectedNote.askDm ? 'Chiesto al DM' : 'Chiedi al DM'}
-                        </span>
-                      </button>
-
-                      <button
-                        onClick={() => handleTogglePin(activeSelectedNote._id)}
-                        className={`p-1.5 rounded-[2px] border transition-colors cursor-pointer ${
-                          activeSelectedNote.pinned
-                            ? 'bg-primary/10 text-primary border-primary/30'
-                            : 'bg-surface-2 text-content-3 border-surface-2 hover:text-content-1'
-                        }`}
-                        title="Fissa nota"
-                      >
-                        <Pin size={13} />
-                      </button>
-
-                      {(activeSelectedNote.author?._id === player?._id || player?.isDm) && (
-                        <>
-                          <button
-                            onClick={() => handleOpenEditNote(activeSelectedNote)}
-                            className="p-1.5 rounded-[2px] bg-surface-2 text-content-3 border border-surface-2 hover:text-content-1 transition-colors cursor-pointer"
-                            title="Modifica Nota"
-                          >
-                            <Edit3 size={13} />
-                          </button>
-                          <button
-                            onClick={() => setNoteToDelete(activeSelectedNote._id)}
-                            className="p-1.5 rounded-[2px] bg-surface-2 text-content-3 border border-surface-2 hover:text-rose-400 transition-colors cursor-pointer"
-                            title="Elimina Nota"
-                          >
-                            <Trash2 size={13} />
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Reading Sheet Content (Centered 780px document sheet with refined styling) */}
-                  <div className="flex-1 overflow-y-auto custom-scrollbar p-4 sm:p-8 lg:p-10 w-full flex flex-col items-center">
-                    <div className="w-full max-w-[780px] bg-surface-1/75 border border-surface-2/80 shadow-[0_4px_24px_rgba(0,0,0,0.35)] rounded-[4px] p-6 sm:p-10 md:p-12 space-y-8">
+                    <div className="bg-surface-1/75 border border-surface-2/80 shadow-[0_4px_24px_rgba(0,0,0,0.35)] rounded-[4px] p-6 sm:p-10 md:p-12 space-y-8">
                       {/* Header */}
                       <div className="space-y-3 pb-2">
                         {/* Editorial Small Caps Metadata */}
@@ -1054,7 +1123,7 @@ export function Home() {
         {activeTab === 'session' && (
           <div className="h-full overflow-y-auto custom-scrollbar p-6 sm:p-10 bg-surface-0">
             {latestSession ? (
-              <div className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-8">
+              <div className="max-w-[1700px] mx-auto grid grid-cols-1 lg:grid-cols-12 gap-8">
                 {/* Main Prose Column (8/12) */}
                 <div className="lg:col-span-8 space-y-6">
                   <div className="border-b border-surface-2 pb-5 space-y-2">
@@ -1297,6 +1366,7 @@ export function Home() {
             )}
           </div>
         )}
+        </div>
       </main>
 
       {/* UNIFIED NOTE MODAL */}

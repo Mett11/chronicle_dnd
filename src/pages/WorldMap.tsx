@@ -67,6 +67,108 @@ const FOLDER_COLORS = [
   { label: 'Ciano Costiero', value: '#06B6D4', bg: 'bg-cyan-500' },
 ];
 
+function SearchablePlaceDropdown({
+  value,
+  onChange,
+  onSelectEntity,
+  placeEntities,
+}: {
+  value: string;
+  onChange: (id: string) => void;
+  onSelectEntity?: (ent: Entity) => void;
+  placeEntities: Entity[];
+}) {
+  const [query, setQuery] = useState('');
+  const [isOpen, setIsOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const selectedEntity = placeEntities.find((e) => e._id === value);
+
+  const filtered = useMemo(() => {
+    if (!query.trim()) return placeEntities;
+    const q = query.toLowerCase();
+    return placeEntities.filter((p) => p.name.toLowerCase().includes(q));
+  }, [placeEntities, query]);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  return (
+    <div className="relative" ref={containerRef}>
+      <div
+        onClick={() => setIsOpen(!isOpen)}
+        className="w-full bg-surface-2 border border-surface-3 hover:border-primary/50 rounded-xl px-3 py-2 text-xs text-content-1 flex items-center justify-between cursor-pointer transition-colors"
+      >
+        <span className="truncate flex items-center gap-1.5 font-medium">
+          <Landmark size={13} className="text-primary shrink-0" />
+          {selectedEntity ? selectedEntity.name : '-- Nessun Luogo Associato --'}
+        </span>
+        <ChevronDown size={14} className="text-content-3 shrink-0 ml-2" />
+      </div>
+
+      {isOpen && (
+        <div className="absolute top-full left-0 right-0 mt-1 z-50 bg-surface-1 border border-surface-2 rounded-xl shadow-2xl p-2 space-y-1.5 max-h-60 overflow-y-auto custom-scrollbar">
+          <div className="relative">
+            <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-content-3" />
+            <input
+              type="text"
+              autoFocus
+              placeholder="Cerca luogo nel Codex..."
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              className="w-full bg-surface-2 border border-surface-3 focus:border-primary rounded-lg pl-8 pr-3 py-1.5 text-xs text-content-1 outline-none"
+            />
+          </div>
+
+          <div className="space-y-0.5 pt-1">
+            <button
+              type="button"
+              onClick={() => {
+                onChange('');
+                setIsOpen(false);
+                setQuery('');
+              }}
+              className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs text-content-3 hover:bg-surface-2 hover:text-content-1 transition-colors"
+            >
+              -- Nessun Luogo Associato --
+            </button>
+            {filtered.map((p) => (
+              <button
+                key={p._id}
+                type="button"
+                onClick={() => {
+                  onChange(p._id);
+                  if (onSelectEntity) onSelectEntity(p);
+                  setIsOpen(false);
+                  setQuery('');
+                }}
+                className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs transition-colors flex items-center gap-1.5 truncate ${
+                  p._id === value
+                    ? 'bg-primary/10 text-primary font-medium'
+                    : 'text-content-1 hover:bg-surface-2'
+                }`}
+              >
+                <Landmark size={12} className="text-primary shrink-0" />
+                <span className="truncate">{p.name}</span>
+              </button>
+            ))}
+            {filtered.length === 0 && (
+              <p className="text-[11px] text-content-3 text-center py-2">Nessun luogo trovato</p>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function WorldMap() {
   const [searchParams, setSearchParams] = useSearchParams();
   const activeCampaignCode = CampaignManager.getActiveCampaignCode();
@@ -178,6 +280,38 @@ export function WorldMap() {
   const [entities, setEntities] = useState<Entity[]>(() => CampaignManager.getEntities());
   const [sessions, setSessions] = useState<Session[]>(() => CampaignManager.getSessions());
   const placeEntities = useMemo(() => entities.filter((e) => e.type === 'place'), [entities]);
+  const [folderPlaceSearch, setFolderPlaceSearch] = useState('');
+  const [pinPlaceSearch, setPinPlaceSearch] = useState('');
+  const [newMapPlaceSearch, setNewMapPlaceSearch] = useState('');
+  const [editMapPlaceSearch, setEditMapPlaceSearch] = useState('');
+
+  const sortedPlaceEntities = useMemo(() => {
+    return [...placeEntities].sort((a, b) => a.name.localeCompare(b.name));
+  }, [placeEntities]);
+
+  const filteredFolderPlaces = useMemo(() => {
+    if (!folderPlaceSearch.trim()) return sortedPlaceEntities;
+    const q = folderPlaceSearch.toLowerCase();
+    return sortedPlaceEntities.filter((p) => p.name.toLowerCase().includes(q));
+  }, [sortedPlaceEntities, folderPlaceSearch]);
+
+  const filteredPinPlaces = useMemo(() => {
+    if (!pinPlaceSearch.trim()) return sortedPlaceEntities;
+    const q = pinPlaceSearch.toLowerCase();
+    return sortedPlaceEntities.filter((p) => p.name.toLowerCase().includes(q));
+  }, [sortedPlaceEntities, pinPlaceSearch]);
+
+  const filteredNewMapPlaces = useMemo(() => {
+    if (!newMapPlaceSearch.trim()) return sortedPlaceEntities;
+    const q = newMapPlaceSearch.toLowerCase();
+    return sortedPlaceEntities.filter((p) => p.name.toLowerCase().includes(q));
+  }, [sortedPlaceEntities, newMapPlaceSearch]);
+
+  const filteredEditMapPlaces = useMemo(() => {
+    if (!editMapPlaceSearch.trim()) return sortedPlaceEntities;
+    const q = editMapPlaceSearch.toLowerCase();
+    return sortedPlaceEntities.filter((p) => p.name.toLowerCase().includes(q));
+  }, [sortedPlaceEntities, editMapPlaceSearch]);
 
   const refreshEntities = () => {
     setEntities(CampaignManager.getEntities());
@@ -787,130 +921,102 @@ export function WorldMap() {
         </div>
       )}
 
-      {/* Top Header & Map Context Bar (Hidden when in Fullscreen) */}
+      {/* Top Header Bar */}
       {!isFullscreen && (
-        <div className="bg-surface-1 border border-surface-2 rounded-2xl p-3 sm:px-5 sm:py-3 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 shrink-0">
-          <div className="flex items-center gap-3 min-w-0">
-            <div className="w-10 h-10 rounded-xl bg-surface-2 border border-surface-3 flex items-center justify-center text-primary shrink-0 shadow-inner">
-              <Compass size={20} />
-            </div>
-            <div className="min-w-0">
-              <div className="flex items-center gap-2 flex-wrap">
-                <h1 className="font-heading font-semibold text-base text-content-1 truncate">
-                  {activeMap?.title || 'Atlante Geografico'}
+        <header className="bg-transparent border-b border-surface-2 shrink-0">
+          <div className="max-w-[1700px] mx-auto w-full px-4 sm:px-8 lg:px-10 py-3 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-9 h-9 rounded-xl bg-primary/10 border border-primary/25 flex items-center justify-center text-primary shrink-0 shadow-xs">
+                <Compass size={18} />
+              </div>
+              <div className="min-w-0">
+                <h1 className="font-heading font-semibold text-base text-content-1 truncate flex items-center gap-2">
+                  <span>Atlante Cartografico</span>
+                  {activeMapLinkedEntity && (
+                    <Link
+                      to={`/entities/place/${activeMapLinkedEntity._id}`}
+                      className="text-[11px] font-medium px-2 py-0.5 rounded-md bg-primary/10 text-primary border border-primary/30 hover:bg-primary/20 transition-colors flex items-center gap-1 shrink-0"
+                      title="Apri scheda luogo collegata nel Codex"
+                    >
+                      <Landmark size={11} /> {activeMapLinkedEntity.name}
+                    </Link>
+                  )}
                 </h1>
-                {activeMap?.scaleLabel && (
-                  <span className="text-[11px] font-mono text-content-3 px-2 py-0.5 rounded-md bg-surface-2 border border-surface-3 whitespace-nowrap">
-                    {activeMap.scaleLabel}
-                  </span>
-                )}
-                {activeMapFolder ? (
+                <p className="text-xs text-content-3 truncate">
+                  Mappe territoriali, regioni esplorate e punti d'interesse del regno
+                </p>
+              </div>
+            </div>
+
+            {/* Map Action Controls */}
+            <div className="flex items-center gap-2 shrink-0 flex-wrap sm:flex-nowrap">
+              {canManageMaps && (
+                <>
                   <button
-                    onClick={() => setSelectedFolderFilter(activeMapFolder.id)}
-                    style={{
-                      borderColor: `${activeMapFolder.color || '#3B82F6'}50`,
-                      color: activeMapFolder.color || '#3B82F6',
-                    }}
-                    className="text-[11px] font-medium px-2 py-0.5 rounded-md bg-surface-2 border flex items-center gap-1 whitespace-nowrap hover:bg-surface-3 transition-colors cursor-pointer"
-                    title={`Filtra cartella: ${activeMapFolder.name}`}
+                    type="button"
+                    onClick={() => handleOpenNewFolderModal()}
+                    className="px-3 py-1.5 rounded-xl text-xs font-medium bg-surface-2 hover:bg-surface-3 text-content-2 hover:text-content-1 border border-surface-3 transition-colors flex items-center gap-1.5 cursor-pointer"
                   >
-                    <FolderIcon size={11} /> {activeMapFolder.name}
+                    <FolderPlus size={14} className="text-primary" />
+                    <span className="hidden sm:inline">Nuova Cartella</span>
                   </button>
-                ) : (
-                  <span className="text-[11px] font-medium px-2 py-0.5 rounded-md bg-surface-2 border border-surface-3 text-content-3 flex items-center gap-1 whitespace-nowrap">
-                    <FolderOpen size={11} /> Mappa Principale (Senza Cartella)
-                  </span>
-                )}
-                {activeMapLinkedEntity && (
-                  <Link
-                    to={`/entities/place/${activeMapLinkedEntity._id}`}
-                    className="text-[11px] font-medium px-2 py-0.5 rounded-md bg-primary/10 text-primary border border-primary/30 hover:bg-primary/20 transition-colors flex items-center gap-1 whitespace-nowrap"
-                    title="Apri scheda luogo collegata nel Codex"
+
+                  <button
+                    type="button"
+                    onClick={() => handleOpenNewMapModal()}
+                    className="px-3 py-1.5 rounded-xl text-xs font-medium bg-primary text-surface-0 hover:bg-primary-hover transition-colors flex items-center gap-1.5 shadow-sm cursor-pointer"
                   >
-                    <Landmark size={11} /> {activeMapLinkedEntity.name}
-                    <ExternalLink size={10} />
-                  </Link>
-                )}
-              </div>
-              <div className="flex items-center gap-2 mt-0.5 text-[11px] text-content-3 flex-wrap">
-                <span className="font-medium text-content-2">{maps.length} mappe</span>
-                <span>&bull;</span>
-                <span className="inline-flex items-center gap-1 font-medium text-content-1">
-                  <FolderIcon size={12} className="text-primary" />
-                  {normalizedFolders.length} cartelle geografiche
-                </span>
-                {activeMap?.description && (
-                  <>
-                    <span>&bull;</span>
-                    <span className="truncate max-w-sm">{activeMap.description}</span>
-                  </>
-                )}
-              </div>
+                    <Plus size={14} />
+                    <span>Nuova Mappa</span>
+                  </button>
+                </>
+              )}
+
+              <button
+                type="button"
+                onClick={() => setIsFullscreen(true)}
+                className="p-1.5 rounded-xl text-xs font-medium bg-surface-2 hover:bg-surface-3 text-content-2 hover:text-content-1 border border-surface-3 transition-colors flex items-center justify-center cursor-pointer"
+                title="Schermo Intero"
+              >
+                <Maximize2 size={16} />
+              </button>
             </div>
           </div>
+        </header>
+      )}
 
-          <div className="flex items-center gap-2 shrink-0 flex-wrap sm:flex-nowrap">
-            {canManageMaps && (
-              <>
-                <button
-                  onClick={() => handleOpenNewFolderModal()}
-                  className="px-3 py-1.5 rounded-xl text-xs font-medium bg-surface-2 hover:bg-surface-3 text-content-2 hover:text-content-1 border border-surface-3 transition-colors flex items-center gap-1.5 cursor-pointer"
-                >
-                  <FolderPlus size={14} className="text-primary" />
-                  <span className="hidden sm:inline">Nuova Cartella</span>
-                </button>
-
-                <button
-                  onClick={() => handleOpenNewMapModal()}
-                  className="px-3 py-1.5 rounded-xl text-xs font-medium bg-primary text-surface-0 hover:bg-primary-hover transition-colors flex items-center gap-1.5 shadow-sm cursor-pointer"
-                >
-                  <Plus size={14} />
-                  <span>Nuova Mappa</span>
-                </button>
-              </>
-            )}
-
+      {/* Mobile Mode Switcher (only on small screens when not in fullscreen) */}
+      {!isFullscreen && (
+        <div className="border-b border-surface-2/60 bg-surface-1/40 shrink-0 lg:hidden">
+          <div className="max-w-[1700px] mx-auto w-full px-4 sm:px-8 lg:px-10 py-1.5 flex items-center gap-2 bg-surface-1 border border-surface-2 p-1 rounded-xl">
             <button
-              onClick={() => setIsFullscreen(true)}
-              className="p-1.5 rounded-xl text-xs font-medium bg-surface-2 hover:bg-surface-3 text-content-2 hover:text-content-1 border border-surface-3 transition-colors flex items-center justify-center cursor-pointer"
-              title="Schermo Intero"
+              onClick={() => setMobileView('map')}
+              className={`flex-1 py-1.5 px-3 text-xs font-medium rounded-lg transition-colors flex items-center justify-center gap-1.5 cursor-pointer ${
+                mobileView === 'map'
+                  ? 'bg-surface-2 text-content-1 font-semibold shadow-sm'
+                  : 'text-content-3 hover:text-content-1'
+              }`}
             >
-              <Maximize2 size={16} />
+              <MapIcon size={14} className={mobileView === 'map' ? 'text-primary' : ''} />
+              <span>Mappa &amp; Punti ({filteredPins.length})</span>
+            </button>
+            <button
+              onClick={() => setMobileView('panel')}
+              className={`flex-1 py-1.5 px-3 text-xs font-medium rounded-lg transition-colors flex items-center justify-center gap-1.5 cursor-pointer ${
+                mobileView === 'panel'
+                  ? 'bg-surface-2 text-content-1 font-semibold shadow-sm'
+                  : 'text-content-3 hover:text-content-1'
+              }`}
+            >
+              <FolderOpen size={14} className={mobileView === 'panel' ? 'text-primary' : ''} />
+              <span>Tomo &amp; Cartelle ({maps.length} mappe, {normalizedFolders.length} cartelle)</span>
             </button>
           </div>
         </div>
       )}
 
-      {/* Mobile Mode Switcher (only on small screens when not in fullscreen) */}
-      {!isFullscreen && (
-        <div className="lg:hidden flex items-center bg-surface-1 border border-surface-2 p-1 rounded-xl shrink-0">
-          <button
-            onClick={() => setMobileView('map')}
-            className={`flex-1 py-1.5 px-3 text-xs font-medium rounded-lg transition-colors flex items-center justify-center gap-1.5 cursor-pointer ${
-              mobileView === 'map'
-                ? 'bg-surface-2 text-content-1 font-semibold shadow-sm'
-                : 'text-content-3 hover:text-content-1'
-            }`}
-          >
-            <MapIcon size={14} className={mobileView === 'map' ? 'text-primary' : ''} />
-            <span>Mappa &amp; Punti ({filteredPins.length})</span>
-          </button>
-          <button
-            onClick={() => setMobileView('panel')}
-            className={`flex-1 py-1.5 px-3 text-xs font-medium rounded-lg transition-colors flex items-center justify-center gap-1.5 cursor-pointer ${
-              mobileView === 'panel'
-                ? 'bg-surface-2 text-content-1 font-semibold shadow-sm'
-                : 'text-content-3 hover:text-content-1'
-            }`}
-          >
-            <FolderOpen size={14} className={mobileView === 'panel' ? 'text-primary' : ''} />
-            <span>Tomo &amp; Cartelle ({maps.length} mappe, {normalizedFolders.length} cartelle)</span>
-          </button>
-        </div>
-      )}
-
       {/* Main Map Viewport & Sidebar */}
-      <div className="flex-1 flex flex-col lg:flex-row gap-3 sm:gap-4 min-h-0 relative">
+      <div className="flex-1 max-w-[1700px] mx-auto w-full px-4 sm:px-8 lg:px-10 py-3 flex flex-col lg:flex-row gap-4 min-h-0 relative">
         {/* Map Canvas */}
         <div
           ref={containerRef}
@@ -982,7 +1088,7 @@ export function WorldMap() {
           <div
             className={`absolute ${
               isFullscreen ? 'top-16 sm:top-16' : 'top-3 sm:top-4'
-            } left-3 sm:left-4 z-30 flex flex-col gap-1.5 bg-surface-2/95 border border-surface-3 p-1 rounded-xl shadow-lg backdrop-blur-md`}
+            } left-3 sm:left-4 z-30 flex flex-col gap-1.5 p-1`}
           >
             <button
               onClick={() => handleZoom(0.25)}
@@ -1042,63 +1148,7 @@ export function WorldMap() {
             </div>
           )}
 
-          {/* Floating Quick Folder Selector directly on the Map Viewport */}
-          {normalizedFolders.length > 0 && (
-            <div className="absolute top-3 sm:top-4 left-14 sm:left-16 right-36 sm:right-44 z-20 flex items-center justify-start pointer-events-none">
-              <div className="pointer-events-auto bg-surface-1/90 backdrop-blur-md border border-surface-3/80 shadow-lg px-2.5 py-1 rounded-xl flex items-center gap-1.5 max-w-full overflow-x-auto custom-scrollbar">
-                <span className="text-[10px] font-mono text-content-3 uppercase tracking-wider shrink-0 flex items-center gap-1">
-                  <FolderIcon size={11} className="text-primary" />
-                  <span className="hidden sm:inline">Cartelle:</span>
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setSelectedFolderFilter('all')}
-                  className={`px-2 py-0.5 rounded-lg text-[10px] font-medium whitespace-nowrap transition-colors cursor-pointer ${
-                    selectedFolderFilter === 'all'
-                      ? 'bg-primary text-surface-0 font-semibold'
-                      : 'text-content-3 hover:text-content-1 hover:bg-surface-2'
-                  }`}
-                >
-                  Tutte ({maps.length})
-                </button>
-                {normalizedFolders.map((f) => {
-                  const folderMaps = maps.filter((m) => String(m.folderId || '') === f.id);
-                  const isCurrentActive = activeMapFolder?.id === f.id;
-                  const isFilterSelected = selectedFolderFilter === f.id;
-                  return (
-                    <button
-                      key={f.id}
-                      type="button"
-                      onClick={() => {
-                        setSelectedFolderFilter(f.id);
-                        if (folderMaps.length > 0 && (!activeMap || String(activeMap.folderId || '') !== f.id)) {
-                          setActiveMapId(folderMaps[0].id);
-                          setSelectedPin(null);
-                          handleResetView();
-                        }
-                      }}
-                      style={{
-                        borderColor: isFilterSelected || isCurrentActive ? f.color || '#3B82F6' : undefined,
-                      }}
-                      className={`px-2 py-0.5 rounded-lg text-[10px] font-medium whitespace-nowrap transition-colors flex items-center gap-1 cursor-pointer border ${
-                        isFilterSelected || isCurrentActive
-                          ? 'bg-surface-2 text-content-1 font-semibold shadow-xs'
-                          : 'border-transparent text-content-3 hover:text-content-1 hover:bg-surface-2/60'
-                      }`}
-                      title={`Cartella: ${f.name} (${folderMaps.length} mappe)`}
-                    >
-                      <span
-                        className="w-1.5 h-1.5 rounded-full shrink-0"
-                        style={{ backgroundColor: f.color || '#3B82F6' }}
-                      />
-                      <span className="truncate max-w-[120px]">{f.name}</span>
-                      <span className="text-[9px] opacity-70">({folderMaps.length})</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
+
 
           {/* Scale label & settings badge */}
           <div className="absolute bottom-3 sm:bottom-4 left-3 sm:left-4 z-30 px-3 py-1.5 rounded-xl bg-surface-2/95 backdrop-blur-md border border-surface-3 text-xs font-mono text-content-2 flex items-center gap-2 shadow-lg max-w-[80%] overflow-hidden">
@@ -2164,22 +2214,14 @@ export function WorldMap() {
                 {/* Relational Codex Link */}
                 <div>
                   <label className="block font-medium text-content-2 mb-1">Collega a Luogo del Codex (Opzionale)</label>
-                  <select
+                  <SearchablePlaceDropdown
                     value={newMapEntityId}
-                    onChange={(e) => {
-                      setNewMapEntityId(e.target.value);
-                      const ent = placeEntities.find((p) => p._id === e.target.value);
-                      if (ent && !newMapTitle) setNewMapTitle(ent.name);
+                    onChange={(id) => setNewMapEntityId(id)}
+                    onSelectEntity={(ent) => {
+                      if (!newMapTitle) setNewMapTitle(ent.name);
                     }}
-                    className="w-full bg-surface-2 border border-surface-3 focus:border-primary rounded-xl px-3 py-2 text-content-1 outline-none"
-                  >
-                    <option value="">-- Nessun Luogo Associato --</option>
-                    {placeEntities.map((p) => (
-                      <option key={p._id} value={p._id}>
-                        🏛️ {p.name}
-                      </option>
-                    ))}
-                  </select>
+                    placeEntities={placeEntities}
+                  />
                 </div>
 
                 <SingleImageUploader
@@ -2281,18 +2323,11 @@ export function WorldMap() {
                 {/* Relational Codex Link */}
                 <div>
                   <label className="block font-medium text-content-2 mb-1">Collega a Luogo del Codex</label>
-                  <select
+                  <SearchablePlaceDropdown
                     value={editMapEntityId}
-                    onChange={(e) => setEditMapEntityId(e.target.value)}
-                    className="w-full bg-surface-2 border border-surface-3 focus:border-primary rounded-xl px-3 py-2 text-content-1 outline-none"
-                  >
-                    <option value="">-- Nessun Luogo Associato --</option>
-                    {placeEntities.map((p) => (
-                      <option key={p._id} value={p._id}>
-                        🏛️ {p.name}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={(id) => setEditMapEntityId(id)}
+                    placeEntities={placeEntities}
+                  />
                 </div>
 
                 <SingleImageUploader
@@ -2417,22 +2452,15 @@ export function WorldMap() {
                   <label className="block font-medium text-content-2 mb-1">
                     Collega a Luogo del Codex (Relazione Bilaterale)
                   </label>
-                  <select
+                  <SearchablePlaceDropdown
                     value={folderPlaceEntityId}
-                    onChange={(e) => {
-                      setFolderPlaceEntityId(e.target.value);
-                      const ent = placeEntities.find((p) => p._id === e.target.value);
+                    onChange={(id) => {
+                      setFolderPlaceEntityId(id);
+                      const ent = placeEntities.find((p) => p._id === id);
                       if (ent && !folderName) setFolderName(ent.name);
                     }}
-                    className="w-full bg-surface-2 border border-surface-3 focus:border-primary rounded-xl px-3 py-2 text-content-1 outline-none"
-                  >
-                    <option value="">-- Nessun Luogo del Codex --</option>
-                    {placeEntities.map((p) => (
-                      <option key={p._id} value={p._id}>
-                        🏛️ {p.name}
-                      </option>
-                    ))}
-                  </select>
+                    placeEntities={placeEntities}
+                  />
                   <p className="text-[10px] text-content-3 mt-1">
                     Collegando questa cartella a un Luogo, tutte le mappe della cartella saranno consultabili direttamente dalla Scheda del Luogo nel Codex.
                   </p>
@@ -2633,22 +2661,15 @@ export function WorldMap() {
 
                 <div>
                   <label className="block font-medium text-content-2 mb-1">Collega a Scheda Luogo (Codex)</label>
-                  <select
+                  <SearchablePlaceDropdown
                     value={pinEntityId}
-                    onChange={(e) => {
-                      setPinEntityId(e.target.value);
-                      const ent = placeEntities.find((p) => p._id === e.target.value);
+                    onChange={(id) => {
+                      setPinEntityId(id);
+                      const ent = placeEntities.find((p) => p._id === id);
                       if (ent && !pinTitle) setPinTitle(ent.name);
                     }}
-                    className="w-full bg-surface-2 border border-surface-3 focus:border-primary rounded-xl px-3 py-2 text-content-1 outline-none"
-                  >
-                    <option value="">-- Nessuna (Solo punto mappa) --</option>
-                    {placeEntities.map((ent) => (
-                      <option key={ent._id} value={ent._id}>
-                        🏛️ {ent.name}
-                      </option>
-                    ))}
-                  </select>
+                    placeEntities={placeEntities}
+                  />
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

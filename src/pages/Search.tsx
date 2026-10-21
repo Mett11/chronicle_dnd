@@ -584,7 +584,14 @@ export function Search() {
       if (entityStatusFilter !== 'all') {
         if (item.type === 'note' || item.type === 'session') return false;
         const rawEntity = item.rawItem as Entity;
-        if (rawEntity.status !== entityStatusFilter) return false;
+        const entStatus = rawEntity.status as string;
+        if (entityStatusFilter === 'open' || (entityStatusFilter as string) === 'alive') {
+          if (entStatus !== 'open' && entStatus !== 'alive') return false;
+        } else if (entityStatusFilter === 'completed' || (entityStatusFilter as string) === 'archived') {
+          if (entStatus !== 'completed' && entStatus !== 'archived') return false;
+        } else if (entStatus !== entityStatusFilter) {
+          return false;
+        }
       }
 
       // 10. Quest Scope Filter
@@ -840,7 +847,7 @@ export function Search() {
   };
 
   return (
-    <div className="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto w-full space-y-6">
+    <div className="px-4 sm:px-8 lg:px-10 py-6 sm:py-8 max-w-[1700px] mx-auto w-full space-y-6">
       {/* Top Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-surface-2 pb-5">
         <div className="flex items-center gap-3">

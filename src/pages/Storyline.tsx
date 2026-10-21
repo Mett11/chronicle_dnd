@@ -2376,7 +2376,7 @@ export function Storyline() {
   );
 
   return (
-    <div className="flex-1 h-full min-h-0 flex flex-col p-3 sm:p-4 max-w-[1800px] mx-auto w-full gap-2.5 overflow-hidden">
+    <div className="flex-1 h-full min-h-0 flex flex-col px-4 sm:px-8 lg:px-10 py-3 sm:py-4 max-w-[1700px] mx-auto w-full gap-2.5 overflow-hidden">
       {/* Header */}
       <div className="flex items-center justify-between gap-3 border-b border-surface-2 pb-2.5 shrink-0">
         <div>
@@ -2430,7 +2430,7 @@ export function Storyline() {
             </select>
           </div>
 
-          <div className="flex items-center gap-1.5 overflow-x-auto">
+          <div className="flex items-center gap-1.5 overflow-x-auto [scrollbar-width:none]">
             {chapters.map((chap) => {
               const isSelected = selectedChapterId === chap.id;
               return (
@@ -2758,7 +2758,7 @@ export function Storyline() {
               onTouchStart={handleTouchStart}
               onTouchMove={handleTouchMove}
               onTouchEnd={handleTouchEnd}
-              className={`overflow-auto flex-1 custom-scrollbar relative select-none bg-surface-0/30 touch-none ${
+              className={`overflow-x-auto overflow-y-hidden flex-1 custom-scrollbar relative select-none bg-surface-0/30 touch-none ${
                 isCursorGrabbing ? 'cursor-grabbing' : 'cursor-grab'
               }`}
               style={{
@@ -2767,7 +2767,7 @@ export function Storyline() {
               }}
             >
               <div
-                className="transition-transform duration-100 ease-out py-72 sm:py-80 px-16 sm:px-24 flex items-center gap-12 sm:gap-16 min-h-[1200px]"
+                className="transition-transform duration-100 ease-out py-8 sm:py-12 px-12 sm:px-16 flex items-center gap-12 sm:gap-16 min-h-full h-full"
                 style={{
                   transform: `scale(${zoomLevel})`,
                   transformOrigin: 'left center',

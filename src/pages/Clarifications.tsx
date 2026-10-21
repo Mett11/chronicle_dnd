@@ -265,8 +265,8 @@ export function Clarifications() {
   return (
     <div className="flex flex-col h-full bg-surface-0 text-content-1 overflow-hidden">
       {/* View Header */}
-      <div className="border-b border-surface-2 bg-surface-1/90 backdrop-blur-md px-4 sm:px-6 py-4 shrink-0 shadow-xs">
-        <div className="max-w-6xl mx-auto flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="border-b border-surface-2 bg-surface-1/90 backdrop-blur-md shrink-0 shadow-xs">
+        <div className="max-w-[1700px] mx-auto w-full px-4 sm:px-8 lg:px-10 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-center gap-3 min-w-0">
             <div
               className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border shadow-xs ${
@@ -372,7 +372,7 @@ export function Clarifications() {
         </div>
 
         {/* Sub-header Category Tabs */}
-        <div className="max-w-6xl w-full mx-auto px-4 sm:px-6 pt-3 pb-1 flex items-center gap-1.5 overflow-x-auto custom-scrollbar text-xs">
+        <div className="max-w-[1700px] w-full mx-auto px-4 sm:px-8 lg:px-10 pt-3 pb-1 flex items-center gap-1.5 overflow-x-auto custom-scrollbar text-xs">
           <button
             type="button"
             onClick={() => setFilterCategory('all')}
@@ -437,7 +437,7 @@ export function Clarifications() {
 
       {/* Main Stream Stream */}
       <div className="flex-1 overflow-y-auto custom-scrollbar p-4 sm:p-6">
-        <div className="max-w-4xl mx-auto space-y-4">
+        <div className="max-w-[1700px] mx-auto space-y-4">
           {visibleItems.length === 0 ? (
             <div className="p-12 text-center bg-surface-1/40 border border-surface-2 rounded-2xl space-y-3">
               <div className="w-12 h-12 rounded-2xl bg-surface-2 border border-surface-3 mx-auto flex items-center justify-center text-content-3">

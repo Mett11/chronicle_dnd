@@ -24,14 +24,13 @@ import {
   Shield,
   Dices,
   ArrowRight,
-  Maximize2,
-  Minimize2,
   Volume2,
   VolumeX,
   Sparkle,
   Hash,
   X,
   Flame,
+  ChevronDown,
   Award,
 } from 'lucide-react';
 import { useAuth } from '../components/AuthProvider';
@@ -40,17 +39,27 @@ import { getStoredTheme, ClassTheme } from '../lib/theme';
 import { getCampaignTitleClasses } from '../components/CampaignTypographyModal';
 import { CampaignMeta } from '../types';
 
+function getContrastTextColor(hexColor?: string): string {
+  if (!hexColor) return '#ffffff';
+  const hex = hexColor.replace('#', '');
+  if (hex.length !== 6) return '#ffffff';
+  const r = parseInt(hex.substring(0, 2), 16);
+  const g = parseInt(hex.substring(2, 4), 16);
+  const b = parseInt(hex.substring(4, 6), 16);
+  const yiq = (r * 299 + g * 587 + b * 114) / 1000;
+  return yiq >= 135 ? '#111827' : '#ffffff';
+}
+
 export interface D20FaceConfig {
   id: number; // 1 to 20
   title: string;
   subtitle: string;
-  category: 'CAMPAGNA' | 'LORE & ARCHIVI' | 'ESPLORAZIONE' | 'SCHEDA EROE' | 'STRUMENTI' | 'SISTEMA' | 'PERSONALIZZAZIONE' | 'TAVOLO';
-  icon: string;
+  category: string;
   lucideIcon: React.ElementType;
+  svgPath: string;
   route?: string;
   actionType?: 'navigate' | 'modal' | 'meme_roll';
   modalEvent?: string;
-  shortcutKey: string;
   resonanceStatus: string;
   description: string;
   badgeCount?: number;
@@ -61,13 +70,72 @@ export function D20Menu() {
   const navigate = useNavigate();
   const mountRef = useRef<HTMLDivElement>(null);
 
-  const [activeFaceIndex, setActiveFaceIndex] = useState<number>(0); // 0..19
-  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
+  const [activeFaceIndex, setActiveFaceIndex] = useState<number>(() => {
+    try {
+      const saved = sessionStorage.getItem('chronicle_d20_last_face');
+      if (saved !== null) {
+        const parsed = parseInt(saved, 10);
+        if (!isNaN(parsed) && parsed >= 0 && parsed < 20) {
+          return parsed;
+        }
+      }
+    } catch {}
+    return 0;
+  });
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem('chronicle_d20_last_face', String(activeFaceIndex));
+    } catch {}
+  }, [activeFaceIndex]);
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
   const [currentTheme, setCurrentTheme] = useState<ClassTheme>(getStoredTheme);
   const [campaignMeta, setCampaignMeta] = useState<CampaignMeta | null>(() => CampaignManager.getCampaignMeta());
   const [calendar, setCalendar] = useState(() => CampaignManager.getCalendar());
   const [unreadNotifs, setUnreadNotifs] = useState<number>(0);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
+  useEffect(() => {
+    const handleOpenMobileMenu = () => setIsMobileMenuOpen(true);
+    window.addEventListener('chronicle_open_mobile_menu', handleOpenMobileMenu);
+    return () => window.removeEventListener('chronicle_open_mobile_menu', handleOpenMobileMenu);
+  }, []);
+
+  const touchStartXRef = useRef<number>(0);
+  const touchStartYRef = useRef<number>(0);
+  const handleExecuteFaceRef = useRef<(faceConfig: D20FaceConfig) => void>(() => {});
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (e.touches.length > 0) {
+      touchStartXRef.current = e.touches[0].clientX;
+      touchStartYRef.current = e.touches[0].clientY;
+    }
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    if (e.changedTouches.length > 0) {
+      const deltaX = e.changedTouches[0].clientX - touchStartXRef.current;
+      const deltaY = e.changedTouches[0].clientY - touchStartYRef.current;
+
+      if (Math.abs(deltaX) > 30 && Math.abs(deltaX) > Math.abs(deltaY)) {
+        if (deltaX > 0) {
+          // Swipe right -> face +1
+          setActiveFaceIndex((prev) => (prev + 1) % faces.length);
+          playClickSound();
+        } else {
+          // Swipe left -> face -1
+          setActiveFaceIndex((prev) => (prev - 1 + faces.length) % faces.length);
+          playClickSound();
+        }
+      } else if (Math.abs(deltaX) < 15 && Math.abs(deltaY) < 15) {
+        // Tap on face -> enter view
+        const active = faces[activeFaceIndex];
+        if (active) {
+          handleExecuteFaceRef.current(active);
+        }
+      }
+    }
+  };
 
   // Meme Roll Modal State
   const [memeRollResult, setMemeRollResult] = useState<{
@@ -114,254 +182,243 @@ export function D20Menu() {
     };
   }, []);
 
-  // 20 D20 Faces Definition
+  // 20 D20 Faces Definition grouped into the 5 requested categories
   const faces: D20FaceConfig[] = useMemo(
     () => [
+      // 1. La Cronaca
       {
         id: 1,
-        title: 'Tomo Sessioni',
+        title: 'Sessioni',
         subtitle: 'Registro narrativo, capitoli ed atti della campagna',
-        category: 'CAMPAGNA',
-        icon: '📖',
+        category: 'LA CRONACA',
         lucideIcon: BookOpen,
+        svgPath: 'M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z',
         route: '/sessions',
-        shortcutKey: '1',
         resonanceStatus: 'Risonanza Attiva',
         description: 'Consulta il grimorio delle sessioni giocate, gli atti, i riassunti narrativi ed i momenti salienti della saga.',
       },
       {
         id: 2,
-        title: 'Diario & Appunti',
+        title: 'Diario',
         subtitle: 'Note personali, memorie di sessione e diario del giocatore',
-        category: 'CAMPAGNA',
-        icon: '📜',
+        category: 'LA CRONACA',
         lucideIcon: Scroll,
+        svgPath: 'M8 21h12a2 2 0 0 0 2-2v-2H10v2a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v3h4 M19 17V5a2 2 0 0 0-2-2H4',
         route: '/notes',
-        shortcutKey: '2',
         resonanceStatus: 'Frequenza Sincronizzata',
         description: 'Scrivi e rileggi le tue note riservate, le teorie, gli indizi ed i diari privati della compagnia.',
       },
       {
         id: 3,
-        title: 'Codex & Archivi',
-        subtitle: 'Bestiario, PNG, fazioni, luoghi e cimeli leggendari',
-        category: 'LORE & ARCHIVI',
-        icon: '📚',
-        lucideIcon: BookMarked,
-        route: '/codex',
-        shortcutKey: '3',
-        resonanceStatus: 'Archivio Completo',
-        description: 'Sfoglia le schede dettagliate di tutti i personaggi incontrati, fazioni, mostri ed artefatti del mondo.',
-      },
-      {
-        id: 4,
-        title: 'Storyline Chrono',
+        title: 'Cronologia',
         subtitle: 'Mappa temporale interattiva degli eventi della saga',
-        category: 'CAMPAGNA',
-        icon: '🌌',
+        category: 'LA CRONACA',
         lucideIcon: Layers,
+        svgPath: 'm12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z M2 12l10 4.5 10-4.5 M2 17l10 4.5 10-4.5',
         route: '/storyline',
-        shortcutKey: '4',
         resonanceStatus: 'Linea Temporale Fluida',
         description: 'Visualizza l\'evoluzione degli eventi, la sequenza dei capitoli e le ramificazioni narrative della campagna.',
       },
       {
-        id: 5,
-        title: 'World Lore',
-        subtitle: 'Geografia, storia antica, pantheon e miti del regno',
-        category: 'LORE & ARCHIVI',
-        icon: '🌐',
-        lucideIcon: Globe,
-        route: '/world-lore',
-        shortcutKey: '5',
-        resonanceStatus: 'Conoscenza Arcana',
-        description: 'Immergiti nella lore del regno, le ere leggendarie, le divinità ed i misteri del cosmo.',
-      },
-      {
-        id: 6,
+        id: 4,
         title: 'Sendipietra',
         subtitle: 'Canale arcano di comunicazione e messaggi di gruppo',
-        category: 'CAMPAGNA',
-        icon: '✨',
+        category: 'LA CRONACA',
         lucideIcon: Sparkles,
+        svgPath: 'm12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3L12 3Z',
         route: '/sendipietra',
-        shortcutKey: '6',
         resonanceStatus: 'Canale Arcano Aperto',
         description: 'Invia e ricevi dispacci arcani, messaggi telepatici ed annunci in tempo reale con i compagni ed il Master.',
       },
+
+      // 2. La Compagnia
       {
-        id: 7,
-        title: 'Atlante Cartografico',
-        subtitle: 'Mappe del mondo, pin interattivi e territori esplorabili',
-        category: 'ESPLORAZIONE',
-        icon: '🗺️',
-        lucideIcon: MapIcon,
-        route: '/map',
-        shortcutKey: '7',
-        resonanceStatus: 'Mappatura Territoriale',
-        description: 'Esplora le mappe tattiche, le regioni, le città ed i punti di interesse registrati durante i viaggi.',
-      },
-      {
-        id: 8,
-        title: 'Calendario di Lore',
-        subtitle: 'Calendario di campagna e avanzamento temporale',
-        category: 'CAMPAGNA',
-        icon: '📅',
-        lucideIcon: Calendar,
-        route: '/calendar',
-        shortcutKey: '8',
-        resonanceStatus: 'Tempo Inserito',
-        description: 'Tieni traccia dei giorni trascorsi nel mondo di gioco, festività, fasi lunari e scadenze narrative.',
-      },
-      {
-        id: 9,
-        title: 'Profilo Personaggio',
+        id: 5,
+        title: 'Personaggio',
         subtitle: 'Scheda eroe, background, tratti e albero relazioni',
-        category: 'SCHEDA EROE',
-        icon: '👑',
+        category: 'LA COMPAGNIA',
         lucideIcon: Crown,
+        svgPath: 'm2 4 3 12h14l3-12-6 7-4-7-4 7-6-7zm3 16h14',
         route: '/character',
-        shortcutKey: '9',
         resonanceStatus: 'Anima Eroica Pronta',
         description: 'Ispeziona e modifica il tuo personaggio, il background, le virtù, l\'albero genealogico ed i legami.',
       },
       {
-        id: 10,
-        title: 'Cerca Globale (⌘K)',
-        subtitle: 'Ricerca istantanea tra tutti i documenti della campagna',
-        category: 'STRUMENTI',
-        icon: '🔍',
-        lucideIcon: Search,
-        route: '/search',
-        shortcutKey: '0',
-        resonanceStatus: 'Indicizzazione Attiva',
-        description: 'Trova istantaneamente qualsiasi nome, luogo, incantesimo, nota o evento menzionato nelle cronache.',
+        id: 6,
+        title: 'Compagnia',
+        subtitle: 'Roster degli eroi, statistiche del party e Hall of Fame',
+        category: 'LA COMPAGNIA',
+        lucideIcon: Users,
+        svgPath: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z M22 21v-2a4 4 0 0 0-3-3.9 M16 3.1a4 4 0 0 1 0 7.8',
+        route: '/party',
+        resonanceStatus: 'Compagnia Unita',
+        description: 'Presentazione cinematica degli eroi, statistiche persistenti di sessione, ruoli, trofei e colonna sonora del party.',
       },
       {
-        id: 11,
-        title: 'Notifiche & Avvisi',
+        id: 7,
+        title: 'Recluta',
+        subtitle: 'Codice invito, QR code e gestione giocatori del party',
+        category: 'LA COMPAGNIA',
+        lucideIcon: Users,
+        svgPath: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z M22 21v-2a4 4 0 0 0-3-3.9 M16 3.1a4 4 0 0 1 0 7.8',
+        actionType: 'modal',
+        modalEvent: 'chronicle_open_invite_modal',
+        resonanceStatus: 'Party Invocato',
+        description: 'Genera il codice di invito o il QR Code per permettere a nuovi giocatori di unirsi al tavolo di gioco.',
+      },
+      {
+        id: 8,
+        title: 'Notifiche',
         subtitle: 'Richieste del Master, votazioni attive e quesiti',
-        category: 'SISTEMA',
-        icon: '🔔',
+        category: 'LA COMPAGNIA',
         lucideIcon: Bell,
+        svgPath: 'M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9 M10.3 21a1.94 1.94 0 0 0 3.4 0',
         route: '/clarifications',
-        shortcutKey: 'U',
         resonanceStatus: unreadNotifs > 0 ? `${unreadNotifs} Avvisi Non Letti` : 'Nessuna Pendenza',
         description: 'Rispondi alle notifiche, chiarimenti di regole e quesiti inviati dal Master o dal party.',
         badgeCount: unreadNotifs > 0 ? unreadNotifs : undefined,
       },
+
+      // 3. Il Mondo
       {
-        id: 12,
-        title: 'Tema & Tavolozza',
-        subtitle: 'Personalizzazione visiva e tavolozza di classe',
-        category: 'PERSONALIZZAZIONE',
-        icon: '🎨',
-        lucideIcon: Palette,
-        actionType: 'modal',
-        modalEvent: 'chronicle_open_theme_modal',
-        shortcutKey: 'T',
-        resonanceStatus: `Stile: ${currentTheme.name}`,
-        description: 'Scegli la veste grafica della tua classe (Paladino, Mago, Bardo, Barbaro, Chierico) e personalizza la palette.',
+        id: 9,
+        title: 'Mondo',
+        subtitle: 'Geografia, storia antica, pantheon e miti del regno',
+        category: 'IL MONDO',
+        lucideIcon: Globe,
+        svgPath: 'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z M2 12h20 M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z',
+        route: '/world-lore',
+        resonanceStatus: 'Conoscenza Arcana',
+        description: 'Immergiti nella lore del regno, le ere leggendarie, le divinità ed i misteri del cosmo.',
       },
       {
+        id: 10,
+        title: 'Atlante',
+        subtitle: 'Mappe del mondo, pin interattivi e territori esplorabili',
+        category: 'IL MONDO',
+        lucideIcon: MapIcon,
+        svgPath: 'M14 5.5a2 2 0 0 0 1.8 0l3.7-1.8A1 1 0 0 1 21 4.6v12.8a1 1 0 0 1-.6.9l-4.5 2.3a2 2 0 0 1-1.8 0l-4.2-2.1a2 2 0 0 0-1.8 0l-3.7 1.8A1 1 0 0 1 3 19.4V6.6a1 1 0 0 1 .6-.9l4.5-2.3a2 2 0 0 1 1.8 0z M15 5.8v15 M9 3.2v15',
+        route: '/map',
+        resonanceStatus: 'Mappatura Territoriale',
+        description: 'Esplora le mappe tattiche, le regioni, le città ed i punti di interesse registrati durante i viaggi.',
+      },
+      {
+        id: 11,
+        title: 'Calendario',
+        subtitle: 'Calendario di campagna e avanzamento temporale',
+        category: 'IL MONDO',
+        lucideIcon: Calendar,
+        svgPath: 'M8 2v4 M16 2v4 M3 10h18 M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z',
+        route: '/calendar',
+        resonanceStatus: 'Tempo Inserito',
+        description: 'Tieni traccia dei giorni trascorsi nel mondo di gioco, festività, fasi lunari e scadenze narrative.',
+      },
+      {
+        id: 12,
+        title: 'Codex',
+        subtitle: 'Bestiario, PNG, fazioni, luoghi e cimeli leggendari',
+        category: 'IL MONDO',
+        lucideIcon: BookMarked,
+        svgPath: 'M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z M10 2v10l3-2.5 3 2.5V2',
+        route: '/codex',
+        resonanceStatus: 'Archivio Completo',
+        description: 'Sfoglia le schede dettagliate di tutti i personaggi incontrati, fazioni, mostri ed artefatti del mondo.',
+      },
+
+      // 4. Strumenti & Sistema
+      {
         id: 13,
-        title: 'Impostazioni',
-        subtitle: 'Configurazioni di sistema, AI e preferenze dell\'app',
-        category: 'SISTEMA',
-        icon: '⚙️',
-        lucideIcon: SettingsIcon,
-        route: '/settings',
-        shortcutKey: 'S',
-        resonanceStatus: 'Parametri Nominali',
-        description: 'Configura i modelli AI dell\'Oracolo, le opzioni di sincronizzazione cloud e le preferenze utente.',
+        title: 'Cerca',
+        subtitle: 'Ricerca istantanea tra tutti i documenti della campagna',
+        category: 'STRUMENTI & SISTEMA',
+        lucideIcon: Search,
+        svgPath: 'm21 21-4.3-4.3 M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16z',
+        route: '/search',
+        resonanceStatus: 'Indicizzazione Attiva',
+        description: 'Trova istantaneamente qualsiasi nome, luogo, incantesimo, nota o evento menzionato nelle cronache.',
       },
       {
         id: 14,
-        title: 'Cambia Campagna',
+        title: 'Campagne',
         subtitle: 'Seleziona o passa a un\'altra campagna attiva',
-        category: 'TAVOLO',
-        icon: '🔑',
+        category: 'STRUMENTI & SISTEMA',
         lucideIcon: Key,
+        svgPath: 'm21 2-2 2m-1.5 1.5L12 11l4 4 1.5-1.5 1.5 1.5 3-3-1.5-1.5 2-2z M7.5 13a4.5 4.5 0 1 1 0-9 4.5 4.5 0 0 1 0 9z',
         actionType: 'modal',
         modalEvent: 'chronicle_switch_campaign',
-        shortcutKey: 'C',
         resonanceStatus: 'Gate Multiverso',
         description: 'Torna al Portale Gate per accedere ad altre campagne o inserire un nuovo codice di invito.',
       },
       {
         id: 15,
-        title: 'Tipografia & Logo',
-        subtitle: 'Personalizza stile del titolo e carattere del logo',
-        category: 'PERSONALIZZAZIONE',
-        icon: '🔤',
-        lucideIcon: Sliders,
+        title: 'Tema',
+        subtitle: 'Personalizzazione visiva e tavolozza di classe',
+        category: 'STRUMENTI & SISTEMA',
+        lucideIcon: Palette,
+        svgPath: 'M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.9 0 1.6-.7 1.6-1.7 0-.4-.2-.8-.4-1.1-.3-.3-.4-.7-.4-1.1a1.6 1.6 0 0 1 1.7-1.7h2c3 0 5.5-2.5 5.5-5.5C22 6 17.5 2 12 2z M6.5 11a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zm3-3a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zm5 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zm3 3a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3z',
         actionType: 'modal',
-        modalEvent: 'chronicle_open_typography_modal',
-        shortcutKey: 'F',
-        resonanceStatus: 'Font Leggendario',
-        description: 'Modifica il carattere tipografico del titolo della campagna (Cinzel, Medieval, Uncial, Modern) ed effetti visivi.',
+        modalEvent: 'chronicle_open_theme_modal',
+        resonanceStatus: `Stile: ${currentTheme.name}`,
+        description: 'Scegli la veste grafica della tua classe (Paladino, Mago, Bardo, Barbaro, Chierico) e personalizza la palette.',
       },
       {
         id: 16,
-        title: 'Guida & Tutorial',
-        subtitle: 'Manuale utente, scorciatoie e guida rapida',
-        category: 'SISTEMA',
-        icon: '❓',
-        lucideIcon: HelpCircle,
-        route: '/tutorial',
-        shortcutKey: 'H',
-        resonanceStatus: 'Grimorio d\'Istruzione',
-        description: 'Consulta il manuale della piattaforma, scopri le scorciatoie da tastiera e le funzionalità avanzate.',
+        title: 'Tipografia',
+        subtitle: 'Personalizza stile del titolo e carattere del logo',
+        category: 'STRUMENTI & SISTEMA',
+        lucideIcon: Sliders,
+        svgPath: 'M4 21v-7 M4 10V3 M12 21v-9 M12 8V3 M20 21v-5 M20 12V3 M1 14h6 M9 8h6 M17 16h6',
+        actionType: 'modal',
+        modalEvent: 'chronicle_open_typography_modal',
+        resonanceStatus: 'Font Leggendario',
+        description: 'Modifica il carattere tipografico del titolo della campagna (Cinzel, Medieval, Uncial, Modern) ed effetti visivi.',
       },
+
+      // 5. Altro
       {
         id: 17,
-        title: 'Invita Party',
-        subtitle: 'Codice invito, QR code e gestione giocatori del party',
-        category: 'TAVOLO',
-        icon: '👥',
-        lucideIcon: Users,
-        actionType: 'modal',
-        modalEvent: 'chronicle_open_invite_modal',
-        shortcutKey: 'I',
-        resonanceStatus: 'Party Invocato',
-        description: 'Genera il codice di invito o il QR Code per permettere a nuovi giocatori di unirsi al tavolo di gioco.',
+        title: 'Manuale',
+        subtitle: 'Manuale utente, sezioni e guida rapida',
+        category: 'ALTRO',
+        lucideIcon: HelpCircle,
+        svgPath: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20z M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3 M12 17h.01',
+        route: '/tutorial',
+        resonanceStatus: 'Grimorio d\'Istruzione',
+        description: 'Consulta il manuale della piattaforma, scopri le funzionalità avanzate ed i trucchi del tavolo.',
       },
       {
         id: 18,
-        title: 'Installa Applicazione',
-        subtitle: 'Installazione come PWA su Windows, Android o iOS',
-        category: 'SISTEMA',
-        icon: '📲',
-        lucideIcon: Download,
-        actionType: 'modal',
-        modalEvent: 'chronicle_open_install_modal',
-        shortcutKey: 'P',
-        resonanceStatus: 'PWA Pronta',
-        description: 'Installa Chronicle direttamente sul tuo dispositivo per un\'esperienza nativa ad alte prestazioni e offline.',
+        title: 'Impostazioni',
+        subtitle: 'Configurazioni di sistema, AI e preferenze dell\'app',
+        category: 'ALTRO',
+        lucideIcon: SettingsIcon,
+        svgPath: 'M12.2 2h-.4a2 2 0 0 0-2 2v.2a2 2 0 0 1-1 1.7l-.4.3a2 2 0 0 1-2 0l-.2-.1a2 2 0 0 0-2.7.7l-.2.4a2 2 0 0 0 .7 2.7l.2.1a2 2 0 0 1 1 1.7v.5a2 2 0 0 1-1 1.7l-.2.1a2 2 0 0 0-.7 2.7l.2.4a2 2 0 0 0 2.7.7l.2-.1a2 2 0 0 1 2 0l.4.3a2 2 0 0 1 1 1.7V20a2 2 0 0 0 2 2h.4a2 2 0 0 0 2-2v-.2a2 2 0 0 1 1-1.7l.4-.3a2 2 0 0 1 2 0l.2.1a2 2 0 0 0 2.7-.7l.2-.4a2 2 0 0 0-.7-2.7l-.2-.1a2 2 0 0 1-1-1.7v-.5a2 2 0 0 1 1-1.7l.2-.1a2 2 0 0 0 .7-2.7l-.2-.4a2 2 0 0 0-2.7-.7l-.2.1a2 2 0 0 1-2 0l-.4-.3a2 2 0 0 1-1-1.7V4a2 2 0 0 0-2-2z M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z',
+        route: '/settings',
+        resonanceStatus: 'Parametri Nominali',
+        description: 'Configura i modelli AI dell\'Oracolo, le opzioni di sincronizzazione cloud e le preferenze utente.',
       },
       {
         id: 19,
-        title: 'Strumenti Master',
-        subtitle: 'Pannello oracolo arcanum ed estrazione AI per il DM',
-        category: 'STRUMENTI',
-        icon: '🛡️',
-        lucideIcon: Shield,
-        route: '/oracle',
-        shortcutKey: 'M',
-        resonanceStatus: player?.isDm ? 'Potere Master Attivo' : 'Accesso Custode',
-        description: 'Strumenti avanzati di generazione AI per creare PNG istantanei, spunti di trama e consultare l\'Oracolo.',
+        title: 'Installa App',
+        subtitle: 'Installazione come PWA su Windows, Android o iOS',
+        category: 'ALTRO',
+        lucideIcon: Download,
+        svgPath: 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4 M7 10l5 5 5-5 M12 15V3',
+        actionType: 'modal',
+        modalEvent: 'chronicle_open_install_modal',
+        resonanceStatus: 'PWA Pronta',
+        description: 'Installa direttamente sul tuo dispositivo per un\'esperienza nativa.',
       },
       {
         id: 20,
-        title: 'Tiradado della Giornata',
+        title: 'Tiro del Giorno',
         subtitle: 'Tira il d20 della sorte per il responso quotidiano del destino',
-        category: 'TAVOLO',
-        icon: '🎲',
+        category: 'ALTRO',
         lucideIcon: Dices,
+        svgPath: 'm21 16-4 4-4-4 4-4 4 4z M3 10l4-4 4 4-4 4-4-4z M10 3l4 4-4 4-4-4 4-4z',
         actionType: 'meme_roll',
-        shortcutKey: 'R',
         resonanceStatus: 'Lancio Meme della Sorte',
-        description: 'Esegui il tiro del d20 della giornata! Un responso ironico o epico senza spostarti dalla vista.',
+        description: 'Esegui il tiro del d20 della giornata! Un responso ironico o epico senza spostarti dal menu.',
       },
     ],
     [currentTheme, unreadNotifs, player]
@@ -387,6 +444,8 @@ export function D20Menu() {
     lastMouseX: number;
     lastMouseY: number;
   } | null>(null);
+
+  const faceIdMapRef = useRef<number[]>(new Array(20).fill(1));
 
   // Play audio click
   const playClickSound = useCallback(() => {
@@ -429,23 +488,23 @@ export function D20Menu() {
 
       if (val === 20) {
         type = 'crit_success';
-        title = '✨ NAT 20! SUCCESSO CRITICO!';
+        title = 'NAT 20! SUCCESSO CRITICO!';
         message = 'Gli Dei del Regno applaudono la tua impresa! Ricevi la benedizione dell\'Oracolo e la gloria del tavolo!';
       } else if (val === 1) {
         type = 'crit_fail';
-        title = '💀 NAT 1! FALLIMENTO CRITICO!';
+        title = 'NAT 1! FALLIMENTO CRITICO!';
         message = 'La tua spada scivola e il bardo inciampa sulla sua liuto! Attento al risvolto del destino...';
       } else if (val >= 15) {
         type = 'success';
-        title = `🛡️ NAT ${val}! Tiro Eccellente!`;
+        title = `NAT ${val}! Tiro Eccellente!`;
         message = 'Il destino ti sorride. La fortuna guida le tue scelte per la sessione di oggi!';
       } else if (val >= 10) {
         type = 'success';
-        title = `📜 NAT ${val}! Prova Superata.`;
+        title = `NAT ${val}! Prova Superata.`;
         message = 'Un esito equilibrato. Il cammino prosegue senza troppi intoppi.';
       } else {
         type = 'fail';
-        title = `⚔️ NAT ${val}! Prova Ardua...`;
+        title = `NAT ${val}! Prova Ardua...`;
         message = 'La sorte tentenna. Prepara gli elisi e mantieni la guardia alta!';
       }
 
@@ -457,6 +516,9 @@ export function D20Menu() {
   // Execute Action for Face
   const handleExecuteFace = useCallback(
     (faceConfig: D20FaceConfig) => {
+      try {
+        sessionStorage.setItem('chronicle_d20_last_face', String(faceConfig.id - 1));
+      } catch {}
       if (faceConfig.actionType === 'meme_roll') {
         triggerMemeRoll();
         return;
@@ -471,6 +533,10 @@ export function D20Menu() {
     },
     [navigate, triggerMemeRoll]
   );
+
+  useEffect(() => {
+    handleExecuteFaceRef.current = handleExecuteFace;
+  }, [handleExecuteFace]);
 
   // Exact Upright Quaternion Alignment Math
   const snapToFaceUpright = useCallback((faceIdx: number) => {
@@ -493,10 +559,103 @@ export function D20Menu() {
   }, []);
 
   useEffect(() => {
-    snapToFaceUpright(activeFaceIndex);
-  }, [activeFaceIndex, snapToFaceUpright]);
+    const activeFaceConfig = faces[activeFaceIndex];
+    if (activeFaceConfig && faceIdMapRef.current) {
+      const geoFaceIdx = faceIdMapRef.current.indexOf(activeFaceConfig.id);
+      if (geoFaceIdx !== -1) {
+        snapToFaceUpright(geoFaceIdx);
+      }
+    }
+  }, [activeFaceIndex, faces, snapToFaceUpright]);
 
-  // Generate Canvas Texture for Face i with theme colors
+  // Keyboard Shortcuts: Typing 1-20, Arrow navigation, Space/Enter, R for Roll
+  useEffect(() => {
+    let digitTimeout: NodeJS.Timeout | null = null;
+    let digitBuffer = '';
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+
+      // Ignore modifier combinations so browser reloads (Ctrl+R, Cmd+R, Ctrl+Alt+R) work as expected
+      if (e.ctrlKey || e.metaKey || e.altKey) {
+        return;
+      }
+      const key = e.key;
+
+      if (/^[0-9]$/.test(key)) {
+        e.preventDefault();
+        digitBuffer += key;
+
+        if (digitTimeout) clearTimeout(digitTimeout);
+
+        const parsed = parseInt(digitBuffer, 10);
+
+        if (digitBuffer.length >= 2) {
+          if (parsed >= 1 && parsed <= 20) {
+            setActiveFaceIndex(parsed - 1);
+            playClickSound();
+          }
+          digitBuffer = '';
+        } else {
+          digitTimeout = setTimeout(() => {
+            let targetNum = parsed;
+            if (targetNum === 0) targetNum = 10;
+            if (targetNum >= 1 && targetNum <= 20) {
+              setActiveFaceIndex(targetNum - 1);
+              playClickSound();
+            }
+            digitBuffer = '';
+          }, 450);
+        }
+        return;
+      }
+
+      if (key === 'ArrowRight' || key === 'ArrowDown') {
+        e.preventDefault();
+        setActiveFaceIndex((prev) => (prev + 1) % 20);
+        playClickSound();
+        return;
+      }
+
+      if (key === 'ArrowLeft' || key === 'ArrowUp') {
+        e.preventDefault();
+        setActiveFaceIndex((prev) => (prev - 1 + 20) % 20);
+        playClickSound();
+        return;
+      }
+
+      if (key === 'Enter' || key === ' ') {
+        e.preventDefault();
+        const active = faces[activeFaceIndex];
+        if (active) {
+          handleExecuteFace(active);
+        }
+        return;
+      }
+
+      if (key === 'r' || key === 'R') {
+        e.preventDefault();
+        triggerMemeRoll();
+        return;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      if (digitTimeout) clearTimeout(digitTimeout);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [activeFaceIndex, faces, handleExecuteFace, playClickSound, triggerMemeRoll]);
+
+  // Generate Canvas Texture for Face i with theme colors and crisp vector SVG glyph
   const createThemeFaceTexture = useCallback(
     (faceCfg: D20FaceConfig, theme: ClassTheme) => {
       const canvas = document.createElement('canvas');
@@ -506,14 +665,22 @@ export function D20Menu() {
       if (!ctx) return new THREE.CanvasTexture(canvas);
 
       const mainHex = theme.accentColor || '#f59e0b';
-      const bgSurface = theme.colors.surface0 || '#0b0d11';
-      const bgSurface1 = theme.colors.surface1 || '#141820';
+      const isLight = Boolean(theme.isLight);
 
-      // Background Radial Gradient
-      const grad = ctx.createRadialGradient(256, 256, 15, 256, 256, 260);
-      grad.addColorStop(0, bgSurface1);
-      grad.addColorStop(0.7, bgSurface);
-      grad.addColorStop(1, '#050608');
+      // Background Gradient
+      const grad = ctx.createRadialGradient(256, 256, 20, 256, 256, 270);
+      if (isLight) {
+        grad.addColorStop(0, '#ffffff');
+        grad.addColorStop(0.5, theme.colors.surface1 || '#ffffff');
+        grad.addColorStop(0.85, theme.colors.surface2 || '#f1e5d8');
+        grad.addColorStop(1, theme.colors.surface3 || '#e2cfbd');
+      } else {
+        const bgSurface = theme.colors.surface0 || '#0b0d11';
+        const bgSurface1 = theme.colors.surface1 || '#141820';
+        grad.addColorStop(0, bgSurface1);
+        grad.addColorStop(0.7, bgSurface);
+        grad.addColorStop(1, '#050608');
+      }
       ctx.fillStyle = grad;
       ctx.fillRect(0, 0, 512, 512);
 
@@ -533,28 +700,43 @@ export function D20Menu() {
       ctx.lineTo(52, 438);
       ctx.lineTo(460, 438);
       ctx.closePath();
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
+      ctx.strokeStyle = isLight ? 'rgba(0, 0, 0, 0.18)' : 'rgba(255, 255, 255, 0.35)';
       ctx.lineWidth = 4;
       ctx.stroke();
 
       // Number #1..#20
       ctx.shadowColor = mainHex;
-      ctx.shadowBlur = 18;
-      ctx.fillStyle = '#ffffff';
-      ctx.font = 'bold 128px "Cinzel", "Playfair Display", Georgia, serif';
+      ctx.shadowBlur = isLight ? 4 : 18;
+      ctx.fillStyle = isLight ? theme.colors.content1 || '#111827' : '#ffffff';
+      const isDoubleDigit = faceCfg.id >= 10;
+      ctx.font = isDoubleDigit
+        ? 'bold 80px "Cinzel", "Playfair Display", Georgia, serif'
+        : 'bold 105px "Cinzel", "Playfair Display", Georgia, serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(`${faceCfg.id}`, 256, 215);
+      ctx.fillText(`${faceCfg.id}`, 256, isDoubleDigit ? 212 : 205);
 
-      // Emoji / Icon
-      ctx.shadowBlur = 10;
-      ctx.font = '48px "Segoe UI Emoji", "Apple Color Emoji", sans-serif';
-      ctx.fillText(faceCfg.icon, 256, 310);
+      // Dedicated Vector SVG Glyph rendered directly onto canvas
+      if (faceCfg.svgPath && typeof Path2D !== 'undefined') {
+        ctx.save();
+        ctx.translate(256, 310);
+        ctx.scale(2.2, 2.2);
+        ctx.translate(-12, -12); // Center 24x24 icon viewport
+        ctx.strokeStyle = isLight ? theme.colors.content1 || '#111827' : mainHex;
+        ctx.lineWidth = 2.4;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.shadowBlur = isLight ? 2 : 10;
+        ctx.shadowColor = mainHex;
+        const path = new Path2D(faceCfg.svgPath);
+        ctx.stroke(path);
+        ctx.restore();
+      }
 
       // Title (Centered, uppercase, crisp)
-      ctx.shadowBlur = 6;
-      ctx.fillStyle = mainHex;
-      ctx.font = 'bold 22px "Plus Jakarta Sans", sans-serif';
+      ctx.shadowBlur = isLight ? 2 : 6;
+      ctx.fillStyle = isLight ? theme.colors.primary || mainHex : mainHex;
+      ctx.font = 'bold 20px "Plus Jakarta Sans", sans-serif';
       const displayTitle = faceCfg.title.length > 16 ? faceCfg.title.substring(0, 14) + '..' : faceCfg.title;
       ctx.fillText(displayTitle.toUpperCase(), 256, 365);
 
@@ -566,18 +748,33 @@ export function D20Menu() {
     []
   );
 
+  // Auto-scroll active item chip into view in the horizontal list
+  const itemRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  useEffect(() => {
+    if (itemRefs.current[activeFaceIndex]) {
+      itemRefs.current[activeFaceIndex]?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'nearest',
+        inline: 'center',
+      });
+    }
+  }, [activeFaceIndex]);
+
   // Initialize Three.js 3D Canvas
   useEffect(() => {
     const container = mountRef.current;
     if (!container) return;
 
+    let isDisposed = false;
+
     const width = container.clientWidth || window.innerWidth;
     const height = container.clientHeight || window.innerHeight;
+    const isMobile = width < 640;
 
     // 1. Scene, Camera, Renderer
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(38, width / height, 0.1, 1000);
-    camera.position.set(0, 0, 7.5);
+    camera.position.set(0, 0, isMobile ? 8.2 : 7.5);
 
     const renderer = new THREE.WebGLRenderer({
       alpha: true,
@@ -587,32 +784,33 @@ export function D20Menu() {
     renderer.setSize(width, height);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.3;
+    renderer.toneMappingExposure = currentTheme.isLight ? 1.4 : 1.3;
 
     while (container.firstChild) {
       container.removeChild(container.firstChild);
     }
     container.appendChild(renderer.domElement);
 
-    // 2. Lights
-    const ambientLight = new THREE.AmbientLight(0xffffff, 1.5);
+    // 2. Lights with high-radiance light mode adaptation
+    const ambientLight = new THREE.AmbientLight(0xffffff, currentTheme.isLight ? 2.4 : 1.5);
     scene.add(ambientLight);
 
     const themeLightColor = new THREE.Color(currentTheme.accentColor || '#f59e0b');
-    const spotlight = new THREE.DirectionalLight(themeLightColor, 2.8);
+    const spotlight = new THREE.DirectionalLight(themeLightColor, currentTheme.isLight ? 2.2 : 2.8);
     spotlight.position.set(5, 6, 6);
     scene.add(spotlight);
 
-    const rimLight = new THREE.PointLight(0x38bdf8, 2.0, 20);
+    const rimLight = new THREE.PointLight(currentTheme.isLight ? 0x93c5fd : 0x38bdf8, currentTheme.isLight ? 1.2 : 2.0, 20);
     rimLight.position.set(-6, -4, 4);
     scene.add(rimLight);
 
-    const frontLight = new THREE.PointLight(0xffffff, 1.8, 15);
+    const frontLight = new THREE.PointLight(0xffffff, currentTheme.isLight ? 2.2 : 1.8, 15);
     frontLight.position.set(0, 0, 8);
     scene.add(frontLight);
 
-    // 3. Icosahedron Base Geometry with Vertex-UV sorting for 100% Upright Text
-    const rawGeo = new THREE.IcosahedronGeometry(2.35, 0).toNonIndexed();
+    // 3. Sleek, Refined Icosahedron Base Geometry (1.25 radius on mobile, 1.65 on desktop)
+    const diceRadius = width < 640 ? 1.25 : 1.65;
+    const rawGeo = new THREE.IcosahedronGeometry(diceRadius, 0).toNonIndexed();
     const rawPos = rawGeo.attributes.position;
 
     const sortedPos = new Float32Array(60 * 3);
@@ -634,55 +832,122 @@ export function D20Menu() {
       const faceNorm = center.clone().normalize();
       faceNormals.push(faceNorm);
 
-      let refUp = new THREE.Vector3(0, 1, 0);
+      let worldRef = new THREE.Vector3(0, 1, 0);
       if (Math.abs(faceNorm.y) > 0.85) {
-        refUp.set(0, 0, -1);
+        worldRef.set(0, 0, -1);
       }
-      const faceUp = refUp.clone().sub(faceNorm.clone().multiplyScalar(refUp.dot(faceNorm))).normalize();
+
+      // Pick the apex vertex that is closest to world UP / ref
+      const verts = [p0, p1, p2];
+      verts.sort((a, b) => b.dot(worldRef) - a.dot(worldRef));
+      const vApex = verts[0];
+
+      // Define faceUp precisely from center to apex
+      const faceUp = vApex.clone().sub(center).normalize();
       faceUps.push(faceUp);
 
-      const verts = [p0, p1, p2].map((v) => ({ pos: v, dot: v.dot(faceUp) }));
-      verts.sort((a, b) => b.dot - a.dot);
+      // Correct cross product order: faceUp x faceNorm = +X (RIGHT in screen space)
+      const faceRight = new THREE.Vector3().crossVectors(faceUp, faceNorm).normalize();
 
-      const vTop = verts[0].pos;
-      const vBL = verts[1].pos;
-      const vBR = verts[2].pos;
+      // Separate the other two vertices into Left and Right
+      const remaining = [verts[1], verts[2]].sort((a, b) => {
+        return a.clone().sub(center).dot(faceRight) - b.clone().sub(center).dot(faceRight);
+      });
+      const vLeft = remaining[0];
+      const vRight = remaining[1];
 
-      sortedPos[i * 9 + 0] = vTop.x;
-      sortedPos[i * 9 + 1] = vTop.y;
-      sortedPos[i * 9 + 2] = vTop.z;
+      let v0 = vApex;
+      let uv0 = [0.5, 0.95];
+      let v1 = vRight;
+      let uv1 = [0.95, 0.10];
+      let v2 = vLeft;
+      let uv2 = [0.05, 0.10];
 
-      sortedPos[i * 9 + 3] = vBL.x;
-      sortedPos[i * 9 + 4] = vBL.y;
-      sortedPos[i * 9 + 5] = vBL.z;
+      // Check triangle outward winding order against face normal
+      const edge1 = new THREE.Vector3().subVectors(v1, v0);
+      const edge2 = new THREE.Vector3().subVectors(v2, v0);
+      const triNorm = new THREE.Vector3().crossVectors(edge1, edge2);
 
-      sortedPos[i * 9 + 6] = vBR.x;
-      sortedPos[i * 9 + 7] = vBR.y;
-      sortedPos[i * 9 + 8] = vBR.z;
+      if (triNorm.dot(faceNorm) < 0) {
+        v1 = vLeft;
+        uv1 = [0.05, 0.10];
+        v2 = vRight;
+        uv2 = [0.95, 0.10];
+      }
 
-      sortedUvs[i * 6 + 0] = 0.5;
-      sortedUvs[i * 6 + 1] = 0.96;
+      sortedPos[i * 9 + 0] = v0.x;
+      sortedPos[i * 9 + 1] = v0.y;
+      sortedPos[i * 9 + 2] = v0.z;
 
-      sortedUvs[i * 6 + 2] = 0.04;
-      sortedUvs[i * 6 + 3] = 0.08;
+      sortedPos[i * 9 + 3] = v1.x;
+      sortedPos[i * 9 + 4] = v1.y;
+      sortedPos[i * 9 + 5] = v1.z;
 
-      sortedUvs[i * 6 + 4] = 0.96;
-      sortedUvs[i * 6 + 5] = 0.08;
+      sortedPos[i * 9 + 6] = v2.x;
+      sortedPos[i * 9 + 7] = v2.y;
+      sortedPos[i * 9 + 8] = v2.z;
+
+      sortedUvs[i * 6 + 0] = uv0[0];
+      sortedUvs[i * 6 + 1] = uv0[1];
+
+      sortedUvs[i * 6 + 2] = uv1[0];
+      sortedUvs[i * 6 + 3] = uv1[1];
+
+      sortedUvs[i * 6 + 4] = uv2[0];
+      sortedUvs[i * 6 + 5] = uv2[1];
     }
 
     baseGeo.setAttribute('position', new THREE.BufferAttribute(sortedPos, 3));
     baseGeo.setAttribute('uv', new THREE.BufferAttribute(sortedUvs, 2));
     baseGeo.computeVertexNormals();
 
+    // Compute opposite pairs faceIdMap summing to 21
+    const assigned = new Array(20).fill(false);
+    const faceIdMap = new Array(20).fill(1);
+    const oppositeIdPairs: [number, number][] = [
+      [20, 1],
+      [19, 2],
+      [18, 3],
+      [17, 4],
+      [16, 5],
+      [15, 6],
+      [14, 7],
+      [13, 8],
+      [12, 9],
+      [11, 10],
+    ];
+
+    let pairIdx = 0;
+    for (let i = 0; i < 20; i++) {
+      if (assigned[i]) continue;
+      for (let j = i + 1; j < 20; j++) {
+        if (!assigned[j] && faceNormals[i].dot(faceNormals[j]) < -0.99) {
+          const [idA, idB] = oppositeIdPairs[pairIdx++];
+          faceIdMap[i] = idA;
+          faceIdMap[j] = idB;
+          assigned[i] = true;
+          assigned[j] = true;
+          break;
+        }
+      }
+      if (!assigned[i]) {
+        faceIdMap[i] = pairIdx < 10 ? oppositeIdPairs[pairIdx][0] : 1;
+        assigned[i] = true;
+      }
+    }
+    faceIdMapRef.current = faceIdMap;
+
     // 4. Generate Materials with Theme Colors
     const materials: THREE.MeshStandardMaterial[] = [];
     for (let i = 0; i < 20; i++) {
-      const faceCfg = faces[i] || faces[0];
+      const faceId = faceIdMap[i];
+      const faceCfg = faces.find((f) => f.id === faceId) || faces[0];
       const texture = createThemeFaceTexture(faceCfg, currentTheme);
       const mat = new THREE.MeshStandardMaterial({
         map: texture,
-        roughness: 0.2,
-        metalness: 0.75,
+        roughness: currentTheme.isLight ? 0.35 : 0.2,
+        metalness: currentTheme.isLight ? 0.45 : 0.75,
+        side: THREE.DoubleSide,
       });
       materials.push(mat);
     }
@@ -697,7 +962,7 @@ export function D20Menu() {
       color: new THREE.Color(currentTheme.accentColor || '#f59e0b'),
       linewidth: 2,
       transparent: true,
-      opacity: 0.9,
+      opacity: currentTheme.isLight ? 0.7 : 0.9,
     });
     const wireMesh = new THREE.LineSegments(edgesGeo, edgesMat);
     meshGroup.add(wireMesh);
@@ -716,24 +981,31 @@ export function D20Menu() {
       faceUps,
       materials,
       rotVelX: 0,
-      rotVelY: 0, // NO AUTOMATIC ROTATION!
+      rotVelY: 0,
       targetQuaternion: null as THREE.Quaternion | null,
       isDragging: false,
       lastMouseX: 0,
       lastMouseY: 0,
+      pointerStartX: 0,
+      pointerStartY: 0,
+      hasDragged: false,
     };
     threeStateRef.current = state;
 
-    snapToFaceUpright(0);
+    snapToFaceUpright(activeFaceIndex);
 
     const raycaster = new THREE.Raycaster();
     const mouse = new THREE.Vector2();
     const domElem = renderer.domElement;
 
     const onPointerDown = (e: PointerEvent) => {
+      if (isMobile) return;
       state.isDragging = true;
       state.lastMouseX = e.clientX;
       state.lastMouseY = e.clientY;
+      state.pointerStartX = e.clientX;
+      state.pointerStartY = e.clientY;
+      state.hasDragged = false;
       state.targetQuaternion = null;
     };
 
@@ -741,6 +1013,10 @@ export function D20Menu() {
       if (!state.isDragging) return;
       const dx = e.clientX - state.lastMouseX;
       const dy = e.clientY - state.lastMouseY;
+
+      if (Math.hypot(e.clientX - state.pointerStartX, e.clientY - state.pointerStartY) > 6) {
+        state.hasDragged = true;
+      }
 
       state.rotVelY += dx * 0.005;
       state.rotVelX += dy * 0.005;
@@ -753,21 +1029,37 @@ export function D20Menu() {
       if (!state.isDragging) return;
       state.isDragging = false;
 
-      const rect = domElem.getBoundingClientRect();
-      const x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-      const y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
-      mouse.set(x, y);
+      // Only handle click actions if pointer wasn't dragged to rotate
+      if (!state.hasDragged) {
+        const rect = domElem.getBoundingClientRect();
+        const x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+        const y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+        mouse.set(x, y);
 
-      raycaster.setFromCamera(mouse, camera);
-      const intersects = raycaster.intersectObject(diceMesh);
+        raycaster.setFromCamera(mouse, camera);
+        const intersects = raycaster.intersectObject(diceMesh);
 
-      if (intersects.length > 0 && intersects[0].face) {
-        const groupIndex = intersects[0].face.materialIndex;
-        const selectedIdx = groupIndex !== undefined ? groupIndex : Math.floor(intersects[0].faceIndex! / 2);
+        if (intersects.length > 0 && intersects[0].face) {
+          const groupIndex = intersects[0].face.materialIndex;
+          const selectedGeoIdx = groupIndex !== undefined ? groupIndex : Math.floor(intersects[0].faceIndex! / 2);
 
-        if (selectedIdx >= 0 && selectedIdx < 20) {
-          setActiveFaceIndex(selectedIdx);
-          playClickSound();
+          if (selectedGeoIdx >= 0 && selectedGeoIdx < 20) {
+            const clickedFaceId = faceIdMapRef.current[selectedGeoIdx];
+            const menuIdx = faces.findIndex((f) => f.id === clickedFaceId);
+            if (menuIdx !== -1) {
+              if (clickedFaceId === 20 || faces[menuIdx].actionType === 'meme_roll') {
+                triggerMemeRoll();
+              } else if (menuIdx === activeFaceIndex) {
+                const active = faces[menuIdx];
+                if (active) {
+                  handleExecuteFace(active);
+                }
+              } else {
+                setActiveFaceIndex(menuIdx);
+                playClickSound();
+              }
+            }
+          }
         }
       }
     };
@@ -777,19 +1069,21 @@ export function D20Menu() {
     window.addEventListener('pointerup', onPointerUp);
 
     const handleResize = () => {
-      if (!container) return;
+      if (!container || isDisposed) return;
       const w = container.clientWidth || window.innerWidth;
       const h = container.clientHeight || window.innerHeight;
       camera.aspect = w / h;
+      camera.position.z = w < 640 ? 8.2 : 7.5;
       camera.updateProjectionMatrix();
       renderer.setSize(w, h);
     };
     window.addEventListener('resize', handleResize);
 
-    // Animation Loop (NO AUTO ROTATION!)
+    // Animation Loop
     let animId: number;
 
     const animate = () => {
+      if (isDisposed) return;
       animId = requestAnimationFrame(animate);
 
       if (state.targetQuaternion) {
@@ -830,6 +1124,7 @@ export function D20Menu() {
     animate();
 
     return () => {
+      isDisposed = true;
       cancelAnimationFrame(animId);
       domElem.removeEventListener('pointerdown', onPointerDown);
       window.removeEventListener('pointermove', onPointerMove);
@@ -838,294 +1133,213 @@ export function D20Menu() {
       if (container.contains(renderer.domElement)) {
         container.removeChild(renderer.domElement);
       }
-      renderer.dispose();
       baseGeo.dispose();
+      edgesGeo.dispose();
+      edgesMat.dispose();
       materials.forEach((m) => {
         m.map?.dispose();
         m.dispose();
       });
+      renderer.dispose();
+      threeStateRef.current = null;
     };
-  }, [currentTheme, createThemeFaceTexture, playClickSound, snapToFaceUpright]);
+  }, [currentTheme, createThemeFaceTexture, faces, handleExecuteFace, playClickSound, snapToFaceUpright, triggerMemeRoll]);
+
+  // Mobile Shake Gesture Detection (Devicemotion API)
+  useEffect(() => {
+    let lastShakeTime = 0;
+
+    const handleMotion = (e: DeviceMotionEvent) => {
+      const acc = e.accelerationIncludingGravity || e.acceleration;
+      if (!acc) return;
+      const x = acc.x || 0;
+      const y = acc.y || 0;
+      const z = acc.z || 0;
+      const magnitude = Math.sqrt(x * x + y * y + z * z);
+
+      // Detection threshold for physical device shake
+      if (magnitude > 17) {
+        const now = Date.now();
+        if (now - lastShakeTime > 1200) {
+          lastShakeTime = now;
+          triggerMemeRoll();
+        }
+      }
+    };
+
+    if (typeof window !== 'undefined' && 'DeviceMotionEvent' in window) {
+      window.addEventListener('devicemotion', handleMotion);
+    }
+
+    return () => {
+      if (typeof window !== 'undefined' && 'DeviceMotionEvent' in window) {
+        window.removeEventListener('devicemotion', handleMotion);
+      }
+    };
+  }, [triggerMemeRoll]);
+
+  const ActiveIcon = activeFace.lucideIcon;
 
   return (
     <div
-      className={`min-h-screen bg-[#07080d] text-content-1 font-body select-none relative overflow-hidden flex flex-col justify-between ${
-        isFullscreen ? 'fixed inset-0 z-50' : 'w-full h-screen'
+      className={`min-h-screen text-content-1 font-body select-none relative overflow-hidden flex flex-col justify-between w-full h-screen ${
+        currentTheme.isLight ? 'bg-surface-0' : 'bg-[#07080d]'
       }`}
       style={{
-        backgroundImage: `radial-gradient(circle at 50% 50%, ${currentTheme.colors.primaryMuted || 'rgba(245, 158, 11, 0.12)'} 0%, rgba(7, 8, 13, 0.98) 75%)`,
+        backgroundImage: currentTheme.isLight
+          ? `radial-gradient(circle at 50% 50%, ${currentTheme.colors.surface1} 0%, ${currentTheme.colors.surface0} 90%)`
+          : `radial-gradient(circle at 50% 50%, ${currentTheme.colors.primaryMuted || 'rgba(245, 158, 11, 0.12)'} 0%, rgba(7, 8, 13, 0.98) 75%)`,
       }}
     >
       {/* ATMOSPHERIC BACKGROUND GLOW */}
       <div className="absolute inset-0 pointer-events-none z-0">
         <div
-          className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[750px] h-[750px] rounded-full blur-[150px] opacity-60 transition-colors duration-500"
+          className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[750px] h-[750px] rounded-full blur-[150px] transition-colors duration-500 ${
+            currentTheme.isLight ? 'opacity-25' : 'opacity-60'
+          }`}
           style={{ backgroundColor: currentTheme.accentColor || '#f59e0b' }}
         />
       </div>
 
-      {/* TOP HEADER */}
-      <header className="relative z-20 px-6 py-3 border-b border-surface-2/80 bg-surface-1/80 backdrop-blur-md flex items-center justify-between gap-4">
-        {/* Left: Campaign Title */}
-        <div className="flex items-center gap-3 min-w-0">
-          <div
-            className="w-8 h-8 rounded-lg flex items-center justify-center text-primary shrink-0 shadow-xs border"
-            style={{ backgroundColor: `${currentTheme.accentColor}20`, borderColor: `${currentTheme.accentColor}50` }}
-          >
-            <Sparkle size={16} />
-          </div>
-          <div className="min-w-0">
-            <span
-              className={`text-base font-bold select-none truncate block tracking-wider ${titleClasses.fullClass}`}
-              style={titleClasses.style}
-            >
-              {campaignMeta?.name || 'NEW DIVINE ORDER'}
-            </span>
-            <span className="text-[10px] font-mono uppercase tracking-widest text-content-3 block">
-              CAMPAGNA {player?.isDm ? 'DM' : 'GIOCO'} • MENU TAVOLO PRINCIPALE D20
-            </span>
-          </div>
-        </div>
-
-        {/* Center: Lore Date Pill */}
-        {calendar && (
-          <button
-            type="button"
-            onClick={() => setActiveFaceIndex(7)} // Calendar #8
-            className="hidden md:flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-surface-2/80 hover:bg-surface-3 border border-surface-3 text-xs font-semibold text-content-1 transition-all cursor-pointer shadow-xs group"
-            title="Data di Lore Corrente • Clicca per selezionare il Calendario"
-          >
-            <span className="text-[10px] text-content-3 font-mono uppercase tracking-widest group-hover:text-primary">
-              • DATA DI LORE •
-            </span>
-            <span
-              className="px-2 py-0.5 rounded-md font-mono text-[11px] font-bold border"
-              style={{ backgroundColor: `${currentTheme.accentColor}20`, color: currentTheme.accentColor, borderColor: `${currentTheme.accentColor}40` }}
-            >
-              {calendar.currentDay} {calendar.months[calendar.currentMonthIndex]?.name} {calendar.currentYear}{' '}
-              {calendar.yearSuffix}
-            </span>
-          </button>
-        )}
-
-        {/* Right: Character Profile Badge & Controls */}
-        <div className="flex items-center gap-3 shrink-0">
-          <button
-            type="button"
-            onClick={() => navigate('/character')}
-            className="flex items-center gap-2.5 px-3 py-1.5 rounded-xl bg-surface-1/90 hover:bg-surface-2 border border-surface-3 transition-all cursor-pointer group"
-          >
-            <div
-              className="w-7 h-7 rounded-lg bg-surface-2 border overflow-hidden flex items-center justify-center shrink-0"
-              style={{ borderColor: currentTheme.accentColor }}
-            >
-              {CampaignManager.cleanAvatarString(player?.avatarUrl) ? (
-                <img
-                  src={CampaignManager.cleanAvatarString(player?.avatarUrl)}
-                  alt={player?.characterName}
-                  className="w-full h-full object-cover"
-                />
-              ) : (
-                <span className="font-heading font-semibold text-xs text-primary">
-                  {player?.characterName?.charAt(0).toUpperCase()}
-                </span>
-              )}
-            </div>
-            <div className="hidden sm:block text-left">
-              <span className="text-xs font-semibold text-content-1 truncate flex items-center gap-1 group-hover:text-primary transition-colors">
-                {player?.characterName}
-                {player?.isDm && <Crown size={12} className="text-primary" />}
-              </span>
-              <span className="text-[10px] text-content-3 block">
-                {player?.isDm ? 'Dungeon Master' : 'Giocatore'} • Tema {currentTheme.name}
-              </span>
-            </div>
-          </button>
+      {/* IMMERSIVE CENTER 3D CANVAS & ROLL INDICATOR WITH TOUCH SWIPE */}
+      <div
+        className="relative flex-1 z-10 w-full h-full overflow-hidden flex flex-col items-center justify-between p-2 sm:p-4 touch-none"
+        onTouchStart={handleTouchStart}
+        onTouchEnd={handleTouchEnd}
+      >
+        {/* TOP HINT & AUDIO TOGGLE */}
+        <div className="relative z-25 flex items-center justify-end gap-3 px-4 sm:px-8 lg:px-10 pt-2 w-full">
+          <span className="text-xs font-mono text-content-3/80 tracking-wide">
+            Tira il d20 o premi R (o fai swipe left/right)
+          </span>
 
           <button
             type="button"
             onClick={() => setSoundEnabled((p) => !p)}
-            className="p-2 text-content-3 hover:text-content-1 hover:bg-surface-2 rounded-lg transition-colors cursor-pointer"
+            className="p-1.5 text-content-3 hover:text-content-1 rounded-lg transition-colors cursor-pointer"
             title={soundEnabled ? 'Disattiva Audio' : 'Attiva Audio'}
           >
-            {soundEnabled ? <Volume2 size={16} /> : <VolumeX size={16} />}
-          </button>
-          <button
-            type="button"
-            onClick={() => setIsFullscreen((p) => !p)}
-            className="p-2 text-content-3 hover:text-content-1 hover:bg-surface-2 rounded-lg transition-colors cursor-pointer"
-            title={isFullscreen ? 'Esci da Schermo Intero' : 'Schermo Intero'}
-          >
-            {isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+            {soundEnabled ? <Volume2 size={15} /> : <VolumeX size={15} />}
           </button>
         </div>
-      </header>
 
-      {/* SUB-HEADER INSTRUCTION BANNER */}
-      <div className="relative z-20 py-2 px-4 bg-surface-1/50 border-b border-surface-2 text-center">
-        <span
-          className="text-[11px] font-mono uppercase tracking-[0.2em] font-medium inline-flex items-center gap-2"
-          style={{ color: currentTheme.accentColor }}
-        >
-          <span className="w-2 h-2 rounded-full animate-ping inline-block" style={{ backgroundColor: currentTheme.accentColor }} />
-          • TRASCINA CON IL MOUSE PER RUOTARE IL DADO // CLICCA UNA FACCIA PER ISPEZIONARE
-        </span>
-      </div>
-
-      {/* FULL VIEWPORT: ABSOLUTE CENTER 3D CANVAS + FLOATING LEFT INSPECTION CARD */}
-      <div className="relative flex-1 z-10 w-full h-full overflow-hidden">
         {/* TRUE CENTERED 3D CANVAS */}
-        <div ref={mountRef} className="absolute inset-0 w-full h-full cursor-grab active:cursor-grabbing z-10" />
+        <div
+          ref={mountRef}
+          className="absolute inset-0 w-full h-full cursor-grab active:cursor-grabbing z-10"
+          title="Usa il mouse/touch per ruotare il D20, clicca una faccia per selezionarla o fai swipe"
+        />
 
-        {/* FLOATING LEFT INSPECTION CARD */}
-        <div className="absolute top-6 left-6 lg:left-10 z-30 w-[340px] sm:w-[380px] lg:w-[400px] pointer-events-auto">
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={activeFace.id}
-              initial={{ opacity: 0, x: -25, scale: 0.96 }}
-              animate={{ opacity: 1, x: 0, scale: 1 }}
-              exit={{ opacity: 0, x: 25, scale: 0.96 }}
-              transition={{ duration: 0.2, ease: 'easeOut' }}
-              className="bg-[#090b10]/92 border rounded-2xl p-6 shadow-2xl backdrop-blur-xl relative overflow-hidden group"
-              style={{ borderColor: `${currentTheme.accentColor}50`, boxShadow: `0 0 50px ${currentTheme.accentColor}15` }}
-            >
-              <div
-                className="absolute top-0 inset-x-0 h-1"
-                style={{ background: `linear-gradient(to right, transparent, ${currentTheme.accentColor}, transparent)` }}
-              />
+        {/* VERTICAL EDITORIAL TABLE OF CONTENTS MENU (DESKTOP ONLY) */}
+        <aside className="absolute left-4 sm:left-8 lg:left-10 top-12 z-30 max-h-[calc(100vh-80px)] h-auto w-[280px] lg:w-[320px] pointer-events-auto select-none hidden md:flex flex-col justify-between">
+          {/* Scrollable list container with scrollbars strictly disabled */}
+          <div
+            className="overflow-y-auto overflow-x-hidden no-scrollbar py-2 space-y-2 sm:space-y-2.5 pr-2 max-h-[calc(100vh-160px)]"
+            style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+          >
+            {faces.map((face, idx) => {
+              const isActive = idx === activeFaceIndex;
+              const faceNumber = String(face.id).padStart(2, '0');
 
-              {/* Meta Header */}
-              <div className="flex items-center justify-between gap-2 mb-4">
-                <span className="text-[10px] font-mono font-bold uppercase tracking-widest flex items-center gap-1.5" style={{ color: currentTheme.accentColor }}>
-                  <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: currentTheme.accentColor }} />
-                  {activeFace.category}
-                </span>
+              let categoryTitle = '';
+              if (idx === 0) categoryTitle = '1. La Cronaca';
+              else if (idx === 4) categoryTitle = '2. La Compagnia';
+              else if (idx === 8) categoryTitle = '3. Il Mondo';
+              else if (idx === 12) categoryTitle = '4. Strumenti & Sistema';
+              else if (idx === 16) categoryTitle = '5. Altro';
 
-                <span
-                  className="px-2.5 py-0.5 rounded-md font-mono text-[11px] font-bold border"
-                  style={{ backgroundColor: `${currentTheme.accentColor}18`, color: currentTheme.accentColor, borderColor: `${currentTheme.accentColor}40` }}
-                >
-                  FACCIA D20 #{activeFace.id}
-                </span>
-              </div>
+              return (
+                <React.Fragment key={face.id}>
+                  {categoryTitle && (
+                    <div className="pt-3 pb-1 first:pt-0">
+                      <span
+                        className="text-[11px] font-cinzel font-bold tracking-wider uppercase"
+                        style={{ color: currentTheme.accentColor }}
+                      >
+                        {categoryTitle}
+                      </span>
+                    </div>
+                  )}
 
-              {/* Title & Icon */}
-              <div className="flex items-start gap-3.5 mb-3">
-                <div
-                  className="w-12 h-12 rounded-xl border flex items-center justify-center text-2xl shrink-0 shadow-inner"
-                  style={{ backgroundColor: `${currentTheme.accentColor}18`, borderColor: `${currentTheme.accentColor}40` }}
-                >
-                  {activeFace.icon}
-                </div>
-                <div>
-                  <h2 className="text-xl font-bold font-heading text-content-1 tracking-tight">
-                    {activeFace.title}
-                  </h2>
-                  <p className="text-xs text-content-2 mt-0.5 leading-snug">
-                    {activeFace.subtitle}
-                  </p>
-                </div>
-              </div>
-
-              {/* Description */}
-              <p className="text-xs text-content-2 leading-relaxed mb-5 bg-surface-1/50 p-3 rounded-xl border border-surface-2">
-                {activeFace.description}
-              </p>
-
-              {/* Meta Box */}
-              <div className="bg-surface-0/90 border border-surface-2 rounded-xl p-3 mb-6 space-y-2 text-xs font-mono">
-                <div className="flex items-center justify-between text-content-2">
-                  <span className="text-content-3">Stato Faccia:</span>
-                  <span className="text-emerald-400 font-semibold flex items-center gap-1.5">
-                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                    {activeFace.resonanceStatus}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between text-content-2">
-                  <span className="text-content-3">Tasto Scorciatoia:</span>
-                  <kbd
-                    className="px-2 py-0.5 rounded border font-bold text-[11px]"
-                    style={{ backgroundColor: `${currentTheme.accentColor}20`, color: currentTheme.accentColor, borderColor: `${currentTheme.accentColor}40` }}
-                  >
-                    [{activeFace.shortcutKey}]
-                  </kbd>
-                </div>
-              </div>
-
-              {/* Action Button */}
-              <button
-                type="button"
-                onClick={() => handleExecuteFace(activeFace)}
-                className="w-full py-3.5 px-5 rounded-xl font-semibold text-xs tracking-wider uppercase transition-all duration-200 shadow-lg flex items-center justify-center gap-2.5 cursor-pointer group/btn"
-                style={{
-                  backgroundColor: currentTheme.accentColor,
-                  color: currentTheme.isLight ? '#ffffff' : '#000000',
-                }}
-              >
-                <span>ENTRA NELLA VISTA</span>
-                <ArrowRight size={16} className="group-hover/btn:translate-x-1 transition-transform" />
-              </button>
-            </motion.div>
-          </AnimatePresence>
-        </div>
-      </div>
-
-      {/* BOTTOM QUICK-FACE SELECTOR STRIP */}
-      <footer className="relative z-20 px-4 py-3 border-t border-surface-2/80 bg-surface-1/90 backdrop-blur-md">
-        <div className="max-w-7xl mx-auto flex items-center gap-2 overflow-x-auto custom-scrollbar pb-1">
-          <span className="text-[10px] font-mono uppercase tracking-widest text-content-3 shrink-0 mr-2 flex items-center gap-1">
-            <Hash size={12} /> FACCE D20:
-          </span>
-
-          {faces.map((f, idx) => {
-            const isActive = idx === activeFaceIndex;
-            return (
-              <button
-                key={f.id}
-                type="button"
-                onClick={() => {
-                  setActiveFaceIndex(idx);
-                  playClickSound();
-                  if (f.actionType === 'meme_roll') {
-                    triggerMemeRoll();
-                  }
-                }}
-                className={`px-3 py-1.5 rounded-lg text-xs font-mono font-bold transition-all shrink-0 flex items-center gap-1.5 cursor-pointer ${
-                  isActive
-                    ? 'shadow-md scale-105 border'
-                    : 'bg-surface-0 hover:bg-surface-2 text-content-2 border border-surface-2'
-                }`}
-                style={
-                  isActive
-                    ? {
-                        backgroundColor: currentTheme.accentColor,
-                        color: currentTheme.isLight ? '#ffffff' : '#000000',
-                        borderColor: currentTheme.accentColor,
+                  <button
+                    ref={(el) => {
+                      itemRefs.current[idx] = el;
+                    }}
+                    type="button"
+                    onClick={() => {
+                      if (isActive) {
+                        handleExecuteFace(face);
+                      } else {
+                        setActiveFaceIndex(idx);
+                        playClickSound();
                       }
-                    : {}
-                }
-                title={`Faccia #${f.id}: ${f.title}`}
-              >
-                <span>#{f.id}</span>
-                <span className="text-xs">{f.icon}</span>
-                <span className="hidden sm:inline font-sans text-[11px] font-medium max-w-[80px] truncate">
-                  {f.title}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      </footer>
+                    }}
+                    className={`group/headline text-left w-full transition-all duration-300 cursor-pointer flex flex-col justify-center py-0.5 px-1 ${
+                      isActive
+                        ? 'translate-x-2'
+                        : 'hover:translate-x-1.5 opacity-65 hover:opacity-100'
+                    }`}
+                    title={`#${face.id} ${face.title} - Clicca per ${isActive ? (face.actionType === 'meme_roll' ? 'Lanciare' : 'Aprire') : 'Selezionare'}`}
+                  >
+                    <div className="flex items-baseline gap-2.5 sm:gap-3">
+                      {/* Numbering (01., 02., etc.) */}
+                      <span
+                        className="font-mono text-xs sm:text-sm font-semibold tracking-wider transition-colors shrink-0"
+                        style={{ color: isActive ? currentTheme.accentColor : 'var(--color-content-3)' }}
+                      >
+                        {faceNumber}.
+                      </span>
+
+                      {/* Title in Editorial Cinzel Typography */}
+                      <span
+                        className={`font-cinzel tracking-wider uppercase transition-all duration-300 leading-tight ${
+                          isActive
+                            ? 'text-lg sm:text-xl font-bold drop-shadow-md'
+                            : 'text-sm sm:text-base font-semibold text-content-1 group-hover/headline:text-primary'
+                        }`}
+                        style={isActive ? { color: currentTheme.accentColor, textShadow: `0 0 16px ${currentTheme.accentColor}50` } : undefined}
+                      >
+                        {face.title}
+                      </span>
+                    </div>
+
+                    {/* Subtitle & Action descriptor when active */}
+                    {isActive && (
+                      <div className="pl-7 sm:pl-8 pt-1 flex items-center gap-2 animate-fadeIn">
+                        <span className="text-[10px] sm:text-[11px] font-mono uppercase tracking-widest text-content-3 font-medium truncate max-w-[180px]">
+                          {face.subtitle || face.category}
+                        </span>
+                        <span
+                          className="text-[9px] font-mono font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-xs shrink-0"
+                          style={{ backgroundColor: `${currentTheme.accentColor}25`, color: currentTheme.accentColor }}
+                        >
+                          {face.actionType === 'meme_roll' ? 'Lancia →' : 'Apri →'}
+                        </span>
+                      </div>
+                    )}
+                  </button>
+                </React.Fragment>
+              );
+            })}
+          </div>
+
+          {/* DOWN ARROW SCROLL INDICATOR: PINNED AT BOTTOM OF ASIDE (IMMEDIATELY VISIBLE ON SCREEN) */}
+          <div className="pt-2 pb-1 pl-1 flex items-center gap-2 text-[10px] font-mono uppercase tracking-widest text-content-3/90 pointer-events-none shrink-0 border-t border-surface-2/40 mt-1">
+            <ChevronDown size={14} className="animate-bounce" style={{ color: currentTheme.accentColor }} />
+            <span>SCORRI PER ALTRE VOCI</span>
+          </div>
+        </aside>
+      </div>
 
       {/* MEME ROLL MODAL TOAST */}
       <AnimatePresence>
         {memeRollResult && (
-          <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-md flex items-center justify-center p-4">
             <motion.div
               initial={{ scale: 0.85, opacity: 0, y: 20 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
               exit={{ scale: 0.85, opacity: 0, y: 20 }}
-              className="bg-surface-1 border border-surface-3 rounded-2xl p-6 max-w-md w-full text-center relative shadow-2xl overflow-hidden"
+              className="bg-surface-1 border border-surface-3 rounded-2xl p-6 max-w-md w-full text-center relative shadow-2xl overflow-hidden text-content-1"
             >
               <button
                 type="button"
@@ -1136,17 +1350,20 @@ export function D20Menu() {
               </button>
 
               <div
-                className="w-20 h-20 rounded-full mx-auto mb-4 flex items-center justify-center text-4xl shadow-lg border"
+                className="w-20 h-20 rounded-full mx-auto mb-4 flex items-center justify-center text-primary shadow-lg border"
                 style={{
                   backgroundColor: `${currentTheme.accentColor}20`,
                   borderColor: currentTheme.accentColor,
+                  color: currentTheme.accentColor,
                 }}
               >
-                {memeRollResult.type === 'crit_success'
-                  ? '✨'
-                  : memeRollResult.type === 'crit_fail'
-                  ? '💀'
-                  : '🎲'}
+                {memeRollResult.type === 'crit_success' ? (
+                  <Sparkles size={36} />
+                ) : memeRollResult.type === 'crit_fail' ? (
+                  <Flame size={36} />
+                ) : (
+                  <Dices size={36} />
+                )}
               </div>
 
               <span className="text-[10px] font-mono uppercase tracking-widest text-content-3 block mb-1">
@@ -1167,15 +1384,87 @@ export function D20Menu() {
               <button
                 type="button"
                 onClick={() => setMemeRollResult(null)}
-                className="w-full py-2.5 rounded-xl font-semibold text-xs uppercase tracking-wider cursor-pointer"
+                className="w-full py-2.5 rounded-xl font-semibold text-xs uppercase tracking-wider cursor-pointer shadow-sm"
                 style={{
                   backgroundColor: currentTheme.accentColor,
-                  color: currentTheme.isLight ? '#ffffff' : '#000000',
+                  color: getContrastTextColor(currentTheme.accentColor),
                 }}
               >
                 CHIUDI RESPONSO
               </button>
             </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* MOBILE EXTENDED MENU MODAL (TRIGGERED BY HAMBURGER) */}
+      <AnimatePresence>
+        {isMobileMenuOpen && (
+          <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex flex-col md:hidden p-4 overflow-y-auto">
+            <div className="flex items-center justify-between pb-4 border-b border-surface-2 mb-4 shrink-0">
+              <span className="font-cinzel text-lg font-bold text-primary tracking-wider uppercase" style={{ color: currentTheme.accentColor }}>
+                Menu D20 & Campagna
+              </span>
+              <button
+                type="button"
+                onClick={() => setIsMobileMenuOpen(false)}
+                className="p-2 rounded-xl text-content-3 hover:text-content-1 bg-surface-2/60 hover:bg-surface-2 transition-colors cursor-pointer"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="space-y-4 pb-12">
+              {faces.map((face, idx) => {
+                const faceNumber = String(face.id).padStart(2, '0');
+                let categoryTitle = '';
+                if (idx === 0) categoryTitle = '1. La Cronaca';
+                else if (idx === 4) categoryTitle = '2. La Compagnia';
+                else if (idx === 8) categoryTitle = '3. Il Mondo';
+                else if (idx === 12) categoryTitle = '4. Strumenti & Sistema';
+                else if (idx === 16) categoryTitle = '5. Altro';
+
+                return (
+                  <React.Fragment key={face.id}>
+                    {categoryTitle && (
+                      <div className="pt-2 pb-1">
+                        <span
+                          className="text-xs font-cinzel font-bold tracking-wider uppercase"
+                          style={{ color: currentTheme.accentColor }}
+                        >
+                          {categoryTitle}
+                        </span>
+                      </div>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsMobileMenuOpen(false);
+                        setActiveFaceIndex(idx);
+                        handleExecuteFace(face);
+                      }}
+                      className="w-full text-left p-3 rounded-xl bg-surface-1/90 border border-surface-3 flex items-center justify-between group active:scale-[0.98] transition-all cursor-pointer shadow-sm"
+                    >
+                      <div className="flex items-center gap-3">
+                        <span className="font-mono text-xs font-semibold text-content-3">
+                          {faceNumber}.
+                        </span>
+                        <span className="font-cinzel text-sm font-bold uppercase tracking-wider text-content-1 group-hover:text-primary transition-colors">
+                          {face.title}
+                        </span>
+                      </div>
+                      <span
+                        className="text-[10px] font-mono font-bold uppercase tracking-wider px-2 py-1 rounded"
+                        style={{ backgroundColor: `${currentTheme.accentColor}25`, color: currentTheme.accentColor }}
+                      >
+                        Apri →
+                      </span>
+                    </button>
+                  </React.Fragment>
+                );
+              })}
+            </div>
           </div>
         )}
       </AnimatePresence>

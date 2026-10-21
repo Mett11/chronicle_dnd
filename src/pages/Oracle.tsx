@@ -1437,8 +1437,8 @@ export function Oracle() {
       </div>
 
       {/* DESKTOP FULL STREAMLINED HEADER */}
-      <div className="hidden lg:block relative z-30 border-b border-surface-2 bg-surface-1/95 backdrop-blur-sm px-6 py-2.5 shrink-0 shadow-xs">
-        <div className="flex items-center justify-between gap-4 max-w-7xl mx-auto w-full">
+      <div className="hidden lg:block relative z-30 border-b border-surface-2 bg-surface-1/95 backdrop-blur-sm shrink-0 shadow-xs">
+        <div className="flex items-center justify-between gap-4 max-w-[1700px] mx-auto w-full px-4 sm:px-8 lg:px-10 py-2.5">
           {/* Left: App Title & Interlocutor Selector Dropdown */}
           <div className="flex items-center gap-3 min-w-0">
             {/* Title */}
@@ -1555,7 +1555,7 @@ export function Oracle() {
       </div>
 
       {/* Main Conversation Stream */}
-      <div className="flex-1 overflow-y-auto custom-scrollbar p-4 lg:p-6 space-y-5 max-w-4xl mx-auto w-full">
+      <div className="flex-1 overflow-y-auto custom-scrollbar p-4 lg:p-6 space-y-5 max-w-6xl mx-auto w-full">
         {/* Contextual Sub-Codex & Relationship Banner */}
         {activeCodexEntity && (
           <div className="p-3.5 rounded-xl bg-surface-1/90 border border-primary/30 shadow-xs space-y-2.5">
@@ -2091,7 +2091,7 @@ export function Oracle() {
 
       {/* Fixed Bottom Input Console */}
       <div className="border-t border-surface-2 bg-surface-1/95 backdrop-blur-sm p-2 sm:p-4 shrink-0">
-        <div className="max-w-4xl mx-auto w-full space-y-2">
+        <div className="max-w-[1700px] mx-auto w-full px-4 sm:px-8 lg:px-10 space-y-2">
           {/* EFFORT & VERBOSITY SLIDER TOOLBAR */}
           <div className="flex items-center justify-between gap-2 px-1 text-xs">
             {/* Segmented Effort Slider */}

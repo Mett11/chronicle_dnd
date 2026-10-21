@@ -47,7 +47,11 @@ export function reconstructCampaignCodes(reversedOrRaw: string): string[] {
     const alphanumeric = str.replace(/[^A-Z0-9]/g, '');
     candidates.add(alphanumeric);
 
-    if (alphanumeric.startsWith('CHR') && alphanumeric.length === 11) {
+    if (alphanumeric.startsWith('CHR') && alphanumeric.length === 19) {
+      // Extended Chronicle format CHR-XXXX-XXXX-XXXX-XXXX
+      const formatted = `${alphanumeric.slice(0, 3)}-${alphanumeric.slice(3, 7)}-${alphanumeric.slice(7, 11)}-${alphanumeric.slice(11, 15)}-${alphanumeric.slice(15, 19)}`;
+      candidates.add(formatted);
+    } else if (alphanumeric.startsWith('CHR') && alphanumeric.length === 11) {
       // Standard Chronicle format CHR-XXXX-XXXX
       const formatted = `${alphanumeric.slice(0, 3)}-${alphanumeric.slice(3, 7)}-${alphanumeric.slice(7)}`;
       candidates.add(formatted);

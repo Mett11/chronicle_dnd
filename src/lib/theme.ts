@@ -867,6 +867,48 @@ export function applyTheme(themeId: string) {
   try {
     window.dispatchEvent(new CustomEvent('chronicle_theme_changed', { detail: { theme } }));
   } catch {}
+
+  // Asynchronously persist theme to Supabase database (user_preferences table, user_accounts & campaign metadata)
+  if (typeof window !== 'undefined') {
+    try {
+      let activeUserId =
+        localStorage.getItem('chronicle_global_active_user_id') ||
+        localStorage.getItem('chronicle_current_account_id') ||
+        '';
+      
+      if (!activeUserId) {
+        try {
+          const rawAccounts = localStorage.getItem('chronicle_accounts');
+          if (rawAccounts) {
+            const parsed = JSON.parse(rawAccounts);
+            if (Array.isArray(parsed) && parsed.length > 0 && parsed[0]?.id) {
+              activeUserId = parsed[0].id;
+            }
+          }
+        } catch {}
+      }
+
+      const activeCampaignCode = (localStorage.getItem('chronicle_current_campaign') || '').trim().toUpperCase();
+
+      import('./supabaseSyncService').then(({ SupabaseSyncService }) => {
+        if (activeUserId && activeUserId !== 'guest') {
+          SupabaseSyncService.saveUserPreferences(activeUserId, {
+            theme: {
+              themeId: theme.id,
+              colorPalette: theme.mainColor,
+              darkMode: !theme.isLight,
+            },
+          }).catch(() => {});
+        }
+
+        if (activeCampaignCode && activeCampaignCode !== '__NONE__') {
+          SupabaseSyncService.updateCampaignMetadata(activeCampaignCode, {
+            aiConfig: { themeId: theme.id },
+          }).catch(() => {});
+        }
+      }).catch(() => {});
+    } catch {}
+  }
 }
 
 export function initTheme() {

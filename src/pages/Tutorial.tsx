@@ -380,7 +380,7 @@ export function Tutorial() {
                     </li>
                     <li className="flex items-start gap-2">
                       <span className="text-amber-400 font-bold">•</span>
-                      <span><strong>Personalizzazione Nome &amp; Font:</strong> Personalizza il font del logo della campagna dall'icona <Sliders size={12} className="inline text-primary" /> nella sidebar.</span>
+                      <span><strong>Personalizzazione Nome &amp; Font:</strong> Personalizza il font del logo della campagna dall'icona <Sliders size={12} className="inline text-primary" /> nella barra superiore o nel Menu D20.</span>
                     </li>
                   </ul>
                 </div>
@@ -403,7 +403,7 @@ export function Tutorial() {
                     </li>
                     <li className="flex items-start gap-2">
                       <span className="text-cyan-400 font-bold">•</span>
-                      <span><strong>Avanzamento Giorni:</strong> Avanza il giorno corrente dal calendario; la data attiva comparirà sempre in basso nella sidebar.</span>
+                      <span><strong>Avanzamento Giorni:</strong> Avanza il giorno corrente dal calendario; la data attiva comparirà sempre nella barra superiore e nel Menu D20.</span>
                     </li>
                     <li className="flex items-start gap-2">
                       <span className="text-cyan-400 font-bold">•</span>

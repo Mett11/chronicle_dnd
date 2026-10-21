@@ -38,6 +38,9 @@ import {
   LoreBiteLevel,
   LoreBiteAssignee,
   CharacterKnownLoreItem,
+  PartyCampaignConfig,
+  PartyMemberStats,
+  PartyBadge,
 } from "../types";
 import {
   MOCK_CATEGORIES,
@@ -428,7 +431,8 @@ export class CampaignManager {
   static getCampaignMeta(): CampaignMeta | null {
     const activeCode = CampaignManager.getActiveCampaignCode();
     if (!activeCode) return null;
-    return CampaignManager.getCampaigns().find((c) => c.code === activeCode) || null;
+    const cleanCode = activeCode.trim().toUpperCase();
+    return CampaignManager.getCampaigns().find((c) => (c.code || '').toUpperCase() === cleanCode) || null;
   }
 
   // === DELETED TOMBSTONES (PREVENTS ACCIDENTAL OVERWRITES & RESTORES ON CONCURRENT SYNC) ===
@@ -751,18 +755,24 @@ export class CampaignManager {
     if (!code) return null;
     const cleanCode = code.trim().toUpperCase();
     const campaigns = CampaignManager.getCampaigns();
-    const index = campaigns.findIndex((c) => c.code.toUpperCase() === cleanCode);
+    const index = campaigns.findIndex((c) => (c.code || '').toUpperCase() === cleanCode);
+    
+    // Strip undefined properties from updates so they don't overwrite existing defined fields
+    const definedUpdates = Object.fromEntries(
+      Object.entries(updates).filter(([_, v]) => v !== undefined)
+    );
+
     let targetCampaign: CampaignMeta;
     if (index === -1) {
       targetCampaign = {
         code: cleanCode,
         name: updates.name || cleanCode,
         createdAt: new Date().toISOString(),
-        ...updates,
+        ...definedUpdates,
       };
       campaigns.push(targetCampaign);
     } else {
-      campaigns[index] = { ...campaigns[index], ...updates };
+      campaigns[index] = { ...campaigns[index], ...definedUpdates };
       targetCampaign = campaigns[index];
     }
     CampaignManager.saveCampaignsLocalOnly(campaigns);
@@ -775,18 +785,24 @@ export class CampaignManager {
   ): CampaignMeta | null {
     const cleanCode = code.trim().toUpperCase();
     const campaigns = CampaignManager.getCampaigns();
-    const index = campaigns.findIndex((c) => c.code === cleanCode);
+    const index = campaigns.findIndex((c) => (c.code || '').toUpperCase() === cleanCode);
+
+    // Strip undefined properties from updates so they don't overwrite existing defined fields
+    const definedUpdates = Object.fromEntries(
+      Object.entries(updates).filter(([_, v]) => v !== undefined)
+    );
+
     let targetCampaign: CampaignMeta;
     if (index === -1) {
       targetCampaign = {
         code: cleanCode,
         name: updates.name || cleanCode,
         createdAt: new Date().toISOString(),
-        ...updates,
+        ...definedUpdates,
       };
       campaigns.push(targetCampaign);
     } else {
-      campaigns[index] = { ...campaigns[index], ...updates };
+      campaigns[index] = { ...campaigns[index], ...definedUpdates };
       targetCampaign = campaigns[index];
     }
     CampaignManager.saveCampaignsLocalOnly(campaigns);
@@ -797,6 +813,10 @@ export class CampaignManager {
         description: updates.description,
         dmId: updates.dmId,
         dmIsPlayer: updates.dmIsPlayer,
+        titleFont: updates.titleFont,
+        titleEffect: updates.titleEffect,
+        titleUppercase: updates.titleUppercase,
+        titleTracking: updates.titleTracking,
       }).catch(() => {});
     }
     if (typeof window !== "undefined") {
@@ -829,7 +849,7 @@ export class CampaignManager {
     }
     if (account.dmCampaigns?.some((c) => c.toUpperCase() === cleanCode)) return true;
     const member = this.getCampaignMember(cleanCode, account.id, account.email);
-    if (member && (member.role === 'dm' || member.role === 'co-dm' || member.role === 'comaster')) return true;
+    if (member && (member.role === 'dm' || normalizeCampaignRole(member.role) === 'co_dm')) return true;
     const profile = account.campaignProfiles?.[cleanCode] || Object.entries(account.campaignProfiles || {}).find(([k]) => k.toUpperCase() === cleanCode)?.[1];
     if (profile && (profile.isCoDm || profile.isCoMaster || profile.tags?.includes('Co-Master'))) return true;
     return false;
@@ -984,6 +1004,237 @@ export class CampaignManager {
       window.dispatchEvent(new CustomEvent('chronicle_campaigns_updated'));
       window.dispatchEvent(new CustomEvent('chronicle_ai_config_updated'));
     }
+  }
+
+  // === PARTY STATS & SOUNDTRACK PERSISTENCE ===
+  static getPartyConfig(campaignCode?: string): PartyCampaignConfig {
+    const code = (campaignCode || this.getActiveCampaignCode() || '').trim().toUpperCase();
+    if (!code) return { autoPlayIntro: false, membersStats: {} };
+    const key = `chronicle_${code}_party_config`;
+    return getCached(key, () => {
+      let localConfig: PartyCampaignConfig | null = null;
+      if (typeof localStorage !== 'undefined') {
+        const raw = localStorage.getItem(key);
+        if (raw) {
+          try {
+            localConfig = JSON.parse(raw);
+          } catch {}
+        }
+      }
+      const camp = this.getCampaigns().find((c) => c.code.toUpperCase() === code);
+      const remoteConfig = (camp as any)?.partyConfig || (camp?.aiConfig as any)?.party_config;
+      return localConfig || remoteConfig || { autoPlayIntro: false, membersStats: {} };
+    });
+  }
+
+  static savePartyConfig(config: PartyCampaignConfig, campaignCode?: string): void {
+    const code = (campaignCode || this.getActiveCampaignCode() || '').trim().toUpperCase();
+    if (!code) return;
+    const key = `chronicle_${code}_party_config`;
+    setCached(key, config);
+    safeLocalStorageSetItem(key, JSON.stringify(config));
+
+    // Persist into global campaigns cache and aiConfig for seamless Supabase storage
+    const campaigns = this.getCampaigns();
+    const idx = campaigns.findIndex((c) => c.code.toUpperCase() === code);
+    if (idx !== -1) {
+      (campaigns[idx] as any).partyConfig = config;
+      if (!campaigns[idx].aiConfig) campaigns[idx].aiConfig = {};
+      (campaigns[idx].aiConfig as any).party_config = config;
+      this.saveCampaignsLocalOnly(campaigns);
+    }
+
+    if (isSupabaseConfigured()) {
+      try {
+        supabase
+          .from('campaigns')
+          .select('ai_config')
+          .eq('code', code)
+          .maybeSingle()
+          .then(({ data }: any) => {
+            const currentAi = (data?.ai_config && typeof data.ai_config === 'object') ? data.ai_config : {};
+            supabase
+              .from('campaigns')
+              .update({
+                ai_config: { ...currentAi, party_config: config },
+                updated_at: new Date().toISOString(),
+              })
+              .eq('code', code)
+              .then(() => {}, () => {});
+          }, () => {});
+      } catch {}
+    }
+
+    emitChronicleEvent('chronicle_party_config_updated', { code, config });
+    emitChronicleEvent('chronicle_campaign_updated');
+  }
+
+  static updateMemberPartyStats(playerId: string, updates: Partial<PartyMemberStats>, campaignCode?: string): void {
+    const code = (campaignCode || this.getActiveCampaignCode() || '').trim().toUpperCase();
+    const config = this.getPartyConfig(code);
+    const currentMembers = config.membersStats || {};
+    const currentMember = currentMembers[playerId] || { playerId };
+    const memberUpdated: PartyMemberStats = {
+      ...currentMember,
+      ...updates,
+      playerId,
+    };
+    const updatedConfig: PartyCampaignConfig = {
+      ...config,
+      membersStats: {
+        ...currentMembers,
+        [playerId]: memberUpdated,
+      },
+    };
+    this.savePartyConfig(updatedConfig, code);
+
+    // Save directly into the authoritative public.party_member_stats table
+    if (isSupabaseConfigured() && code) {
+      SupabaseSyncService.savePartyMemberStats(code, memberUpdated).catch(() => {});
+    }
+  }
+
+  static hydratePartyStatsFromRemote(campaignCode: string, remoteStatsMap: Record<string, PartyMemberStats>) {
+    if (!campaignCode || !remoteStatsMap || typeof remoteStatsMap !== 'object') return;
+    const code = campaignCode.trim().toUpperCase();
+    const current = this.getPartyConfig(code);
+    const updatedMembers = { ...(current.membersStats || {}), ...remoteStatsMap };
+    const updatedConfig: PartyCampaignConfig = {
+      ...current,
+      membersStats: updatedMembers,
+    };
+    const key = `chronicle_${code}_party_config`;
+    setCached(key, updatedConfig);
+    safeLocalStorageSetItem(key, JSON.stringify(updatedConfig));
+    emitChronicleEvent('chronicle_party_config_updated', { code, config: updatedConfig });
+  }
+
+  static getPartyAttendanceStats(_campaignCode?: string): {
+    totalSessions: number;
+    playersStats: Record<string, { attendedCount: number; attendanceRate: number; attendedSessionNumbers: number[] }>;
+  } {
+    const sessions = this.getSessions().sort((a, b) => a.number - b.number);
+    const players = this.getPlayers();
+    const totalSessions = sessions.length;
+
+    const result: Record<string, { attendedCount: number; attendanceRate: number; attendedSessionNumbers: number[] }> = {};
+    const genericNames = new Set(['avventuriero', 'personaggio', 'player', 'giocatore', 'dungeon master', 'dm', 'co-dm', 'master']);
+
+    players.forEach((p) => {
+      // Gather all distinct identifiers for player p
+      const pKeys = new Set<string>();
+      if (p._id) pKeys.add(String(p._id).toLowerCase().trim());
+      if (p.id) pKeys.add(String(p.id).toLowerCase().trim());
+      if (p.userId) pKeys.add(String(p.userId).toLowerCase().trim());
+      if (p.email) pKeys.add(String(p.email).toLowerCase().trim());
+
+      const cName = String(p.characterName || '').toLowerCase().trim();
+      if (cName && !genericNames.has(cName)) pKeys.add(cName);
+
+      const pName = String(p.name || '').toLowerCase().trim();
+      if (pName && !genericNames.has(pName)) pKeys.add(pName);
+
+      let attended = 0;
+      const attendedNumbers: number[] = [];
+
+      sessions.forEach((s) => {
+        // Build excluded set for this session
+        const sExcludedKeys = new Set<string>();
+        const excludedList = s.excludedPlayerIds || (s as any).excluded_player_ids || [];
+        if (Array.isArray(excludedList)) {
+          excludedList.forEach((id: any) => {
+            if (id) sExcludedKeys.add(String(id).toLowerCase().trim());
+          });
+        }
+
+        // Build attendees set for this session
+        const sAttendeeKeys = new Set<string>();
+
+        const attendeeIds = s.attendeePlayerIds || (s as any).attendee_player_ids || [];
+        if (Array.isArray(attendeeIds)) {
+          attendeeIds.forEach((id: any) => {
+            if (id) sAttendeeKeys.add(String(id).toLowerCase().trim());
+          });
+        }
+
+        const attendeesList = s.attendees || (s as any).attendees_list || [];
+        if (Array.isArray(attendeesList)) {
+          attendeesList.forEach((att: any) => {
+            if (!att) return;
+            if (typeof att === 'string') {
+              const str = att.toLowerCase().trim();
+              if (str && !genericNames.has(str)) sAttendeeKeys.add(str);
+            } else if (typeof att === 'object') {
+              if (att._id) sAttendeeKeys.add(String(att._id).toLowerCase().trim());
+              if (att.id) sAttendeeKeys.add(String(att.id).toLowerCase().trim());
+              if (att.userId) sAttendeeKeys.add(String(att.userId).toLowerCase().trim());
+              if (att.player_id) sAttendeeKeys.add(String(att.player_id).toLowerCase().trim());
+              if (att.user_id) sAttendeeKeys.add(String(att.user_id).toLowerCase().trim());
+              if (att.email) sAttendeeKeys.add(String(att.email).toLowerCase().trim());
+              const attCName = String(att.characterName || '').toLowerCase().trim();
+              if (attCName && !genericNames.has(attCName)) sAttendeeKeys.add(attCName);
+              const attName = String(att.name || '').toLowerCase().trim();
+              if (attName && !genericNames.has(attName)) sAttendeeKeys.add(attName);
+            }
+          });
+        }
+
+        const saList = (s as any).session_attendees;
+        if (Array.isArray(saList)) {
+          saList.forEach((sa: any) => {
+            if (!sa) return;
+            const saStatus = String(sa.status || 'present').toLowerCase().trim();
+            const saId = String(sa.player_id || sa.user_id || sa.user || '').toLowerCase().trim();
+            if (saStatus === 'absent') {
+              if (saId) sExcludedKeys.add(saId);
+            } else {
+              if (saId) sAttendeeKeys.add(saId);
+              const saCName = String(sa.characterName || sa.name || '').toLowerCase().trim();
+              if (saCName && !genericNames.has(saCName)) sAttendeeKeys.add(saCName);
+            }
+          });
+        }
+
+        // Check if player is explicitly excluded from session
+        let isExcluded = false;
+        pKeys.forEach((key) => {
+          if (sExcludedKeys.has(key)) isExcluded = true;
+        });
+
+        if (isExcluded) return;
+
+        let isAttended = false;
+        if (sAttendeeKeys.size > 0) {
+          // If session has recorded attendees, check if any of player's keys match
+          pKeys.forEach((key) => {
+            if (sAttendeeKeys.has(key)) isAttended = true;
+          });
+        } else if (sExcludedKeys.size > 0) {
+          // Session has excluded list but no explicit attendee list: player is attended since not excluded
+          isAttended = true;
+        } else {
+          // Session has neither attendee nor excluded list recorded
+          isAttended = true;
+        }
+
+        if (isAttended) {
+          attended++;
+          attendedNumbers.push(s.number);
+        }
+      });
+
+      const statsObj = {
+        attendedCount: attended,
+        attendanceRate: totalSessions > 0 ? Math.round((attended / totalSessions) * 100) : 0,
+        attendedSessionNumbers: attendedNumbers,
+      };
+
+      if (p._id) result[p._id] = statsObj;
+      if (p.id) result[p.id] = statsObj;
+      if (p.userId) result[p.userId] = statsObj;
+    });
+
+    return { totalSessions, playersStats: result };
   }
 
   static generateCampaignCode(_baseName?: string): string {
@@ -1646,7 +1897,7 @@ export class CampaignManager {
     }
 
     const newAccount: UserAccount = {
-      id: "usr_" + Date.now(),
+      id: crypto.randomUUID(),
       email,
       characterName,
       isDm: false,
@@ -1686,8 +1937,9 @@ export class CampaignManager {
     }
 
     const safeSlug = cleanName.toLowerCase().replace(/[^a-z0-9]/g, "");
+    const generatedId = crypto.randomUUID();
     const newAccount: UserAccount = {
-      id: "usr_pg_" + Date.now() + "_" + Math.random().toString(36).substring(2, 6),
+      id: generatedId,
       email: `${safeSlug || "player"}@campaign.local`,
       characterName: cleanName,
       isDm: false,
@@ -2272,7 +2524,7 @@ export class CampaignManager {
       return false;
     }
 
-    const isCoDm = member?.role === 'co-dm' || member?.role === 'comaster';
+    const isCoDm = normalizeCampaignRole(member?.role) === 'co_dm';
     const perms = member?.permissions;
 
     switch (action) {
@@ -2392,30 +2644,36 @@ export class CampaignManager {
     avatarUrl?: string;
   }): { success: boolean; account: UserAccount } {
     const email = firebaseUser.email.toLowerCase().trim();
+    const candidateCharName = (firebaseUser.characterName || '').trim().toLowerCase();
     const accounts = this.getAccounts();
 
-    // Match by existing account email or id
+    // Match by Supabase Auth UID, existing account email, or pre-registered character name
     let existingIndex = accounts.findIndex(
-      (a) => a.id === firebaseUser.uid || a.id === `usr_${firebaseUser.uid}` || (a.email && a.email.toLowerCase() === email)
+      (a) => a.id === firebaseUser.uid ||
+             (a.email && a.email.toLowerCase() === email) ||
+             (candidateCharName && a.characterName && a.characterName.trim().toLowerCase() === candidateCharName)
     );
 
     let userAcc: UserAccount;
+    let oldId: string | null = null;
 
     if (existingIndex >= 0) {
       const existing = accounts[existingIndex];
+      oldId = existing.id;
       userAcc = {
         ...existing,
-        id: firebaseUser.uid, // Canonical Firebase UID
+        id: firebaseUser.uid, // Canonical Supabase Auth UID
         email: existing.email || email,
         characterName: existing.characterName || firebaseUser.characterName || email.split('@')[0],
         avatarUrl: firebaseUser.avatarUrl !== undefined ? firebaseUser.avatarUrl : existing.avatarUrl || '',
         color: firebaseUser.color || existing.color || '#6366f1',
         authProvider: 'password',
+        previousAccountIds: Array.from(new Set([...(existing.previousAccountIds || []), ...(oldId && oldId !== firebaseUser.uid ? [oldId] : [])])),
       };
       accounts[existingIndex] = userAcc;
     } else {
       userAcc = {
-        id: firebaseUser.uid, // Canonical Firebase UID
+        id: firebaseUser.uid, // Canonical Supabase Auth UID
         email,
         characterName: firebaseUser.characterName || email.split('@')[0] || 'Giocatore',
         isDm: false,
@@ -2428,6 +2686,28 @@ export class CampaignManager {
         authProvider: 'password',
       };
       accounts.push(userAcc);
+    }
+
+    // Unify any character_bio matching oldId or pre-registered character name to canonical UUID
+    try {
+      const allBios = this.getAllCharacterBios();
+      let biosModified = false;
+      const targetName = userAcc.characterName.trim().toLowerCase();
+      allBios.forEach((bio) => {
+        const bPid = (bio.playerId || '').trim().toLowerCase();
+        const bName = (bio.characterName || (bio as any).name || '').trim().toLowerCase();
+        const matchesOld = Boolean(oldId && bPid === oldId.toLowerCase());
+        const matchesName = Boolean(targetName && bName === targetName);
+        if (matchesOld || (matchesName && bPid !== firebaseUser.uid.toLowerCase())) {
+          bio.playerId = firebaseUser.uid;
+          biosModified = true;
+        }
+      });
+      if (biosModified) {
+        this.saveAllCharacterBiosLocalOnly(allBios);
+      }
+    } catch (e) {
+      console.warn('[handleEmailAuthSuccess] Error unifying character_bios:', e);
     }
 
     this.saveAccounts(accounts);
@@ -2466,29 +2746,35 @@ export class CampaignManager {
     photoURL?: string | null;
   }): { success: boolean; account: UserAccount } {
     const email = (googleUser.email || `${googleUser.uid}@google.auth`).toLowerCase().trim();
+    const candidateDisplayName = (googleUser.displayName || '').trim().toLowerCase();
     const accounts = this.getAccounts();
 
-    // Match by Google UID first, or by existing email address
+    // Match by Google UID first, by existing email address, or pre-registered character name
     let existingIndex = accounts.findIndex(
-      (a) => a.id === googleUser.uid || a.id === `usr_g_${googleUser.uid}` || (a.email && a.email.toLowerCase() === email)
+      (a) => a.id === googleUser.uid ||
+             (a.email && a.email.toLowerCase() === email) ||
+             (candidateDisplayName && a.characterName && a.characterName.trim().toLowerCase() === candidateDisplayName)
     );
 
     let userAcc: UserAccount;
+    let oldId: string | null = null;
 
     if (existingIndex >= 0) {
       const existing = accounts[existingIndex];
+      oldId = existing.id;
       userAcc = {
         ...existing,
-        id: googleUser.uid, // Canonical Firebase UID
+        id: googleUser.uid, // Canonical Supabase Auth UID
         email: existing.email || email,
         characterName: existing.characterName || googleUser.displayName || 'Giocatore',
         avatarUrl: googleUser.photoURL || existing.avatarUrl || '',
         authProvider: 'google',
+        previousAccountIds: Array.from(new Set([...(existing.previousAccountIds || []), ...(oldId && oldId !== googleUser.uid ? [oldId] : [])])),
       };
       accounts[existingIndex] = userAcc;
     } else {
       userAcc = {
-        id: googleUser.uid, // Canonical Firebase UID
+        id: googleUser.uid, // Canonical Supabase Auth UID
         email,
         characterName: googleUser.displayName || email.split('@')[0] || 'Giocatore',
         isDm: false,
@@ -2501,6 +2787,28 @@ export class CampaignManager {
         authProvider: 'google',
       };
       accounts.push(userAcc);
+    }
+
+    // Unify any character_bio matching oldId or pre-registered character name to canonical UUID
+    try {
+      const allBios = this.getAllCharacterBios();
+      let biosModified = false;
+      const targetName = userAcc.characterName.trim().toLowerCase();
+      allBios.forEach((bio) => {
+        const bPid = (bio.playerId || '').trim().toLowerCase();
+        const bName = (bio.characterName || (bio as any).name || '').trim().toLowerCase();
+        const matchesOld = Boolean(oldId && bPid === oldId.toLowerCase());
+        const matchesName = Boolean(targetName && bName === targetName);
+        if (matchesOld || (matchesName && bPid !== googleUser.uid.toLowerCase())) {
+          bio.playerId = googleUser.uid;
+          biosModified = true;
+        }
+      });
+      if (biosModified) {
+        this.saveAllCharacterBiosLocalOnly(allBios);
+      }
+    } catch (e) {
+      console.warn('[handleGoogleAuthSuccess] Error unifying character_bios:', e);
     }
 
     this.saveAccounts(accounts);
@@ -3006,7 +3314,7 @@ export class CampaignManager {
         const memRec = memberMap.get(lowId) || (lowEmail ? memberMap.get(lowEmail) : undefined);
         if (memRec) {
           if (memRec.role === 'dm') p.isDm = true;
-          if (memRec.role === 'co-dm' || memRec.role === 'comaster') {
+          if (normalizeCampaignRole(memRec.role) === 'co_dm') {
             p.isCoDm = true;
             p.isCoMaster = true;
           }
@@ -3427,7 +3735,7 @@ export class CampaignManager {
     this.saveNotesLocalOnly(updated);
     if (isSupabaseConfigured() && targetNote) {
       const code = this.getActiveCampaignCode() || 'default';
-      SupabaseSyncService.patchNoteFields(code, noteId, { dm_reply: (targetNote as Note).dmResponse });
+      SupabaseSyncService.saveNote(code, targetNote as Note).catch(() => {});
     }
   }
 
@@ -3436,7 +3744,7 @@ export class CampaignManager {
     let targetNote: Note | null = null;
     const updated = notes.map((n) => {
       if (n._id === noteId) {
-        targetNote = { ...n, askDm };
+        targetNote = { ...n, askDm, _updatedAt: new Date().toISOString() };
         return targetNote;
       }
       return n;
@@ -3444,7 +3752,7 @@ export class CampaignManager {
     this.saveNotesLocalOnly(updated);
     if (isSupabaseConfigured() && targetNote) {
       const code = this.getActiveCampaignCode() || 'default';
-      SupabaseSyncService.patchNoteFields(code, noteId, { ask_dm: askDm });
+      SupabaseSyncService.saveNote(code, targetNote as Note).catch(() => {});
     }
   }
 
@@ -3462,7 +3770,7 @@ export class CampaignManager {
     this.saveNotesLocalOnly(updated);
     if (isSupabaseConfigured() && targetNote) {
       const code = this.getActiveCampaignCode() || 'default';
-      SupabaseSyncService.patchNoteFields(code, noteId, { is_dm_only: true });
+      SupabaseSyncService.saveNote(code, targetNote as Note).catch(() => {});
     }
     this.dismissNotification(noteId);
     this.deleteCampaignNotification(noteId);
@@ -3491,7 +3799,7 @@ export class CampaignManager {
     this.saveNotesLocalOnly(updated);
     if (isSupabaseConfigured() && targetNote) {
       const code = this.getActiveCampaignCode() || 'default';
-      SupabaseSyncService.patchNoteFields(code, noteId, { visibility: 'private' });
+      SupabaseSyncService.saveNote(code, targetNote as Note).catch(() => {});
     }
     this.dismissNotification(noteId, playerId);
     this.deleteCampaignNotification(noteId);
@@ -3514,7 +3822,7 @@ export class CampaignManager {
     this.saveNotesLocalOnly(updated);
     if (isSupabaseConfigured() && targetNote) {
       const code = this.getActiveCampaignCode() || 'default';
-      SupabaseSyncService.patchNoteFields(code, noteId, { dm_reply: null });
+      SupabaseSyncService.saveNote(code, targetNote as Note).catch(() => {});
     }
     if (typeof window !== "undefined") {
       window.dispatchEvent(new CustomEvent("chronicle_notifications_updated"));
@@ -3535,7 +3843,7 @@ export class CampaignManager {
     this.saveNotesLocalOnly(updated);
     if (isSupabaseConfigured() && targetNote) {
       const code = this.getActiveCampaignCode() || 'default';
-      SupabaseSyncService.patchNoteFields(code, noteId, { ask_dm: false, dm_reply: null });
+      SupabaseSyncService.saveNote(code, targetNote as Note).catch(() => {});
     }
     this.deleteCampaignNotification(noteId);
     if (typeof window !== "undefined") {
@@ -3569,6 +3877,12 @@ export class CampaignManager {
       .slice(-300); // keep last 300 notifications
     setCached(key, filtered);
     safeLocalStorageSetItem(key, JSON.stringify(filtered));
+    if (isSupabaseConfigured()) {
+      const activeCode = this.getActiveCampaignCode();
+      if (activeCode) {
+        SupabaseSyncService.saveNotifications(activeCode, filtered).catch(() => {});
+      }
+    }
     if (typeof window !== "undefined") {
       try {
         window.dispatchEvent(new CustomEvent("chronicle_notifications_updated", { detail: { notifications: filtered } }));
@@ -6427,9 +6741,39 @@ export class CampaignManager {
 
   static async addFamilyRelation(relation: Omit<CharacterRelationship, "id"> & { id?: string }): Promise<{ success: boolean; relation: CharacterRelationship; error?: string }> {
     const id = relation.id || `rel_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+
+    // Directive 6: Ensure targetEntityId links to a Codex NPC Entity
+    let targetEntityId = relation.targetEntityId || relation.linkedEntityId;
+    const relName = (relation.name || '').trim();
+    if (!targetEntityId && relName) {
+      const entities = this.getEntities();
+      const existing = entities.find((e) => e.name.trim().toLowerCase() === relName.toLowerCase());
+      if (existing) {
+        targetEntityId = existing.id || existing._id;
+      } else {
+        const newEntityId = `ent_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+        const newNpc: Entity = {
+          id: newEntityId,
+          _id: newEntityId,
+          name: relName,
+          type: 'npc',
+          description: relation.bio || `Membro della famiglia / relazione: ${relation.relationshipType || 'familiare'}`,
+          imageUrl: relation.avatarUrl || '',
+          images: relation.avatarUrl ? [relation.avatarUrl] : [],
+          status: (relation.status === 'deceased' ? 'dead' : relation.status === 'unknown' ? 'unknown' : 'alive') as any,
+          color: '#3B82F6',
+          role: relation.titleOrRole || undefined,
+        };
+        this.addEntity(newNpc);
+        targetEntityId = newEntityId;
+      }
+    }
+
     const newRelation: CharacterRelationship = {
       ...relation,
       id,
+      targetEntityId: targetEntityId || undefined,
+      linkedEntityId: targetEntityId || undefined,
       createdAt: relation.createdAt || new Date().toISOString(),
     };
     const all = this.getAllFamilyRelations().filter((r) => r.id !== id);
@@ -6437,24 +6781,54 @@ export class CampaignManager {
     this.saveAllFamilyRelationsLocalOnly(updated);
     if (isSupabaseConfigured()) {
       const code = this.getActiveCampaignCode() || 'default';
-      const ok = await SupabaseSyncService.saveFamilyRelation(code, newRelation);
-      if (!ok) {
-        return { success: false, relation: newRelation, error: "Errore di salvataggio della relazione su Supabase." };
-      }
+      SupabaseSyncService.saveFamilyRelation(code, newRelation).catch((err) => {
+        console.warn('[CampaignManager] Background Supabase saveFamilyRelation error:', err);
+      });
     }
     return { success: true, relation: newRelation };
   }
 
   static async updateFamilyRelation(relation: CharacterRelationship): Promise<{ success: boolean; error?: string }> {
+    let targetEntityId = relation.targetEntityId || relation.linkedEntityId;
+    const relName = (relation.name || '').trim();
+    if (!targetEntityId && relName) {
+      const entities = this.getEntities();
+      const existing = entities.find((e) => e.name.trim().toLowerCase() === relName.toLowerCase());
+      if (existing) {
+        targetEntityId = existing.id || existing._id;
+      } else {
+        const newEntityId = `ent_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+        const newNpc: Entity = {
+          id: newEntityId,
+          _id: newEntityId,
+          name: relName,
+          type: 'npc',
+          description: relation.bio || `Membro della famiglia / relazione: ${relation.relationshipType || 'familiare'}`,
+          imageUrl: relation.avatarUrl || '',
+          images: relation.avatarUrl ? [relation.avatarUrl] : [],
+          status: (relation.status === 'deceased' ? 'dead' : relation.status === 'unknown' ? 'unknown' : 'alive') as any,
+          color: '#3B82F6',
+          role: relation.titleOrRole || undefined,
+        };
+        this.addEntity(newNpc);
+        targetEntityId = newEntityId;
+      }
+    }
+
+    const updatedRel: CharacterRelationship = {
+      ...relation,
+      targetEntityId: targetEntityId || undefined,
+      linkedEntityId: targetEntityId || undefined,
+    };
+
     const all = this.getAllFamilyRelations();
-    const updated = all.map((r) => (r.id === relation.id ? relation : r));
+    const updated = all.map((r) => (r.id === updatedRel.id ? updatedRel : r));
     this.saveAllFamilyRelationsLocalOnly(updated);
     if (isSupabaseConfigured()) {
       const code = this.getActiveCampaignCode() || 'default';
-      const ok = await SupabaseSyncService.saveFamilyRelation(code, relation);
-      if (!ok) {
-        return { success: false, error: "Errore di salvataggio della relazione su Supabase." };
-      }
+      SupabaseSyncService.saveFamilyRelation(code, updatedRel).catch((err) => {
+        console.warn('[CampaignManager] Background Supabase updateFamilyRelation error:', err);
+      });
     }
     return { success: true };
   }

@@ -87,8 +87,9 @@ export function CalendarPage() {
     season: string;
   } | null>(null);
 
-  // Visual calendar month browsing
+  // Visual calendar month & year browsing (browsing does NOT mutate the active campaign date)
   const [browsingMonthIndex, setBrowsingMonthIndex] = useState<number>(() => calendar?.currentMonthIndex || 0);
+  const [browsingYear, setBrowsingYear] = useState<number>(() => calendar?.currentYear || 1492);
 
   // Year quick edit input state
   const [heroYearInput, setHeroYearInput] = useState<string>(() => String(calendar?.currentYear || 1492));
@@ -124,12 +125,14 @@ export function CalendarPage() {
 
   const handleLoadPreset = (preset: CampaignCalendar) => {
     handleSave(preset);
+    setBrowsingYear(preset.currentYear || 1492);
     setBrowsingMonthIndex(preset.currentMonthIndex || 0);
   };
 
   const handleAdvanceDays = (days: number) => {
     const updated = CampaignManager.advanceCalendar(days);
     setCalendar(updated);
+    setBrowsingYear(updated.currentYear);
     setBrowsingMonthIndex(updated.currentMonthIndex);
     setSelectedDayNumber(updated.currentDay);
     setSaveSuccess(true);
@@ -143,6 +146,26 @@ export function CalendarPage() {
       currentYear: newYear,
     };
     handleSave(updated);
+    setBrowsingYear(newYear);
+  };
+
+  const handlePrevBrowsingMonth = () => {
+    if (browsingMonthIndex > 0) {
+      setBrowsingMonthIndex((prev) => prev - 1);
+    } else {
+      const lastMonthIdx = Math.max(0, (calendar?.months?.length || 1) - 1);
+      setBrowsingYear((prev) => prev - 1);
+      setBrowsingMonthIndex(lastMonthIdx);
+    }
+  };
+
+  const handleNextBrowsingMonth = () => {
+    if (browsingMonthIndex < (calendar?.months?.length || 1) - 1) {
+      setBrowsingMonthIndex((prev) => prev + 1);
+    } else {
+      setBrowsingYear((prev) => prev + 1);
+      setBrowsingMonthIndex(0);
+    }
   };
 
   const handleAddMonth = (e: React.FormEvent) => {
@@ -233,29 +256,6 @@ export function CalendarPage() {
     }
   };
 
-  const handlePrevBrowsingMonth = () => {
-    if (browsingMonthIndex > 0) {
-      setBrowsingMonthIndex((prev) => prev - 1);
-    } else {
-      const newYear = (calendar?.currentYear || 1492) - 1;
-      const lastMonthIdx = Math.max(0, (calendar?.months?.length || 1) - 1);
-      const updated = { ...calendar, currentYear: newYear };
-      handleSave(updated);
-      setBrowsingMonthIndex(lastMonthIdx);
-    }
-  };
-
-  const handleNextBrowsingMonth = () => {
-    if (browsingMonthIndex < (calendar?.months?.length || 1) - 1) {
-      setBrowsingMonthIndex((prev) => prev + 1);
-    } else {
-      const newYear = (calendar?.currentYear || 1492) + 1;
-      const updated = { ...calendar, currentYear: newYear };
-      handleSave(updated);
-      setBrowsingMonthIndex(0);
-    }
-  };
-
   const currentMonth = (calendar?.months && calendar.months[calendar.currentMonthIndex]) || (calendar?.months && calendar.months[0]) || HARPTOS_CALENDAR.months[0];
   const activeBrowsingMonth = (calendar?.months && calendar.months[browsingMonthIndex]) || currentMonth || HARPTOS_CALENDAR.months[0];
 
@@ -313,7 +313,7 @@ export function CalendarPage() {
           activeBrowsingMonth,
           browsingMonthIndex,
           calendar.months,
-          calendar.currentYear
+          browsingYear
         );
       });
 
@@ -332,7 +332,7 @@ export function CalendarPage() {
           activeBrowsingMonth,
           browsingMonthIndex,
           calendar.months,
-          calendar.currentYear
+          browsingYear
         );
 
         if (matchesDirect) return true;
@@ -353,7 +353,7 @@ export function CalendarPage() {
               activeBrowsingMonth,
               browsingMonthIndex,
               calendar.months,
-              calendar.currentYear
+              browsingYear
             )
           );
         }
@@ -362,10 +362,9 @@ export function CalendarPage() {
       });
 
       const dayMemories = scrapbook.filter((m) => {
-        // Privacy Fix Applied: Scrapbook isolation
+        // Privacy Isolation
         if (m.isSecret) {
           if (m.authorName !== player?.characterName) {
-            // Check if shared with DM
             if (!(player?.isDm && m.sharedWithDm)) {
               return false;
             }
@@ -380,7 +379,7 @@ export function CalendarPage() {
           activeBrowsingMonth,
           browsingMonthIndex,
           calendar.months,
-          calendar.currentYear
+          browsingYear
         );
       });
 
@@ -392,7 +391,7 @@ export function CalendarPage() {
     }
 
     return map;
-  }, [activeBrowsingMonth, browsingMonthIndex, calendar.months, calendar.currentYear, allStorylineEvents, sessions, scrapbook, player]);
+  }, [activeBrowsingMonth, browsingMonthIndex, browsingYear, calendar.months, allStorylineEvents, sessions, scrapbook, player]);
 
   const selectedDayData = useMemo(() => {
     if (!selectedDayNumber) return null;
@@ -407,7 +406,7 @@ export function CalendarPage() {
 
   if (isLoading && (!calendar?.months || calendar.months.length === 0)) {
     return (
-      <div className="p-4 sm:p-8 max-w-7xl mx-auto w-full space-y-6">
+      <div className="px-4 sm:px-8 lg:px-10 py-6 sm:py-8 max-w-[1700px] mx-auto w-full space-y-6">
         <div className="flex items-center gap-3 border-b border-surface-2 pb-5">
           <Skeleton variant="circular" className="w-10 h-10" />
           <div className="space-y-2">
@@ -428,7 +427,7 @@ export function CalendarPage() {
   }
 
   return (
-    <div className="p-4 sm:p-8 max-w-7xl mx-auto w-full space-y-6">
+    <div className="px-4 sm:px-8 lg:px-10 py-6 sm:py-8 max-w-[1700px] mx-auto w-full space-y-6">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-surface-2/80 pb-5">
         <div className="flex items-center gap-3">
@@ -499,27 +498,29 @@ export function CalendarPage() {
           {/* Glossa Tecnica a Margine & Stepper Anno */}
           <div className="flex flex-wrap items-center gap-3 text-xs font-mono text-content-3/90 pt-0.5">
             <div className="flex items-center gap-1.5 bg-surface-2/70 px-2.5 py-1 rounded-[2px] border border-surface-2/90">
-              <span className="text-content-3 text-[11px] uppercase tracking-wider">Anno:</span>
+              <span className="text-content-3 text-[11px] uppercase tracking-wider">Anno Attuale:</span>
               <input
                 type="number"
                 value={heroYearInput}
-                onChange={(e) => {
-                  setHeroYearInput(e.target.value);
-                  const val = parseInt(e.target.value, 10);
-                  if (!isNaN(val)) {
-                    handleSetYear(val);
+                onChange={(e) => setHeroYearInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    const val = parseInt(heroYearInput, 10);
+                    if (!isNaN(val) && val !== calendar.currentYear) {
+                      handleSetYear(val);
+                    }
                   }
                 }}
                 onBlur={() => {
                   const val = parseInt(heroYearInput, 10);
                   if (isNaN(val)) {
                     setHeroYearInput(String(calendar.currentYear));
-                  } else {
+                  } else if (val !== calendar.currentYear) {
                     handleSetYear(val);
                   }
                 }}
                 className="w-16 bg-surface-1 border border-surface-3/80 focus:border-primary rounded-[2px] px-1 py-0.5 text-xs font-mono text-content-1 text-center outline-none font-semibold"
-                title="Modifica Anno di Campagna"
+                title="Modifica Anno Attuale di Campagna (Premi Invio per confermare)"
               />
               <span className="text-primary font-semibold text-[11px]">{calendar.yearSuffix}</span>
               <div className="flex items-center gap-0.5 ml-1 border-l border-surface-3/80 pl-1">
@@ -614,7 +615,7 @@ export function CalendarPage() {
       {activeTab === 'overview' && (
         <div className="space-y-6">
           <div className="border border-surface-2/80 bg-surface-1/60 rounded-[2px] p-5 space-y-4 shadow-xs">
-            {/* Barra Controlli del Mese */}
+            {/* Barra Controlli del Mese e Anno */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-surface-2/80 pb-3.5">
               <div className="flex items-center gap-2 sm:gap-3 min-w-0">
                 <button
@@ -629,7 +630,7 @@ export function CalendarPage() {
                   <h3 className="text-base sm:text-lg font-cinzel font-bold text-content-1 flex items-center gap-2 flex-wrap">
                     <span>{activeBrowsingMonth?.name}</span>
                     <span className="text-xs font-mono font-normal text-primary">
-                      ({calendar.currentYear} {calendar.yearSuffix})
+                      ({browsingYear} {calendar.yearSuffix})
                     </span>
                   </h3>
                   <p className="text-[11px] text-content-3 font-mono uppercase tracking-wider">
@@ -646,13 +647,45 @@ export function CalendarPage() {
                 </button>
               </div>
 
-              {/* Month Quick Select */}
+              {/* Month & Year Quick Select */}
               <div className="flex items-center gap-2 flex-wrap">
-                {browsingMonthIndex === calendar.currentMonthIndex && (
+                {(browsingMonthIndex !== calendar.currentMonthIndex || browsingYear !== calendar.currentYear) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBrowsingYear(calendar.currentYear);
+                      setBrowsingMonthIndex(calendar.currentMonthIndex);
+                    }}
+                    className="text-[10px] font-mono uppercase tracking-wider px-2.5 py-1 rounded-[2px] bg-surface-2 hover:bg-surface-3 text-content-2 hover:text-primary border border-surface-3 font-medium transition-colors cursor-pointer shrink-0"
+                    title="Torna alla data attuale di campagna"
+                  >
+                    Torna ad Oggi
+                  </button>
+                )}
+                {browsingMonthIndex === calendar.currentMonthIndex && browsingYear === calendar.currentYear && (
                   <span className="text-[10px] font-mono uppercase tracking-wider px-2.5 py-1 rounded-[2px] bg-primary/10 text-primary border border-primary/30 font-semibold shrink-0">
                     Mese Corrente
                   </span>
                 )}
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setBrowsingYear((prev) => prev - 1)}
+                    className="px-2 py-1 text-[11px] font-mono rounded-[2px] bg-surface-2/80 hover:bg-surface-3 border border-surface-3 text-content-2 hover:text-content-1 cursor-pointer"
+                    title="Anno Precedente (Esplora)"
+                  >
+                    -1A
+                  </button>
+                  <span className="text-xs font-mono font-bold px-1 text-content-1">{browsingYear}</span>
+                  <button
+                    type="button"
+                    onClick={() => setBrowsingYear((prev) => prev + 1)}
+                    className="px-2 py-1 text-[11px] font-mono rounded-[2px] bg-surface-2/80 hover:bg-surface-3 border border-surface-3 text-content-2 hover:text-content-1 cursor-pointer"
+                    title="Anno Successivo (Esplora)"
+                  >
+                    +1A
+                  </button>
+                </div>
                 <select
                   value={browsingMonthIndex}
                   onChange={(e) => setBrowsingMonthIndex(parseInt(e.target.value))}
@@ -681,6 +714,7 @@ export function CalendarPage() {
                   const dayNum = i + 1;
                   const isCurrentCampaignDay =
                     browsingMonthIndex === calendar.currentMonthIndex &&
+                    browsingYear === calendar.currentYear &&
                     dayNum === calendar.currentDay;
                   const isSelected = selectedDayNumber === dayNum;
                   const dayData = monthDayDataMap.get(dayNum);
@@ -755,18 +789,18 @@ export function CalendarPage() {
                       ESTRATTO CRONOLOGICO // EFFEMERIDE
                     </div>
                     <h3 className="text-base sm:text-lg font-cinzel font-bold text-content-1">
-                      Giorno {selectedDayNumber} {activeBrowsingMonth?.name} &bull; {calendar.currentYear} {calendar.yearSuffix}
+                      Giorno {selectedDayNumber} {activeBrowsingMonth?.name} &bull; {browsingYear} {calendar.yearSuffix}
                     </h3>
                   </div>
                 </div>
 
                 <div className="flex items-center gap-2">
-                  {browsingMonthIndex === calendar.currentMonthIndex && selectedDayNumber === calendar.currentDay && (
+                  {browsingMonthIndex === calendar.currentMonthIndex && browsingYear === calendar.currentYear && selectedDayNumber === calendar.currentDay && (
                     <span className="px-3 py-1 bg-primary/15 text-primary text-xs font-mono uppercase tracking-wider font-semibold rounded-[2px] border border-primary/30">
                       Giorno Attuale
                     </span>
                   )}
-                  {!(browsingMonthIndex === calendar.currentMonthIndex && selectedDayNumber === calendar.currentDay) && (
+                  {!(browsingMonthIndex === calendar.currentMonthIndex && browsingYear === calendar.currentYear && selectedDayNumber === calendar.currentDay) && (
                     <button
                       type="button"
                       onClick={() => {
@@ -774,6 +808,7 @@ export function CalendarPage() {
                           ...calendar,
                           currentDay: selectedDayNumber,
                           currentMonthIndex: browsingMonthIndex,
+                          currentYear: browsingYear,
                         };
                         handleSave(updated);
                       }}
