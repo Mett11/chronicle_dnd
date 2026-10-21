@@ -72,7 +72,7 @@ export function D20Menu() {
 
   const [activeFaceIndex, setActiveFaceIndex] = useState<number>(() => {
     try {
-      const saved = sessionStorage.getItem('chronicle_d20_last_face');
+      const saved = localStorage.getItem('chronicle_d20_last_face') || sessionStorage.getItem('chronicle_d20_last_face');
       if (saved !== null) {
         const parsed = parseInt(saved, 10);
         if (!isNaN(parsed) && parsed >= 0 && parsed < 20) {
@@ -85,6 +85,7 @@ export function D20Menu() {
 
   useEffect(() => {
     try {
+      localStorage.setItem('chronicle_d20_last_face', String(activeFaceIndex));
       sessionStorage.setItem('chronicle_d20_last_face', String(activeFaceIndex));
     } catch {}
   }, [activeFaceIndex]);
@@ -517,7 +518,10 @@ export function D20Menu() {
   const handleExecuteFace = useCallback(
     (faceConfig: D20FaceConfig) => {
       try {
-        sessionStorage.setItem('chronicle_d20_last_face', String(faceConfig.id - 1));
+        const menuIdx = faces.findIndex((f) => f.id === faceConfig.id);
+        const idxToSave = menuIdx !== -1 ? menuIdx : faceConfig.id - 1;
+        localStorage.setItem('chronicle_d20_last_face', String(idxToSave));
+        sessionStorage.setItem('chronicle_d20_last_face', String(idxToSave));
       } catch {}
       if (faceConfig.actionType === 'meme_roll') {
         triggerMemeRoll();
@@ -531,7 +535,7 @@ export function D20Menu() {
         window.dispatchEvent(new CustomEvent(faceConfig.modalEvent));
       }
     },
-    [navigate, triggerMemeRoll]
+    [faces, navigate, triggerMemeRoll]
   );
 
   useEffect(() => {
@@ -992,7 +996,16 @@ export function D20Menu() {
     };
     threeStateRef.current = state;
 
-    snapToFaceUpright(activeFaceIndex);
+    const initialFaceConfig = faces[activeFaceIndex];
+    if (initialFaceConfig && faceIdMap) {
+      const geoFaceIdx = faceIdMap.indexOf(initialFaceConfig.id);
+      if (geoFaceIdx !== -1) {
+        snapToFaceUpright(geoFaceIdx);
+        if (state.targetQuaternion) {
+          meshGroup.quaternion.copy(state.targetQuaternion);
+        }
+      }
+    }
 
     const raycaster = new THREE.Raycaster();
     const mouse = new THREE.Vector2();
@@ -1102,19 +1115,22 @@ export function D20Menu() {
 
         const currentMatrix = new THREE.Matrix4().makeRotationFromQuaternion(meshGroup.quaternion);
         let maxDot = -1;
-        let closestIdx = 0;
+        let closestGeoIdx = 0;
 
         for (let i = 0; i < 20; i++) {
           const transformedNorm = faceNormals[i].clone().applyMatrix4(currentMatrix);
           const dot = transformedNorm.dot(new THREE.Vector3(0, 0, 1));
           if (dot > maxDot) {
             maxDot = dot;
-            closestIdx = i;
+            closestGeoIdx = i;
           }
         }
 
-        if (closestIdx !== activeFaceIndex && state.isDragging) {
-          setActiveFaceIndex(closestIdx);
+        const closestFaceId = faceIdMap[closestGeoIdx];
+        const closestMenuIdx = faces.findIndex((f) => f.id === closestFaceId);
+
+        if (closestMenuIdx !== -1 && closestMenuIdx !== activeFaceIndex && state.isDragging) {
+          setActiveFaceIndex(closestMenuIdx);
         }
       }
 

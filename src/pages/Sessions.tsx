@@ -54,6 +54,7 @@ import { ImageGalleryUploader } from '../components/ImageGalleryUploader';
 import { SingleImageUploader } from '../components/SingleImageUploader';
 import { AudioPlayer } from '../components/AudioPlayer';
 import { AudioRecorder } from '../components/AudioRecorder';
+import { FirebaseStorageService } from '../lib/firebaseStorageService';
 import { GazetteModal } from '../components/GazetteModal';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Pagination } from '../components/Pagination';
@@ -629,6 +630,13 @@ export function Sessions() {
   const confirmDeleteSession = () => {
     if (sessionToDelete) {
       CampaignManager.deleteSession(sessionToDelete);
+      if (selectedSession && (selectedSession._id === sessionToDelete || selectedSession.id === sessionToDelete)) {
+        const remaining = sessions.filter((s) => s._id !== sessionToDelete && s.id !== sessionToDelete);
+        setSelectedSession(remaining[0] || null);
+        if (remaining.length === 0) {
+          setChronicleView('index');
+        }
+      }
       setSessionToDelete(null);
       refreshSessions();
     }
@@ -1519,10 +1527,16 @@ export function Sessions() {
                           <AudioPlayer
                             key={log.id}
                             log={log}
-                            onDelete={() => {
-                              CampaignManager.deleteAudioLog(log.id);
-                              const updated = (selectedSession.audioLogs || []).filter((l) => l.id !== log.id);
-                              setSelectedSession({ ...selectedSession, audioLogs: updated });
+                            onDelete={(logIdToDelete) => {
+                              const targetLogId = logIdToDelete || log.id;
+                              const sessId = selectedSession.id || selectedSession._id;
+                              const updatedLogs = (selectedSession.audioLogs || []).filter((l) => l.id !== targetLogId);
+                              if (log.audioUrl) {
+                                FirebaseStorageService.deleteMedia(log.audioUrl).catch(() => {});
+                              }
+                              CampaignManager.deleteAudioLog(targetLogId);
+                              const updated = CampaignManager.updateSession(sessId, { audioLogs: updatedLogs });
+                              setSelectedSession(updated || { ...selectedSession, audioLogs: updatedLogs });
                               refreshSessions();
                             }}
                           />

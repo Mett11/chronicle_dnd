@@ -30,12 +30,27 @@ export class SupabaseStorageService {
     const trimmed = urlOrPath.trim();
     if (!trimmed || trimmed.startsWith('data:') || trimmed.startsWith('blob:')) return null;
 
-    if (trimmed.startsWith('campaigns/')) {
-      return { bucket: CHRONICLE_MEDIA_BUCKET, path: trimmed };
+    let clean = trimmed.startsWith('/') ? trimmed.slice(1) : trimmed;
+
+    if (clean.startsWith('campaigns/')) {
+      const pathClean = clean.split('?')[0];
+      try {
+        return { bucket: CHRONICLE_MEDIA_BUCKET, path: decodeURIComponent(pathClean) };
+      } catch {
+        return { bucket: CHRONICLE_MEDIA_BUCKET, path: pathClean };
+      }
     }
 
     const knownBuckets = [CHRONICLE_MEDIA_BUCKET, 'campaign-assets', 'user-avatars', 'audio-logs'];
     for (const b of knownBuckets) {
+      if (clean.startsWith(`${b}/`)) {
+        const rawPath = clean.slice(b.length + 1).split('?')[0];
+        try {
+          return { bucket: b, path: decodeURIComponent(rawPath) };
+        } catch {
+          return { bucket: b, path: rawPath };
+        }
+      }
       const marker = `/${b}/`;
       const idx = trimmed.indexOf(marker);
       if (idx !== -1) {
@@ -53,6 +68,30 @@ export class SupabaseStorageService {
     if (match) {
       const bucket = match[1];
       const rawPath = match[2];
+      try {
+        return { bucket, path: decodeURIComponent(rawPath) };
+      } catch {
+        return { bucket, path: rawPath };
+      }
+    }
+
+    // Support Firebase Storage CDN URLs: /v0/b/{bucket}/o/{path}
+    const fbMatch = trimmed.match(/firebasestorage\.googleapis\.com\/v0\/b\/([^/?#]+)\/o\/([^?#]+)/);
+    if (fbMatch) {
+      const bucket = fbMatch[1];
+      const rawPath = fbMatch[2];
+      try {
+        return { bucket, path: decodeURIComponent(rawPath) };
+      } catch {
+        return { bucket, path: rawPath };
+      }
+    }
+
+    // Support Google Cloud Storage URLs: storage.googleapis.com/{bucket}/{path}
+    const gcsMatch = trimmed.match(/storage\.googleapis\.com\/([^/?#]+)\/([^?#]+)/);
+    if (gcsMatch) {
+      const bucket = gcsMatch[1];
+      const rawPath = gcsMatch[2];
       try {
         return { bucket, path: decodeURIComponent(rawPath) };
       } catch {

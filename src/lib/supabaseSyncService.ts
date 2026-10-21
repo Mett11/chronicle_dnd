@@ -1940,6 +1940,31 @@ export class SupabaseSyncService {
       // Persist associated audio logs to public.audio_logs
       const sessId = String(session.id || session._id || payload.id);
       const sessionAudioLogs = Array.isArray(session.audioLogs) ? session.audioLogs : [];
+
+      // Reconcile and clean up any audio logs removed from this session
+      try {
+        const currentAudioIds = new Set(sessionAudioLogs.map((l) => l.id).filter(Boolean));
+        const { data: existingRows } = await supabase
+          .from('audio_logs')
+          .select('id, audio_url')
+          .eq('associated_id', sessId);
+
+        if (Array.isArray(existingRows)) {
+          const toDelete = existingRows.filter((row) => !currentAudioIds.has(row.id));
+          if (toDelete.length > 0) {
+            const deleteIds = toDelete.map((r) => r.id);
+            const deleteUrls = toDelete.map((r) => r.audio_url).filter(Boolean);
+            await supabase.from('audio_logs').delete().in('id', deleteIds);
+            if (deleteUrls.length > 0) {
+              const { SupabaseStorageService } = await import('./firebaseStorageService');
+              SupabaseStorageService.deleteMultipleMedia(deleteUrls).catch(() => {});
+            }
+          }
+        }
+      } catch (cleanErr) {
+        console.warn('[Supabase] Warning reconciling session audio logs:', cleanErr);
+      }
+
       if (sessionAudioLogs.length > 0) {
         const audioPayloads = sessionAudioLogs.map((log) =>
           toDbAudioLog(
@@ -1988,11 +2013,36 @@ export class SupabaseSyncService {
   }
 
   /**
-   * Delete a single session
+   * Delete a single session with cascade cleanup of audio logs, media files and attendees
    */
   static async deleteSession(sessionId: string, campaignCode?: string): Promise<boolean> {
     if (!isSupabaseConfigured() || !sessionId) return false;
     try {
+      // 1. Clean up associated audio logs and their physical storage files
+      try {
+        const { data: audioRows } = await supabase
+          .from('audio_logs')
+          .select('id, audio_url')
+          .or(`associated_id.eq.${sessionId},associated_id.eq.sess_${sessionId}`);
+        if (Array.isArray(audioRows) && audioRows.length > 0) {
+          const aIds = audioRows.map((r) => r.id);
+          const aUrls = audioRows.map((r) => r.audio_url).filter(Boolean);
+          await supabase.from('audio_logs').delete().in('id', aIds);
+          if (aUrls.length > 0) {
+            const { SupabaseStorageService } = await import('./firebaseStorageService');
+            SupabaseStorageService.deleteMultipleMedia(aUrls).catch(() => {});
+          }
+        }
+      } catch (audioEx) {
+        console.warn('[Supabase] Warning deleting session audio logs:', audioEx);
+      }
+
+      // 2. Clean up attendees
+      try {
+        await supabase.from('session_attendees').delete().eq('session_id', sessionId);
+      } catch {}
+
+      // 3. Delete the session record itself
       const { error } = await supabase.from('sessions').delete().eq('id', sessionId);
       if (campaignCode) this.updateCachedItem(campaignCode, 'sessions', { id: sessionId }, true);
       return !error;

@@ -4368,10 +4368,154 @@ export class CampaignManager {
     return newSession;
   }
 
+  /**
+   * Extracts all remote media URLs (cover, gallery images, audio recordings, event media, gazette blocks)
+   * associated with a session to ensure comprehensive Storage cleanup.
+   */
+  static extractSessionMediaUrls(session: Session): string[] {
+    const urls = new Set<string>();
+    if (!session) return [];
+
+    const addUrl = (u: any) => {
+      if (typeof u === 'string') {
+        const trimmed = u.trim();
+        if (trimmed && (trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('campaigns/'))) {
+          urls.add(trimmed);
+        }
+      }
+    };
+
+    addUrl(session.coverImageUrl);
+    if (typeof session.coverImage === 'string') {
+      addUrl(session.coverImage);
+    } else if (session.coverImage?.url) {
+      addUrl(session.coverImage.url);
+    }
+
+    if (Array.isArray(session.images)) {
+      session.images.forEach(addUrl);
+    }
+
+    if (Array.isArray(session.audioLogs)) {
+      session.audioLogs.forEach((l) => {
+        if (l?.audioUrl) addUrl(l.audioUrl);
+      });
+    }
+
+    const events = session.events || session.plot_events || [];
+    if (Array.isArray(events)) {
+      events.forEach((e) => {
+        if (Array.isArray(e.images)) e.images.forEach(addUrl);
+        if (Array.isArray(e.audioLogs)) {
+          e.audioLogs.forEach((l) => {
+            if (l?.audioUrl) addUrl(l.audioUrl);
+          });
+        }
+      });
+    }
+
+    if (session.gazetteConfig?.blocks && Array.isArray(session.gazetteConfig.blocks)) {
+      session.gazetteConfig.blocks.forEach((b) => {
+        if (b?.imageUrl) addUrl(b.imageUrl);
+      });
+    }
+
+    // Also include any standalone audio logs linked to this session
+    const sessId = String(session.id || session._id || '');
+    if (sessId) {
+      try {
+        const allAudio = this.getAudioLogs();
+        allAudio.forEach((l) => {
+          if (l.associatedId === sessId || l.associatedId === session._id || (l.associatedType === 'session' && l.associatedId === String(session.number))) {
+            if (l.audioUrl) addUrl(l.audioUrl);
+          }
+        });
+      } catch {}
+    }
+
+    return Array.from(urls);
+  }
+
   static updateSession(id: string, updates: Partial<Session>): Session | null {
     const sessions = this.getSessions();
     const index = sessions.findIndex((s) => s._id === id || s.id === id);
     if (index === -1) return null;
+
+    const oldSession = sessions[index];
+    const removedMediaUrls: string[] = [];
+
+    // 1. Cover Image Replacement: Clean up previously stored cover if replaced
+    const oldCover = oldSession.coverImageUrl || (typeof oldSession.coverImage === 'string' ? oldSession.coverImage : oldSession.coverImage?.url);
+    const newCover = updates.coverImageUrl !== undefined
+      ? updates.coverImageUrl
+      : (updates.coverImage !== undefined ? (typeof updates.coverImage === 'string' ? updates.coverImage : updates.coverImage?.url) : undefined);
+    if (oldCover && newCover !== undefined && oldCover !== newCover) {
+      removedMediaUrls.push(oldCover);
+    }
+
+    // 2. Images Replacement: Detect removed or replaced images
+    if (updates.images !== undefined && Array.isArray(oldSession.images)) {
+      const newImagesSet = new Set(updates.images || []);
+      oldSession.images.forEach((img) => {
+        if (img && !newImagesSet.has(img)) {
+          removedMediaUrls.push(img);
+        }
+      });
+    }
+
+    // 3. Audio Logs Replacement: Detect removed or replaced audio logs
+    if (updates.audioLogs !== undefined && Array.isArray(oldSession.audioLogs)) {
+      const newAudioIds = new Set((updates.audioLogs || []).map((l) => l.id));
+      const removedAudioIds: string[] = [];
+      oldSession.audioLogs.forEach((l) => {
+        if (l && l.id && !newAudioIds.has(l.id)) {
+          if (l.audioUrl) removedMediaUrls.push(l.audioUrl);
+          removedAudioIds.push(l.id);
+        }
+      });
+      if (removedAudioIds.length > 0) {
+        // Also remove from global audio logs if present
+        const remainingLogs = this.getAudioLogs().filter((l) => !removedAudioIds.includes(l.id));
+        this.saveAudioLogsLocalOnly(remainingLogs);
+        if (isSupabaseConfigured()) {
+          removedAudioIds.forEach((audId) => {
+            SupabaseSyncService.deleteAudioLog(audId);
+          });
+        }
+      }
+    }
+
+    // 4. Events Media Replacement: Detect removed event illustrations and audio logs
+    const newEvents = updates.events || updates.plot_events;
+    if (newEvents !== undefined && Array.isArray(oldSession.events)) {
+      const newEventImgSet = new Set<string>();
+      const newEventAudioIdSet = new Set<string>();
+      newEvents.forEach((e) => {
+        (e.images || []).forEach((img) => newEventImgSet.add(img));
+        (e.audioLogs || []).forEach((l) => newEventAudioIdSet.add(l.id));
+      });
+
+      oldSession.events.forEach((oldEvt) => {
+        (oldEvt.images || []).forEach((img) => {
+          if (img && !newEventImgSet.has(img)) removedMediaUrls.push(img);
+        });
+        (oldEvt.audioLogs || []).forEach((l) => {
+          if (l && l.id && !newEventAudioIdSet.has(l.id)) {
+            if (l.audioUrl) removedMediaUrls.push(l.audioUrl);
+            if (isSupabaseConfigured()) {
+              SupabaseSyncService.deleteAudioLog(l.id);
+            }
+          }
+        });
+      });
+    }
+
+    // Asynchronously delete replaced media from Storage bucket
+    if (removedMediaUrls.length > 0) {
+      FirebaseStorageService.deleteMultipleMedia(removedMediaUrls).catch((err) => {
+        console.warn('[updateSession] Error cleaning replaced media from storage:', err);
+      });
+    }
 
     const cal = this.getCalendar();
     let updatedSession = { ...sessions[index], ...updates };
@@ -4422,15 +4566,54 @@ export class CampaignManager {
 
   static deleteSession(id: string) {
     this.addDeletedSessionId(id);
-    const session = this.getSessions().find((s) => s._id === id);
-    if (session?.images && session.images.length > 0) {
-      FirebaseStorageService.deleteMultipleMedia(session.images).catch(() => {});
+    const session = this.getSessions().find((s) => s._id === id || s.id === id);
+
+    if (session) {
+      // 1. Physically delete all media (images, cover, audio, event media) from Storage
+      const allMediaUrls = this.extractSessionMediaUrls(session);
+      if (allMediaUrls.length > 0) {
+        FirebaseStorageService.deleteMultipleMedia(allMediaUrls).catch((err) => {
+          console.warn('[deleteSession] Error removing media files from storage:', err);
+        });
+      }
+
+      // 2. Clean up any relational audio logs tied to this session from database and local store
+      const sessAudioIds = new Set<string>();
+      (session.audioLogs || []).forEach((l) => { if (l?.id) sessAudioIds.add(l.id); });
+      (session.events || []).forEach((e) => {
+        (e.audioLogs || []).forEach((l) => { if (l?.id) sessAudioIds.add(l.id); });
+      });
+
+      const sessId = String(session.id || session._id || '');
+      const allAudio = this.getAudioLogs();
+      allAudio.forEach((l) => {
+        if (l.associatedId === id || l.associatedId === sessId || (l.associatedType === 'session' && l.associatedId === String(session.number))) {
+          if (l.id) sessAudioIds.add(l.id);
+        }
+      });
+
+      if (sessAudioIds.size > 0) {
+        const remainingAudio = allAudio.filter((l) => !sessAudioIds.has(l.id));
+        this.saveAudioLogsLocalOnly(remainingAudio);
+        if (isSupabaseConfigured()) {
+          sessAudioIds.forEach((audId) => {
+            SupabaseSyncService.deleteAudioLog(audId);
+          });
+        }
+      }
     }
-    const sessions = this.getSessions().filter((s) => s._id !== id);
+
+    const sessions = this.getSessions().filter((s) => s._id !== id && s.id !== id);
     this.saveSessionsLocalOnly(sessions);
     if (isSupabaseConfigured()) {
       const code = this.getActiveCampaignCode() || 'default';
       SupabaseSyncService.deleteSession(id, code);
+    }
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('chronicle_sessions_updated'));
+      window.dispatchEvent(new CustomEvent('chronicle_audio_updated'));
+      window.dispatchEvent(new CustomEvent('chronicle_data_updated'));
     }
   }
 
@@ -5871,10 +6054,85 @@ export class CampaignManager {
   }
 
   static deleteAudioLog(id: string) {
-    const logs = this.getAudioLogs().filter((l) => l.id !== id);
-    this.saveAudioLogsLocalOnly(logs);
+    if (!id) return;
+    const allLogs = this.getAudioLogs();
+    const targetInLogs = allLogs.find((l) => l.id === id || (l as any)._id === id);
+    let targetUrl = targetInLogs?.audioUrl;
+
+    // 1. Search across sessions to extract audioUrl if needed and cleanly remove from all session records
+    const sessions = this.getSessions();
+    let sessionsModified = false;
+    const updatedSessions = sessions.map((sess) => {
+      let sessModified = false;
+      let newAudioLogs = sess.audioLogs;
+      if (Array.isArray(sess.audioLogs) && sess.audioLogs.some((l) => l.id === id || (l as any)._id === id || l.audioUrl === id)) {
+        if (!targetUrl) {
+          targetUrl = sess.audioLogs.find((l) => l.id === id || (l as any)._id === id || l.audioUrl === id)?.audioUrl;
+        }
+        newAudioLogs = sess.audioLogs.filter((l) => l.id !== id && (l as any)._id !== id && l.audioUrl !== id);
+        sessModified = true;
+      }
+
+      let newEvents = sess.events;
+      if (Array.isArray(sess.events)) {
+        newEvents = sess.events.map((evt) => {
+          if (Array.isArray(evt.audioLogs) && evt.audioLogs.some((l) => l.id === id || (l as any)._id === id || l.audioUrl === id)) {
+            if (!targetUrl) {
+              targetUrl = evt.audioLogs.find((l) => l.id === id || (l as any)._id === id || l.audioUrl === id)?.audioUrl;
+            }
+            sessModified = true;
+            return {
+              ...evt,
+              audioLogs: evt.audioLogs.filter((l) => l.id !== id && (l as any)._id !== id && l.audioUrl !== id),
+            };
+          }
+          return evt;
+        });
+      }
+
+      if (sessModified) {
+        sessionsModified = true;
+        return {
+          ...sess,
+          audioLogs: newAudioLogs,
+          events: newEvents,
+          plot_events: newEvents,
+        };
+      }
+      return sess;
+    });
+
+    if (sessionsModified) {
+      this.saveSessionsLocalOnly(updatedSessions);
+      if (isSupabaseConfigured()) {
+        const code = this.getActiveCampaignCode() || 'default';
+        updatedSessions.forEach((s) => {
+          const old = sessions.find((oldS) => (oldS._id === s._id || oldS.id === s.id));
+          if (old && (old.audioLogs?.length !== s.audioLogs?.length || old.events?.length !== s.events?.length)) {
+            SupabaseSyncService.saveSession(code, s);
+          }
+        });
+      }
+    }
+
+    // 2. Physically delete the audio file from Storage
+    if (targetUrl) {
+      FirebaseStorageService.deleteMedia(targetUrl).catch((err) => {
+        console.warn('[deleteAudioLog] Error removing audio file from storage:', err);
+      });
+    }
+
+    // 3. Remove from standalone audio_logs
+    const remainingLogs = allLogs.filter((l) => l.id !== id && (l as any)._id !== id && l.audioUrl !== id);
+    this.saveAudioLogsLocalOnly(remainingLogs);
     if (isSupabaseConfigured()) {
       SupabaseSyncService.deleteAudioLog(id);
+    }
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('chronicle_audio_updated'));
+      window.dispatchEvent(new CustomEvent('chronicle_sessions_updated'));
+      window.dispatchEvent(new CustomEvent('chronicle_data_updated'));
     }
   }
 

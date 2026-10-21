@@ -75,6 +75,45 @@ export function Layout() {
     return subscribePwa(updatePwa);
   }, []);
 
+  // Track active section so the D20 dice menu positions directly on the last entered item
+  useEffect(() => {
+    const pathToFaceIndex: Record<string, number> = {
+      '/sessions': 0,
+      '/notes': 1,
+      '/storyline': 2,
+      '/sendipietra': 3,
+      '/oracle': 3,
+      '/prismalink': 3,
+      '/character': 4,
+      '/party': 5,
+      '/compagnia': 5,
+      '/clarifications': 7,
+      '/chiarimenti': 7,
+      '/world-lore': 8,
+      '/lore': 8,
+      '/map': 9,
+      '/calendar': 10,
+      '/codex': 11,
+      '/entities': 11,
+      '/search': 12,
+      '/tutorial': 16,
+      '/guida': 16,
+      '/manuale': 16,
+      '/settings': 17,
+    };
+
+    const currentPath = location.pathname.toLowerCase();
+    for (const [route, faceIdx] of Object.entries(pathToFaceIndex)) {
+      if (currentPath === route || currentPath.startsWith(route + '/')) {
+        try {
+          localStorage.setItem('chronicle_d20_last_face', String(faceIdx));
+          sessionStorage.setItem('chronicle_d20_last_face', String(faceIdx));
+        } catch {}
+        break;
+      }
+    }
+  }, [location.pathname]);
+
   const [calendar, setCalendar] = useState(() => CampaignManager.getCalendar());
 
   const isIOS = typeof window !== 'undefined' && typeof navigator !== 'undefined' && (
@@ -107,6 +146,39 @@ export function Layout() {
       window.removeEventListener('chronicle_campaign_changed', handleCampaignUpdate);
     };
   }, []);
+
+  // Sync current section route with D20 Menu last visited face
+  useEffect(() => {
+    const ROUTE_TO_D20_FACE_MAP: Record<string, number> = {
+      '/sessions': 0,     // Sessioni (id: 1)
+      '/notes': 1,        // Diario (id: 2)
+      '/storyline': 2,    // Cronologia (id: 3)
+      '/sendipietra': 3,  // Sendipietra (id: 4)
+      '/character': 4,    // Personaggio (id: 5)
+      '/party': 5,        // Compagnia (id: 6)
+      '/clarifications': 7, // Notifiche (id: 8)
+      '/world-lore': 8,   // Mondo (id: 9)
+      '/map': 9,          // Atlante (id: 10)
+      '/calendar': 10,    // Calendario (id: 11)
+      '/codex': 11,       // Codex (id: 12)
+      '/search': 12,      // Cerca (id: 13)
+      '/tutorial': 16,    // Manuale (id: 17)
+      '/settings': 17,    // Impostazioni (id: 18)
+    };
+
+    if (location.pathname && location.pathname !== '/table') {
+      const matchKey = Object.keys(ROUTE_TO_D20_FACE_MAP).find((route) =>
+        location.pathname.startsWith(route)
+      );
+      if (matchKey !== undefined) {
+        const faceIdx = ROUTE_TO_D20_FACE_MAP[matchKey];
+        try {
+          localStorage.setItem('chronicle_d20_last_face', String(faceIdx));
+          sessionStorage.setItem('chronicle_d20_last_face', String(faceIdx));
+        } catch {}
+      }
+    }
+  }, [location.pathname]);
 
   useEffect(() => {
     const handleThemeChange = (e: any) => {
